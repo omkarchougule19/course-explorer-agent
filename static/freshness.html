@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Data Freshness — UIUC Course Explorer</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <div class="banner">
+    <h1><a href="/">UIUC Course Explorer</a><span class="cursor" aria-hidden="true"></span></h1>
+    <p class="subtitle">Data freshness by subject and term. Nothing here is live - see DECISIONS.md for why.</p>
+  </div>
+
+  <hr class="rule">
+
+  <div class="panel">
+    <h2>// Last Updated, Per Subject / Term</h2>
+    <p class="hint">
+      Each row is the last time that subject's data for that term was written locally
+      (scraped live, or backfilled from an archived catalog snapshot) and pushed to the
+      database. <span class="fresh">Green</span> = updated within the last 35 days (roughly
+      one scrape cycle). <span class="stale">Red</span> = over 70 days old, likely missed a
+      cycle.
+    </p>
+    <div class="results-wrap" id="freshness-wrap">
+      <p class="empty-state">loading...</p>
+    </div>
+  </div>
+
+  <footer>
+    course-explorer-agent &middot; <a href="/">&larr; back to explorer</a> &middot; <a href="/api">API info</a>
+  </footer>
+
+</div>
+
+<script src="/time.js"></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+
+  async function getJSON(url) {
+    const res = await fetch(url);
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = new Error(body.detail || `Request failed (${res.status})`);
+      throw err;
+    }
+    return body;
+  }
+
+  function ageInDays(sqliteTimestamp) {
+    return (Date.now() - parseUtc(sqliteTimestamp).getTime()) / 86400000;
+  }
+
+  function ageClass(sqliteTimestamp) {
+    const days = ageInDays(sqliteTimestamp);
+    if (days < 35) return 'fresh';
+    if (days > 70) return 'stale';
+    return '';
+  }
+
+  function renderFreshness(rows) {
+    const wrap = $('freshness-wrap');
+    if (!rows.length) {
+      wrap.innerHTML = '<p class="empty-state">No data yet. Run the scraper, then reload this page.</p>';
+      return;
+    }
+    let html = '<table><thead><tr>'
+      + '<th>Subject</th><th>Term</th><th>Sections</th><th>Last Updated</th>'
+      + '</tr></thead><tbody>';
+    for (const row of rows) {
+      const cls = ageClass(row.last_updated);
+      const abs = row.last_updated ? parseUtc(row.last_updated).toLocaleString() : '—';
+      html += `<tr>`
+        + `<td>${row.subject}</td>`
+        + `<td>${row.semester} ${row.year}</td>`
+        + `<td>${row.section_count}</td>`
+        + `<td class="${cls}" title="${abs}">${formatRelativeTime(row.last_updated)}</td>`
+        + `</tr>`;
+    }
+    html += '</tbody></table>';
+    wrap.innerHTML = html;
+  }
+
+  async function loadFreshness() {
+    try {
+      const data = await getJSON('/freshness');
+      renderFreshness(data.freshness || []);
+    } catch (e) {
+      $('freshness-wrap').innerHTML = `<p class="empty-state">Couldn't load freshness data: ${e.message}</p>`;
+    }
+  }
+
+  loadFreshness();
+</script>
+</body>
+</html>

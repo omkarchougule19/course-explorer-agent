@@ -1,0 +1,33 @@
+# Render Blueprint for the UIUC Course Explorer Data Agent.
+#
+# Database is external Neon Postgres, not a Render-managed database - see
+# DECISIONS.md for why (Render's own free Postgres expires after 30 days;
+# Neon's free tier doesn't). Set DATABASE_URL to your Neon connection string
+# in the Render dashboard after the first deploy (it's marked `sync: false`
+# below, so Render won't try to auto-generate it).
+#
+# The build step also pre-downloads the local embedding model
+# (BAAI/bge-small-en-v1.5, via fastembed) into ./model_cache so it's already
+# on disk before the app ever serves a request - see the cold-start
+# reasoning in DECISIONS.md. api.py's startup event then loads it from that
+# cache in ~1s instead of the ~30-90s a cold download takes.
+
+services:
+  - type: web
+    name: uiuc-course-explorer-agent
+    runtime: python
+    plan: free
+    buildCommand: >-
+      pip install -r requirements.txt &&
+      python -c "from app.embeddings import warmup; warmup()"
+    startCommand: uvicorn app.api:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false

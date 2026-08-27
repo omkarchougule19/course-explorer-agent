@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UIUC Course Explorer</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <div class="banner">
+    <h1>UIUC Course Explorer<span class="cursor" aria-hidden="true"></span></h1>
+    <p class="subtitle">Local database, scraped from the public Course Explorer API. Not a live registrar connection.</p>
+  </div>
+
+  <hr class="rule">
+
+  <div class="stats" id="stats">
+    <div><span class="stat-label">Sections</span><span class="stat-value" id="stat-sections">—</span></div>
+    <div><span class="stat-label">Courses</span><span class="stat-value" id="stat-courses">—</span></div>
+    <div><span class="stat-label">Subjects</span><span class="stat-value" id="stat-subjects">—</span></div>
+    <div><span class="stat-label">Terms</span><span class="stat-value" id="stat-terms">—</span></div>
+    <div><span class="stat-label">Last Updated</span><a class="stat-value" id="stat-updated" href="/freshness.html">—</a></div>
+  </div>
+  <div class="system-note" id="empty-note">
+    No data yet. Run <code>python app/scraper.py --year 2026 --semester fall</code> from the project root, then reload this page.
+  </div>
+
+  <div class="panel">
+    <h2>// Browse Sections</h2>
+    <form id="browse-form">
+      <div class="field-row">
+        <div class="field">
+          <label for="f-subject">Subject</label>
+          <select id="f-subject">
+            <option value="">All</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="f-course">Course #</label>
+          <input id="f-course" type="text" placeholder="e.g. 225">
+        </div>
+        <div class="field">
+          <label for="f-instructor">Instructor</label>
+          <input id="f-instructor" type="text" placeholder="e.g. Smith">
+        </div>
+        <div class="field" style="flex: 0 1 90px;">
+          <label for="f-limit">Limit</label>
+          <input id="f-limit" type="number" value="100" min="1" max="1000">
+        </div>
+        <button type="submit">[ Run Query ]</button>
+      </div>
+    </form>
+    <div class="results-wrap" id="results-wrap"></div>
+  </div>
+
+  <div class="panel">
+    <h2>// Ask The Agent</h2>
+    <div class="scrollback" id="scrollback" aria-live="polite">
+      <div class="line line-sys">uiuc-agent&gt; ready. ask about courses, sections, or instructors in the local database.</div>
+    </div>
+    <form id="ask-form" class="ask-form">
+      <span class="prompt" aria-hidden="true">&gt;</span>
+      <input id="ask-input" type="text" placeholder="e.g. who teaches CS 225 this semester?" autocomplete="off">
+      <button type="submit">[ Send ]</button>
+    </form>
+    <p class="hint">Requires OPENAI_API_KEY to be set on the server. Answers come from a SQL agent querying this local database, not the live internet.</p>
+  </div>
+
+  <footer>
+    course-explorer-agent &middot; <a href="/api">API info</a> &middot; <a href="/docs">API docs</a>
+  </footer>
+
+</div>
+
+<script src="/time.js"></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+
+  async function getJSON(url) {
+    const res = await fetch(url);
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = new Error(body.detail || `Request failed (${res.status})`);
+      err.status = res.status;
+      throw err;
+    }
+    return body;
+  }
+
+  async function loadStats() {
+    try {
+      const stats = await getJSON('/stats');
+      $('stat-sections').textContent = stats.total_sections;
+      $('stat-courses').textContent = stats.distinct_courses;
+      $('stat-subjects').textContent = stats.distinct_subjects;
+      $('stat-terms').textContent = stats.terms_covered.length ? stats.terms_covered.join(', ') : '—';
+      if (stats.total_sections === 0) {
+        $('empty-note').classList.add('show');
+      }
+    } catch (e) {
+      $('empty-note').textContent = e.message.includes('Database not found')
+        ? 'No database yet. Run the scraper first, then reload this page.'
+        : `Can't reach the API: ${e.message}`;
+      $('empty-note').classList.add('show');
+    }
+  }
+
+  async function loadFreshness() {
+    try {
+      const data = await getJSON('/freshness');
+      const rows = data.freshness || [];
+      if (!rows.length) {
+        $('stat-updated').textContent = 'no data';
+        return;
+      }
+      const mostRecent = rows.reduce((a, b) => (a.last_updated > b.last_updated ? a : b));
+      $('stat-updated').textContent = formatRelativeTime(mostRecent.last_updated);
+      $('stat-updated').title = `${mostRecent.subject} (${mostRecent.semester} ${mostRecent.year}) - see all subjects`;
+    } catch (e) {
+      $('stat-updated').textContent = 'n/a';
+    }
+  }
+
+  async function loadSubjects() {
+    try {
+      const data = await getJSON('/subjects');
+      const select = $('f-subject');
+      for (const subj of data.subjects) {
+        const opt = document.createElement('option');
+        opt.value = subj;
+        opt.textContent = subj;
+        select.appendChild(opt);
+      }
+    } catch (e) {
+      // Handled by loadStats' empty-state note already; browsing just stays empty.
+    }
+  }
+
+  function renderResults(rows) {
+    const wrap = $('results-wrap');
+    if (!rows.length) {
+      wrap.innerHTML = '<p class="empty-state">No sections match those filters. Try clearing the instructor field or choosing a different subject.</p>';
+      return;
+    }
+    const cols = ['subject', 'course_number', 'section_name', 'crn', 'instructor', 'enrollment_status', 'credit_hours'];
+    const labels = ['Subj', 'Course', 'Section', 'CRN', 'Instructor', 'Status', 'Credit'];
+    let html = '<table><thead><tr>' + labels.map(l => `<th>${l}</th>`).join('') + '</tr></thead><tbody>';
+    for (const row of rows) {
+      const titleAttr = row.description ? ` title="${row.description.replace(/"/g, '&quot;')}"` : '';
+      html += `<tr${titleAttr}>` + cols.map(c => {
+        const val = row[c] ?? '—';
+        if (c === 'enrollment_status') {
+          const cls = /open/i.test(val) ? 'status-open' : /closed/i.test(val) ? 'status-closed' : '';
+          return `<td class="${cls}">${val}</td>`;
+        }
+        return `<td>${val}</td>`;
+      }).join('') + '</tr>';
+    }
+    html += '</tbody></table>';
+    if (rows.some(r => r.description)) {
+      html += '<p class="hint" style="margin-top:8px;">Hover a row for its catalog description, or ask the agent below to summarize it.</p>';
+    }
+    wrap.innerHTML = html;
+  }
+
+  $('browse-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const params = new URLSearchParams();
+    const subject = $('f-subject').value.trim();
+    const course = $('f-course').value.trim();
+    const instructor = $('f-instructor').value.trim();
+    const limit = $('f-limit').value.trim();
+    if (subject) params.set('subject', subject);
+    if (course) params.set('course_number', course);
+    if (instructor) params.set('instructor', instructor);
+    if (limit) params.set('limit', limit);
+
+    $('results-wrap').innerHTML = '<p class="empty-state">querying database...</p>';
+    try {
+      const rows = await getJSON('/sections?' + params.toString());
+      renderResults(rows);
+    } catch (err) {
+      $('results-wrap').innerHTML = `<p class="empty-state">Query failed: ${err.message}</p>`;
+    }
+  });
+
+  function addLine(text, cls) {
+    const scrollback = $('scrollback');
+    const div = document.createElement('div');
+    div.className = 'line ' + cls;
+    div.textContent = text;
+    scrollback.appendChild(div);
+    scrollback.scrollTop = scrollback.scrollHeight;
+    return div;
+  }
+
+  $('ask-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const input = $('ask-input');
+    const question = input.value.trim();
+    if (!question) return;
+    input.value = '';
+    input.disabled = true;
+
+    addLine('> ' + question, 'line-q');
+    const thinking = addLine('uiuc-agent> thinking', 'line-sys dots');
+
+    try {
+      const res = await fetch('/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question }),
+      });
+      const body = await res.json().catch(() => ({}));
+      thinking.remove();
+      if (!res.ok) {
+        addLine('uiuc-agent> ' + (body.detail || `request failed (${res.status})`), 'line-sys');
+      } else {
+        addLine('uiuc-agent> ' + body.answer, 'line-a');
+      }
+    } catch (err) {
+      thinking.remove();
+      addLine('uiuc-agent> connection lost, is the API server still running?', 'line-sys');
+    } finally {
+      input.disabled = false;
+      input.focus();
+    }
+  });
+
+  loadStats();
+  loadSubjects();
+  loadFreshness();
+</script>
+</body>
+</html>

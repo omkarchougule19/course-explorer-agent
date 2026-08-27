@@ -1,0 +1,375 @@
+"""
+api.py
+
+FastAPI backend exposing the scraped Course Explorer dataset.
+
+Run:
+    uvicorn app.api:app --reload
+
+Docs:
+    http://127.0.0.1:8000/docs
+"""
+
+from contextlib import contextmanager
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from app import db
+from app.db import DB_PATH
+
+load_dotenv(Path(__file__).parent.parent / ".env")
+
+STATIC_DIR = Path(__file__).parent.parent / "static"
+
+app = FastAPI(
+    title="UIUC Course Explorer Data Agent",
+    description="Catalog of UIUC course, section, and enrollment data scraped from the public Course Explorer API.",
+    version="1.0.0",
+)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    # Last-resort safety net so a bug never surfaces as a raw stack trace to a
+    # client; specific routes should still catch what they can more precisely.
+    return JSONResponse(status_code=500, content={"detail": f"Unexpected server error: {exc}"})
+
+
+@app.on_event("startup")
+def _warmup_embeddings():
+    """Load the embedding model now, during boot, instead of lazily on the
+    first RAG question - the local ONNX load (~1-2s once the model is baked
+    into the build, see render.yaml) happens while Render's own container
+    spin-up is already in progress, not stacked onto a user's first request.
+    See DECISIONS.md for the full cold-start reasoning. Postgres-only: the
+    local SQLite dev fallback never registers the vector-search tool at all,
+    so there's nothing to warm up there."""
+    if db.is_postgres():
+        from app import embeddings
+        embeddings.warmup()
+
+
+@contextmanager
+def get_conn():
+    """Open a connection for the duration of a request, always closing it,
+    and turning DB-open failures into a clean 503 instead of a raw traceback.
+    The "does the database exist" pre-check only applies to the local SQLite
+    fallback - a Postgres DATABASE_URL is presumed to point at something that
+    already exists, and a real connection failure surfaces below instead."""
+    if not db.is_postgres() and not DB_PATH.exists():
+        raise HTTPException(status_code=503, detail="Database not found. Run scraper.py first.")
+    try:
+        conn = db.get_connection()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Couldn't open database: {exc}")
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+def run_query(conn: db.Connection, query: str, params: list):
+    """Run a SELECT and turn any database error into a clean 500 instead of crashing the route."""
+    try:
+        return conn.execute(query, params).fetchall()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Query failed: {exc}")
+
+
+class SectionOut(BaseModel):
+    year: int
+    semester: str
+    subject: str
+    course_number: str
+    course_label: Optional[str]
+    crn: str
+    section_name: Optional[str]
+    instructor: Optional[str]
+    enrollment_status: Optional[str]
+    credit_hours: Optional[str]
+    description: Optional[str] = None
+
+
+@app.get("/api")
+def api_info():
+    return {
+        "service": "UIUC Course Explorer Data Agent",
+        "ui": "/",
+        "endpoints": ["/subjects", "/courses/{subject}", "/sections", "/stats", "/ask"],
+    }
+
+
+@app.get("/subjects")
+def get_subjects(year: Optional[int] = None, semester: Optional[str] = None):
+    """List every subject code present in the dataset, optionally filtered by term."""
+    query = "SELECT DISTINCT subject FROM sections"
+    params: list = []
+    clauses = []
+    if year:
+        clauses.append("year = ?")
+        params.append(year)
+    if semester:
+        clauses.append("semester = ?")
+        params.append(semester.lower())
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
+    query += " ORDER BY subject"
+
+    with get_conn() as conn:
+        rows = run_query(conn, query, params)
+    return {"subjects": [r["subject"] for r in rows]}
+
+
+@app.get("/courses/{subject}")
+def get_courses(subject: str, year: Optional[int] = None, semester: Optional[str] = None):
+    """List distinct courses under a subject, with section counts."""
+    if not subject or not subject.strip():
+        raise HTTPException(status_code=400, detail="subject is required")
+
+    query = """
+        SELECT course_number, course_label, COUNT(*) as section_count
+        FROM sections WHERE subject = ?
+    """
+    params: list = [subject.strip().upper()]
+    if year:
+        query += " AND year = ?"
+        params.append(year)
+    if semester:
+        query += " AND semester = ?"
+        params.append(semester.lower())
+    query += " GROUP BY course_number, course_label ORDER BY course_number"
+
+    with get_conn() as conn:
+        rows = run_query(conn, query, params)
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"No courses found for subject {subject.strip().upper()}")
+    return {"subject": subject.strip().upper(), "courses": [dict(r) for r in rows]}
+
+
+@app.get("/sections", response_model=list[SectionOut])
+def get_sections(
+    subject: Optional[str] = None,
+    course_number: Optional[str] = None,
+    year: Optional[int] = None,
+    semester: Optional[str] = None,
+    instructor: Optional[str] = None,
+    limit: int = Query(default=100, le=1000, ge=1),
+):
+    """Query individual sections with optional filters."""
+    query = "SELECT * FROM sections WHERE 1=1"
+    params: list = []
+    if subject:
+        query += " AND subject = ?"
+        params.append(subject.upper())
+    if course_number:
+        query += " AND course_number = ?"
+        params.append(course_number)
+    if year:
+        query += " AND year = ?"
+        params.append(year)
+    if semester:
+        query += " AND semester = ?"
+        params.append(semester.lower())
+    if instructor:
+        query += " AND instructor LIKE ?"
+        params.append(f"%{instructor}%")
+    query += " LIMIT ?"
+    params.append(limit)
+
+    with get_conn() as conn:
+        rows = run_query(conn, query, params)
+    return [dict(r) for r in rows]
+
+
+class AskRequest(BaseModel):
+    question: str
+
+
+@app.post("/ask")
+def ask_agent(payload: AskRequest):
+    """Translate a plain English question into a SQL query against the dataset
+    and return a natural language answer. Requires OPENAI_API_KEY to be set."""
+    if not payload.question or not payload.question.strip():
+        raise HTTPException(status_code=400, detail="question can't be empty")
+
+    try:
+        from app.agent import ask
+    except ImportError as exc:
+        raise HTTPException(status_code=500, detail=f"Agent dependencies not installed: {exc}")
+
+    # agent.ask() already catches setup problems (missing key, missing DB,
+    # OpenAI errors) and returns them as a plain string, so this route only
+    # needs to guard against something truly unexpected.
+    try:
+        answer = ask(payload.question)
+    except Exception as exc:  # noqa: BLE001 - defense in depth, agent.ask() should rarely raise
+        raise HTTPException(status_code=502, detail=f"Agent failed unexpectedly: {exc}")
+    return {"question": payload.question, "answer": answer}
+
+
+@app.get("/freshness")
+def get_freshness():
+    """Last-updated timestamp and row count per (subject, year, semester) already
+    in the database - i.e. how stale each subject/term's data is, since nothing
+    here is live (see DECISIONS.md: scraping only ever runs locally, manually)."""
+    with get_conn() as conn:
+        rows = run_query(
+            conn,
+            """
+            SELECT subject, year, semester, MAX(scraped_at) as last_updated, COUNT(*) as section_count
+            FROM sections
+            GROUP BY subject, year, semester
+            ORDER BY subject, year, semester
+            """,
+            [],
+        )
+    return {"freshness": [dict(r) for r in rows]}
+
+
+@app.get("/stats")
+def get_stats():
+    """High level counts, useful as a sanity check after scraping."""
+    with get_conn() as conn:
+        total = run_query(conn, "SELECT COUNT(*) as n FROM sections", [])[0]["n"]
+        subjects = run_query(conn, "SELECT COUNT(DISTINCT subject) as n FROM sections", [])[0]["n"]
+        courses = run_query(
+            conn, "SELECT COUNT(DISTINCT subject || course_number) as n FROM sections", []
+        )[0]["n"]
+        terms = run_query(conn, "SELECT DISTINCT year, semester FROM sections ORDER BY year, semester", [])
+    return {
+        "total_sections": total,
+        "distinct_subjects": subjects,
+        "distinct_courses": courses,
+        "terms_covered": [f"{r['semester']} {r['year']}" for r in terms],
+    }
+
+
+class ConflictCheckRequest(BaseModel):
+    crns: list[str]
+    year: int
+    semester: str
+
+
+_TIME_FMT = "%I:%M %p"
+
+
+def _parse_time(raw: Optional[str]):
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw.strip(), _TIME_FMT).time()
+    except ValueError:
+        return None
+
+
+def _days_overlap(days1: Optional[str], days2: Optional[str]) -> bool:
+    return bool(set(days1 or "") & set(days2 or ""))
+
+
+def _times_overlap(start1, end1, start2, end2) -> bool:
+    if not (start1 and end1 and start2 and end2):
+        return False
+    return start1 < end2 and start2 < end1
+
+
+@app.post("/schedule/conflicts")
+def check_schedule_conflicts(payload: ConflictCheckRequest):
+    """Given a set of CRNs for one term, report any pairs whose meetings overlap
+    in both day and time. Sections with no meeting data (e.g. fully online/async)
+    are silently skipped for that pair rather than flagged - there's nothing to
+    compare."""
+    crns = [c.strip() for c in payload.crns if c.strip()]
+    if len(crns) < 2:
+        raise HTTPException(status_code=400, detail="Provide at least 2 CRNs to check for conflicts")
+
+    placeholders = ",".join(["?"] * len(crns))
+    with get_conn() as conn:
+        rows = run_query(
+            conn,
+            f"""
+            SELECT crn, meeting_type, days_of_week, start_time, end_time, building, room
+            FROM meetings
+            WHERE year = ? AND semester = ? AND crn IN ({placeholders})
+            """,
+            [payload.year, payload.semester.lower(), *crns],
+        )
+
+    meetings_by_crn: dict[str, list[dict]] = {}
+    for r in rows:
+        meetings_by_crn.setdefault(r["crn"], []).append(dict(r))
+
+    conflicts = []
+    for i, crn_a in enumerate(crns):
+        for crn_b in crns[i + 1:]:
+            for ma in meetings_by_crn.get(crn_a, []):
+                for mb in meetings_by_crn.get(crn_b, []):
+                    if not _days_overlap(ma["days_of_week"], mb["days_of_week"]):
+                        continue
+                    if _times_overlap(
+                        _parse_time(ma["start_time"]), _parse_time(ma["end_time"]),
+                        _parse_time(mb["start_time"]), _parse_time(mb["end_time"]),
+                    ):
+                        conflicts.append({"crn_a": crn_a, "meeting_a": ma, "crn_b": crn_b, "meeting_b": mb})
+
+    return {"crns_checked": crns, "conflicts": conflicts, "has_conflicts": bool(conflicts)}
+
+
+GRADE_WEIGHTS = {
+    "a_plus": 4.0, "a": 4.0, "a_minus": 3.67,
+    "b_plus": 3.33, "b": 3.0, "b_minus": 2.67,
+    "c_plus": 2.33, "c": 2.0, "c_minus": 1.67,
+    "d_plus": 1.33, "d": 1.0, "d_minus": 0.67,
+    "f": 0.0,
+}
+
+
+@app.get("/courses/{subject}/{course_number}/grade-trend")
+def get_grade_trend(subject: str, course_number: str, instructor: Optional[str] = None):
+    """Per-term grade distribution and computed average GPA for a course, optionally
+    filtered to one instructor. One row per (term, sched type, instructor) as recorded
+    in grade_distributions - not collapsed across instructors, so trends per-instructor
+    are visible rather than averaged away."""
+    grade_cols = ", ".join(GRADE_WEIGHTS)
+    query = f"""
+        SELECT year, term, year_term, sched_type, primary_instructor,
+               {grade_cols}, w, students
+        FROM grade_distributions
+        WHERE subject = ? AND course_number = ?
+    """
+    params: list = [subject.strip().upper(), course_number.strip()]
+    if instructor:
+        query += " AND primary_instructor LIKE ?"
+        params.append(f"%{instructor}%")
+    query += " ORDER BY year, term"
+
+    with get_conn() as conn:
+        rows = run_query(conn, query, params)
+    if not rows:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No grade distribution data for {subject.strip().upper()} {course_number.strip()}",
+        )
+
+    trend = []
+    for r in rows:
+        row = dict(r)
+        graded = sum((row.get(col) or 0) for col in GRADE_WEIGHTS)
+        points = sum((row.get(col) or 0) * weight for col, weight in GRADE_WEIGHTS.items())
+        row["average_gpa"] = round(points / graded, 3) if graded else None
+        trend.append(row)
+
+    return {"subject": subject.strip().upper(), "course_number": course_number.strip(), "trend": trend}
+
+
+# Serves static/index.html at "/" (the web UI) and any other files under static/.
+# Registered last so it only catches paths not already claimed by the API routes
+# above - FastAPI matches explicit routes first, in the order they were declared.
+if STATIC_DIR.exists():
+    app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")

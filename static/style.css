@@ -1,0 +1,293 @@
+  :root {
+    --bg: #15120b;
+    --panel: #1c1810;
+    --panel-alt: #211c12;
+    --border: #4a3a17;
+    --border-bright: #8a6415;
+    --amber: #ffb000;
+    --amber-dim: #a67c1e;
+    --amber-bright: #ffd37a;
+    --green: #5fd97a;
+    --red: #ff6a52;
+    --radius: 3px;
+    --mono: "JetBrains Mono", "Fira Code", ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--amber);
+    font-family: var(--mono);
+  }
+
+  body {
+    padding: 32px 20px 64px;
+    line-height: 1.5;
+  }
+
+  .wrap {
+    max-width: 900px;
+    margin: 0 auto;
+  }
+
+  /* ---------- Banner ---------- */
+  .banner h1 {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    margin: 0;
+    text-transform: uppercase;
+  }
+
+  .banner h1 a { color: inherit; text-decoration: none; }
+  .banner h1 a:hover { color: var(--amber-bright); }
+
+  .cursor {
+    display: inline-block;
+    width: 10px;
+    height: 18px;
+    background: var(--amber);
+    margin-left: 4px;
+    vertical-align: -3px;
+    animation: blink 1.1s steps(1) infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cursor { animation: none; opacity: 1; }
+    .dots::after { animation: none !important; content: "..." !important; }
+  }
+
+  @keyframes blink {
+    0%, 49% { opacity: 1; }
+    50%, 100% { opacity: 0; }
+  }
+
+  .subtitle {
+    color: var(--amber-dim);
+    font-size: 13px;
+    margin: 6px 0 0;
+  }
+
+  hr.rule {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 20px 0;
+  }
+
+  /* ---------- Stats ---------- */
+  .stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 28px;
+    margin-bottom: 8px;
+  }
+
+  .stat-label {
+    display: block;
+    font-size: 11px;
+    color: var(--amber-dim);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .stat-value {
+    display: block;
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--amber-bright);
+  }
+
+  a.stat-value {
+    text-decoration: none;
+  }
+  a.stat-value:hover {
+    text-decoration: underline;
+  }
+
+  .system-note {
+    font-size: 13px;
+    color: var(--amber-dim);
+    border: 1px dashed var(--border-bright);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    margin: 10px 0 0;
+    display: none;
+  }
+  .system-note.show { display: block; }
+
+  /* ---------- Panels ---------- */
+  .panel {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--panel);
+    padding: 18px 20px;
+    margin-top: 24px;
+  }
+
+  .panel h2 {
+    font-size: 13px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--amber-dim);
+    margin: 0 0 16px;
+    font-weight: 600;
+  }
+
+  .field-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    align-items: end;
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1 1 140px;
+  }
+
+  label {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--amber-dim);
+  }
+
+  input, select {
+    background: var(--bg);
+    border: 1px solid var(--border-bright);
+    border-radius: var(--radius);
+    color: var(--amber);
+    font-family: var(--mono);
+    font-size: 14px;
+    padding: 8px 10px;
+  }
+
+  input::placeholder { color: #6b5321; }
+
+  input:focus-visible, select:focus-visible, button:focus-visible {
+    outline: 2px solid var(--amber-bright);
+    outline-offset: 2px;
+  }
+
+  button {
+    background: transparent;
+    border: 1px solid var(--amber);
+    color: var(--amber);
+    font-family: var(--mono);
+    font-size: 13px;
+    letter-spacing: 0.06em;
+    border-radius: var(--radius);
+    padding: 9px 16px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  button:hover { background: rgba(255, 176, 0, 0.1); }
+  button:disabled { opacity: 0.4; cursor: default; }
+
+  .hint {
+    font-size: 12px;
+    color: var(--amber-dim);
+    margin-top: 10px;
+  }
+
+  /* ---------- Results table ---------- */
+  .results-wrap {
+    margin-top: 16px;
+    overflow-x: auto;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    min-width: 640px;
+  }
+
+  th, td {
+    text-align: left;
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  th {
+    color: var(--amber-dim);
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+  }
+
+  tr:nth-child(even) td { background: var(--panel-alt); }
+
+  .status-open { color: var(--green); }
+  .status-closed { color: var(--red); }
+
+  .empty-state {
+    color: var(--amber-dim);
+    font-size: 13px;
+    padding: 14px 0 2px;
+  }
+
+  /* ---------- Ask panel ---------- */
+  .scrollback {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    max-height: 340px;
+    overflow-y: auto;
+    font-size: 13px;
+    margin-bottom: 14px;
+  }
+
+  .line { margin-bottom: 10px; white-space: pre-wrap; word-wrap: break-word; }
+  .line-q { color: var(--amber-bright); font-weight: 600; }
+  .line-a { color: var(--amber); }
+  .line-sys { color: var(--amber-dim); font-style: italic; }
+
+  .dots::after {
+    content: "";
+    animation: dots 1.2s steps(4, end) infinite;
+  }
+  @keyframes dots {
+    0% { content: ""; }
+    25% { content: "."; }
+    50% { content: ".."; }
+    75% { content: "..."; }
+    100% { content: ""; }
+  }
+
+  .ask-form {
+    display: flex;
+    gap: 10px;
+  }
+
+  .ask-form .prompt {
+    color: var(--amber-bright);
+    align-self: center;
+    font-weight: 700;
+  }
+
+  .ask-form input {
+    flex: 1;
+  }
+
+  footer {
+    margin-top: 40px;
+    font-size: 12px;
+    color: var(--amber-dim);
+    text-align: center;
+  }
+
+  a { color: var(--amber-bright); }
+
+  /* ---------- Freshness page ---------- */
+  .stale { color: var(--red); }
+  .fresh { color: var(--green); }
