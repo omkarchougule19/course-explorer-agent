@@ -728,3 +728,124 @@ signal hit). All 6 satisfactory - logged in `qa_log.txt` under the
   university's courses) - all declined cleanly with an in-scope redirect, no
   fabrication.
 `qa_log.txt` now has no `incomplete` verdicts outstanding.
+
+## Data scripts didn't load `.env` - the "scrape straight to Neon" flow was quietly broken (2026-08-31)
+
+The Hybrid Sync plan says the local scraper writes directly to Neon over
+`DATABASE_URL`. It never actually did. `db.get_connection()` picks Postgres
+vs SQLite off `os.environ["DATABASE_URL"]`, but only `agent.py` and `api.py`
+call `load_dotenv()` - `scraper.py`, `load_grades.py`, `load_geneds.py` and
+`load_tre.py` did not. So `python -m app.scraper` (run without the var
+exported in the shell) silently fell back to local SQLite even with a valid
+`DATABASE_URL` sitting in `.env`. Discovered on the first real attempt to
+populate Neon: an `AAS`-only test scrape reported success but wrote 46 rows
+to `data/courses.db`, and Neon stayed empty (0 tables).
+
+**Fix:** added `load_dotenv(Path(__file__).parent.parent / ".env")` at module
+load to `scraper.py`, `load_grades.py`, `load_geneds.py`, `load_tre.py` -
+same explicit project-root path `agent.py` already uses (robust to the
+current working directory). `load_catalog_snapshot.py` needs no change: it
+imports from `app.scraper`, so the scraper's module-level `load_dotenv()`
+runs first. `backfill_embeddings.py` already calls `load_dotenv()`.
+
+Also fixed the scraper's final "saved to {DB_PATH}" line, which printed the
+SQLite path unconditionally even on a Postgres run - it now says "Neon
+Postgres (DATABASE_URL)" when `db.is_postgres()`.
+
+Re-ran the `AAS` test against Neon after the fix: 46 sections, 46 meetings,
+17 `course_embeddings` rows, `vector` extension + HNSW index created by
+`init_course_embeddings_table`. Schema DDL (`db.autoincrement_pk()` /
+`current_timestamp_default()` / `existing_columns()`) all produced valid
+Postgres - this was also the first live test of the schema against real
+Postgres, previously only structurally complete.
+
+## Path B: migrated local SQLite -> Neon instead of scraping to Neon (2026-08-31)
+
+The first real attempt to populate Neon (`python -m app.scraper --year 2026
+--semester fall` with `DATABASE_URL` set, after the load_dotenv fix above)
+confirmed the WAF problem the plan anticipated - but as a **soft** block, not
+a clean 403. Timeline from the run log:
+
+* Subjects 1-4 (AAS, ABE, ACCY, ACE) returned real data - 388 sections.
+* Every subject after that returned HTTP 200 with an empty course list, which
+  `scraper.py` logs as "no courses found for X, skipping". 52 consecutive
+  empty subjects before it was killed at subject 56/186.
+* Zero `403 Forbidden` lines, zero `429`. The scraper's explicit 403 handling
+  (`scraper.py` ~line 165) never fired because the WAF isn't sending 403s -
+  it's serving 200s with nothing in them once the session looks bot-like,
+  roughly 4 subjects in. The one-time `warmup()` cookie grab isn't enough to
+  survive a full-catalog sweep.
+
+**Decision: don't fight the WAF for the initial load.** The local
+`data/courses.db` (14,714 sections / 15,122 meetings / 1,060 gen-ed rows,
+built over earlier residential-IP scrapes) is already complete, so the
+reliable path is to copy that file into Neon. New script
+`app/migrate_sqlite_to_neon.py`: builds the Postgres schema with the app's
+own `init_*` functions (so it's identical to a scraped schema), then
+drop-and-reloads each data table from SQLite with
+`psycopg2.extras.execute_values`. `course_embeddings` is left to
+`backfill_embeddings.py`. Re-runnable. First run migrated 30,896 rows;
+`grade_distributions` and `teachers_ranked_excellent` copied as empty tables
+(upstream still hasn't published - same known lag noted elsewhere), which is
+fine and keeps `agent.py`'s `INCLUDED_TABLES` valid.
+
+This was also the first successful end-to-end schema creation on real
+Postgres for the two loader tables and pgvector - all clean.
+
+### 403 mitigation options for the monthly refresh (not the initial load)
+
+The initial load is solved by migration, but monthly refreshes still need a
+working scrape. Ranked:
+
+1. **Throttle hard + re-warm mid-run.** `--concurrency 1`, add an
+   inter-subject delay (scraper has no knob for this yet - ~10 line add), and
+   re-hit the schedule HTML page to refresh `_warmup_cookies` every N
+   subjects rather than only once at startup. The session/cookie appears to
+   age out ~4 subjects in, so periodic re-warm targets the actual failure.
+   Run overnight, use `--skip-recent 24` so interrupted runs resume. Stays
+   free, residential IP. Best free option.
+2. **Subject-batch across time.** `--subjects` in groups of ~4, once per hour
+   via a scheduled local task - each run gets a fresh warmup. No code change,
+   but ~40 batches and tedious.
+3. **UA rotation + jittered backoff + honor Retry-After.** Helps against rate
+   heuristics, not against a session-fingerprint block. Minor on its own.
+4. **Paid residential proxy / scraping API** (ScraperAPI, ZenRows, Bright
+   Data) - would work from anywhere, but costs money. Already rejected under
+   the "stay free" constraint; still rejected.
+
+Chosen direction: implement (1) - throttle + periodic re-warm - as the next
+scraper change, so the monthly refresh has a path that doesn't depend on the
+WAF being lenient.
+
+## RAG layer verified end-to-end against live Neon (2026-08-31)
+
+After the SQLite->Neon migration, `app/backfill_embeddings.py` populated
+`course_embeddings` with 4,748 vectors (bge-small-en-v1.5, 384-dim).
+
+Backfill implementation notes:
+* The first version called `embeddings.save_course_embedding` per course,
+  which commits per row - over a Neon network connection that's a 30-40 min
+  crawl and the harness kept killing the long job. Rewrote it to embed in
+  batches of 200 (`embed_texts`) and upsert each batch with
+  `psycopg2.extras.execute_values` + one commit.
+* Even batched, throughput is ~100 courses/min - the bottleneck is fastembed
+  CPU inference, not the database. Added a `--limit N` flag so the backfill
+  can be run in chunks that each finish inside a single foreground timeout;
+  re-running skips already-embedded courses.
+* Drops the HNSW index before the load and rebuilds it after (in a `finally`,
+  so an interrupted run never leaves the index missing - a missing index
+  would silently turn every `course_content_search` into a full scan).
+
+Live verification (`ask(..., verbose=True)` against `DATABASE_URL` = Neon):
+* **"what courses cover machine learning"** -> agent invoked
+  `course_content_search` with query "machine learning"; pgvector returned 5
+  real descriptions (IS 557, IS 327, LING 448, CS 307, CS 441) and the model
+  synthesised them into a table. The vector tool, the `<=>` cosine search,
+  and the HNSW index all work against live Neon.
+* **"who teaches CS 225 in fall 2026"** -> agent used only
+  `sql_db_query_checker` / `sql_db_schema` / `sql_db_query`, never touched
+  `course_content_search`, and returned the correct instructors (Beckman, M;
+  Solomon, B). The prompt guidance on when to use each tool holds.
+
+The RAG section of `implementation_plan.md` is updated from "structurally
+complete but untested against a live Neon connection" to verified.

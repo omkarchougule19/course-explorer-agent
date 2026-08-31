@@ -51,11 +51,17 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 import requests
+from dotenv import load_dotenv
 from tqdm import tqdm
 
 from app import db
 from app import embeddings
 from app.db import DB_PATH
+
+# Load DATABASE_URL (and any other vars) from the project-root .env, the same
+# way agent.py / api.py do. Without this a plain `python -m app.scraper` never
+# sees DATABASE_URL and silently writes to local SQLite instead of Neon.
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 BASE_URL = "https://courses.illinois.edu/cisapp/explorer/schedule"
 CATALOG_BASE_URL = "https://courses.illinois.edu/cisapp/explorer/catalog"
@@ -676,14 +682,16 @@ def run(
             tqdm.write(f"  [{subject}] {len(courses)} courses{note}, {subject_sections} sections (running total: {total})")
 
         subject_bar.close()
-        summary = f"Done. {total} sections saved to {DB_PATH}."
+        target = "Neon Postgres (DATABASE_URL)" if db.is_postgres() else str(DB_PATH)
+        summary = f"Done. {total} sections saved to {target}."
         if skipped_total:
             summary += f" {skipped_total} course(s) skipped as recently scraped."
         print(summary, flush=True)
     except KeyboardInterrupt:
         subject_bar.close()
         print(
-            f"\nInterrupted. {total} section(s) saved so far are safe in {DB_PATH} "
+            f"\nInterrupted. {total} section(s) saved so far are safe in "
+            f"{'Neon Postgres' if db.is_postgres() else DB_PATH} "
             f"(each course commits as it finishes). Re-run the same command to pick up "
             f"where you left off, rows are upserted so nothing gets duplicated.",
             flush=True,

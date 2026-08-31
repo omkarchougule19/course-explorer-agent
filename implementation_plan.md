@@ -137,7 +137,7 @@ These looked promising but require UIUC's **authenticated** CISAPI tier (signup 
 
 On top of the existing text-to-SQL agent, add a semantic retrieval tool for description-content questions.
 
-**Status: built and verified this session** (embedding generation live-tested; the Postgres/pgvector half is structurally complete but untested against a live Neon connection — see `DECISIONS.md`).
+**Status: built and verified end-to-end against live Neon + pgvector (2026-08-31).** Embedding generation, `course_embeddings` schema/HNSW index, batched backfill (`app/backfill_embeddings.py`, 4,748 rows), and the hybrid agent routing all confirmed live: a semantic question ("what courses cover machine learning") invokes `course_content_search` and returns real pgvector matches; a structured question ("who teaches CS 225") stays SQL-only. See `DECISIONS.md`. Note: Neon was populated by migrating the local SQLite file (`app/migrate_sqlite_to_neon.py`), not by scraping to Neon — the UIUC WAF soft-blocks a full scrape (see the Path B entry in `DECISIONS.md`).
 
 ### How it works
 1. **At scrape time (local, monthly):** for every course with a non-null `description`, embed the text with a self-hosted `fastembed` model (`BAAI/bge-small-en-v1.5`) and upsert the vector into a `course_embeddings` table in Neon (one row per distinct `(subject, course_number)`, not per section — the description is shared across sections).

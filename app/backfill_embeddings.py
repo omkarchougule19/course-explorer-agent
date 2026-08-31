@@ -69,6 +69,14 @@ def main() -> int:
         action="store_true",
         help="re-embed every course, including ones that already have a row",
     )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        metavar="N",
+        help="process at most N courses this run (for splitting a large backfill "
+        "into chunks that each finish quickly); re-run to continue",
+    )
     args = parser.parse_args()
 
     conn = db.get_connection()
@@ -99,6 +107,11 @@ def main() -> int:
         conn.close()
         return 0
 
+    remaining_after = 0
+    if args.limit is not None and args.limit < len(courses):
+        remaining_after = len(courses) - args.limit
+        courses = courses[: args.limit]
+
     print(
         f"Embedding {len(courses)} course descriptions with {emb.MODEL_NAME} "
         f"(first run downloads the model, ~130MB) ...",
@@ -106,27 +119,76 @@ def main() -> int:
     )
     emb.warmup()
 
+    # Batched, not one-row-at-a-time: embed BATCH descriptions in a single
+    # fastembed call, then upsert the whole batch with execute_values and one
+    # commit. save_course_embedding() commits per row, which over a Neon
+    # network connection turns a few thousand rows into a 30-40 min crawl (and
+    # a long-running job the harness eventually kills). One commit per 200 rows
+    # brings it down to a couple of minutes and makes an interrupted run cheap
+    # to resume - it just re-skips whatever already landed.
+    from pgvector import Vector
+    from pgvector.psycopg2 import register_vector
+
+    register_vector(conn._raw)
+    BATCH = 200
+    UPSERT = (
+        "INSERT INTO course_embeddings (subject, course_number, description, embedding) "
+        "VALUES %s "
+        "ON CONFLICT (subject, course_number) DO UPDATE SET "
+        "description = EXCLUDED.description, embedding = EXCLUDED.embedding, updated_at = now()"
+    )
+
+    # HNSW does index maintenance on every insert, which dominates the runtime
+    # of a few-thousand-row load (~95s per 200-row batch with the index in
+    # place). Standard pgvector bulk-load pattern: drop the vector index, load,
+    # rebuild it once at the end. The index name matches
+    # embeddings.init_course_embeddings_table().
+    print("Dropping HNSW index for the bulk load ...", flush=True)
+    with conn._raw.cursor() as cur:
+        cur.execute("DROP INDEX IF EXISTS idx_course_embeddings_vec")
+    conn._raw.commit()
+    rebuild_index = remaining_after == 0  # only the final chunk rebuilds it
+
     embedded = 0
-    failed = 0
-    # save_course_embedding() embeds one description and upserts + commits it.
-    # Per-row commits mean one network round-trip per course to Neon - fine for
-    # a one-off catch-up of a few thousand rows, not something to run in a hot
-    # path. It returns False (counted as "skipped") if there's no vector to
-    # store, e.g. a description that's technically non-blank but unembeddable.
-    for subject, course_number, description in tqdm(courses, unit="course"):
-        try:
-            if emb.save_course_embedding(conn, subject, course_number, description):
-                embedded += 1
-        except Exception as exc:  # noqa: BLE001 - one bad row shouldn't kill a long backfill
-            failed += 1
-            tqdm.write(f"  [warn] {subject} {course_number}: {exc}")
+    skipped = 0
+    try:
+        for start in tqdm(range(0, len(courses), BATCH), unit="batch"):
+            chunk = courses[start:start + BATCH]
+            vectors = emb.embed_texts([c[2] for c in chunk])
+            rows = [
+                (subject, course_number, description, Vector(vec))
+                for (subject, course_number, description), vec in zip(chunk, vectors)
+                if vec is not None
+            ]
+            skipped += len(chunk) - len(rows)
+            if rows:
+                with conn._raw.cursor() as cur:
+                    from psycopg2.extras import execute_values
+                    execute_values(cur, UPSERT, rows, page_size=BATCH)
+                conn._raw.commit()
+                embedded += len(rows)
+    finally:
+        # Rebuild the index once the backfill is actually complete (this run
+        # had no --limit remainder, or the loop finished it). A missing index
+        # would silently make course_content_search do a full scan on every
+        # query, so if this run was interrupted mid-chunk, rebuild anyway
+        # rather than leave it dropped.
+        if rebuild_index or embedded + skipped >= len(courses):
+            print("Rebuilding HNSW index ...", flush=True)
+            with conn._raw.cursor() as cur:
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_course_embeddings_vec "
+                    "ON course_embeddings USING hnsw (embedding vector_cosine_ops)"
+                )
+            conn._raw.commit()
+        else:
+            print("Index left dropped - more chunks remain. Re-run without "
+                  "--limit (or with a final --limit) to finish and rebuild it.",
+                  flush=True)
 
     conn.close()
-    skipped = len(courses) - embedded - failed
-    print(
-        f"Done. {embedded} embedded, {failed} failed, {skipped} skipped.",
-        flush=True,
-    )
+    tail = f" ~{remaining_after} still to do - re-run to continue." if remaining_after else ""
+    print(f"Done. {embedded} embedded/updated, {skipped} skipped (no vector).{tail}", flush=True)
     return 0
 
 

@@ -21,11 +21,17 @@ import csv
 import io
 import re
 import sys
+from pathlib import Path
 
 import requests
+from dotenv import load_dotenv
 
 from app import db
 from app.db import DB_PATH
+
+# Load DATABASE_URL from the project-root .env so `python -m app.load_geneds`
+# targets Neon when it's configured, not just local SQLite.
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 CSV_URL = "https://raw.githubusercontent.com/wadefagen/datasets/main/geneds/gened-courses.csv"
 
