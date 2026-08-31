@@ -84,13 +84,16 @@ python -m app.sync_requests --list        # should list ~187 departments with a 
 | Var | Required | Purpose |
 |---|---|---|
 | `DATABASE_URL` | **yes** | Neon connection string |
+| `DATABASE_URL_RO` | recommended | SELECT-only Neon role for the LLM agent's SQL tool (see §3.5). Falls back to `DATABASE_URL` when unset. |
 | `GROQ_API_KEY` | **yes** (for `/ask`) | LLM for the assistant |
 | `GEMINI_API_KEY` | no | fallback LLM, used only if `GROQ_API_KEY` is unset |
 | `OPENAI_API_KEY` | no | second fallback |
-| `ADMIN_TOKEN` | no | enables `GET /admin/ask-log`; endpoint 404s while unset |
-| `ASK_RATE_PER_HOUR` | no (default 10) | per-IP assistant question cap / hour |
+| `ADMIN_TOKEN` | no | required to use `GET /admin/ask-log`; without it the endpoint always 403s |
+| `ASK_RATE_PER_HOUR` | no (default 10) | per-IP assistant question cap / hour (friction only — the IP comes from a spoofable header) |
 | `ASK_RATE_PER_DAY` | no (default 40) | per-IP assistant question cap / day |
+| `ASK_GLOBAL_PER_DAY` | no (default 250) | **shared** cap across all clients / day — the real protection for the Groq budget |
 | `ASK_MAX_CHARS` | no (default 500) | reject questions longer than this |
+| `ENABLE_DOCS` | no | set to any value to expose `/docs`, `/redoc`, `/openapi.json` (off by default) |
 
 ### 3.4 Post-deploy checks
 
@@ -104,6 +107,31 @@ curl -XPOST https://<your-app>.onrender.com/ask \
 
 Open the site: the header, Browse Sections (Term / Subject / Level filters),
 Ask the Agent, and Department Data panels should all populate.
+
+### 3.5 Read-only role for the assistant
+
+The `/ask` agent generates and runs SQL. Its scope guard is a prompt
+(`SYSTEM_CONTEXT`), and LangChain's SQL toolkit has no statement allowlist -
+so a prompt-injection that gets past the guard could in principle run
+`DROP` / `UPDATE`. Close that off with a database role that can only read.
+
+In the Neon SQL editor (or `psql`), against your database:
+
+```sql
+CREATE ROLE app_ro LOGIN PASSWORD 'choose-a-strong-password';
+GRANT CONNECT ON DATABASE neondb TO app_ro;      -- your db name
+GRANT USAGE ON SCHEMA public TO app_ro;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO app_ro;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO app_ro;
+```
+
+Then set `DATABASE_URL_RO` in Render to that role's connection string
+(same host/db as `DATABASE_URL`, different user/password). The app uses it
+for the agent's SQL tool only; every write path (migration, embeddings,
+`sync_requests`, `ask_log`) keeps using the full-privilege `DATABASE_URL`.
+
+Leaving `DATABASE_URL_RO` unset is supported - the agent then shares
+`DATABASE_URL` and you're relying on the prompt guard alone.
 
 ---
 
@@ -172,15 +200,21 @@ python -m app.load_tre
 Every call is checked **before** the LLM runs:
 
 1. **Length cap** — questions over `ASK_MAX_CHARS` (500) are rejected (`422`).
-2. **Per-IP rate limit** — `ASK_RATE_PER_HOUR` (10) and `ASK_RATE_PER_DAY`
-   (40) LLM-spending questions per client IP. Over the limit → `429` with a
-   message that points the user at the browse tools. Only `answered` and
-   `refused` calls count; provider errors don't, so a Groq outage never locks
-   anyone out.
-3. **Scope guardrail** — `SYSTEM_CONTEXT` in `app/agent.py` tells the model
+2. **Shared daily cap** — `ASK_GLOBAL_PER_DAY` (250) LLM-spending questions
+   across *all* clients in the trailing 24 h. This is the real protection for
+   the Groq token budget: it keys on nothing the client controls, so it holds
+   even when the per-IP limit below is bypassed. Over it → `429`.
+3. **Per-IP rate limit** — `ASK_RATE_PER_HOUR` (10) and `ASK_RATE_PER_DAY`
+   (40) per client IP. Friction only — the IP is the first `X-Forwarded-For`
+   hop, which a caller can forge, so treat this as a nuisance filter, not a
+   control. Over the limit → `429` pointing at the browse tools. Only
+   `answered` and `refused` calls count toward (2) and (3); provider errors
+   don't, so a Groq outage never locks anyone out.
+4. **Scope guardrail** — `SYSTEM_CONTEXT` in `app/agent.py` tells the model
    to refuse anything not answerable from the catalog tables, and to ignore
    "ignore your instructions"-style injection. Refusals are tagged `refused`
-   in the log.
+   in the log. Pair it with the read-only DB role (§3.5) so a jailbreak still
+   can't write.
 
 The client IP is read from `X-Forwarded-For` (Render sets it). It's
 spoofable, so treat the rate limit as friction, not security.
@@ -194,7 +228,7 @@ Every attempt is written to `ask_log`:
 | `ts` | UTC ISO timestamp |
 | `client_ip` | first hop of X-Forwarded-For |
 | `question` | first 1000 chars |
-| `outcome` | `answered` / `refused` / `rate_limited` / `too_long` / `error` |
+| `outcome` | `answered` / `refused` / `rate_limited` / `global_limited` / `too_long` / `error` |
 | `answer_preview` | first 500 chars of the answer |
 | `latency_ms` | agent round-trip |
 
@@ -259,4 +293,5 @@ users). Browse and Department Data are unaffected — they never call the LLM.
 | `/ask` always says the provider rate limit was hit | Groq's 200K tokens/day is spent. Resets daily. |
 | `course_content_search` never fires / semantic questions give SQL-only answers | `course_embeddings` is empty on Neon — run `python -m app.backfill_embeddings` locally. |
 | `grade_distributions` / `teachers_ranked_excellent` queries return nothing | Upstream hasn't published for the term. Expected. |
-| `/admin/ask-log` returns 404 | `ADMIN_TOKEN` isn't set. Set it and redeploy. |
+| `/admin/ask-log` always returns 403 | `ADMIN_TOKEN` isn't set on the server, or the `?token=` / `X-Admin-Token` you sent doesn't match it. (It 403s rather than 404s on purpose, so the response doesn't reveal whether the token is configured.) |
+| `/docs` returns 404 | Expected — set `ENABLE_DOCS` to turn it on. |

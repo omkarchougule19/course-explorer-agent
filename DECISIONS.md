@@ -952,3 +952,52 @@ data-load sequence, env var reference, the demand-driven refresh workflow,
 term-roll steps, the guardrail/log operations, free-tier limits, and a
 troubleshooting table. `render.yaml` gained the new env vars (all optional,
 `sync: false`).
+
+## Security hardening after the first red-team pass (2026-08-31)
+
+The `course-app-redteam` agent's first run (`security_findings.md`) returned
+1 high, 3 medium, 6 low, 0 critical. Fixes applied:
+
+**HIGH - `/ask` per-IP rate limit bypassable via `X-Forwarded-For`.** The IP
+comes from the first XFF hop, which any caller can forge, so per-IP is only
+friction. Added a **shared** `ASK_GLOBAL_PER_DAY` cap (default 250,
+`ask_log.global_over_limit`) checked before the per-IP limit - it counts all
+`answered`+`refused` calls in 24h and keys on nothing client-controlled, so
+it actually protects the Groq budget. New `global_limited` outcome. Kept
+per-IP as the nuisance filter.
+
+**MEDIUM - SQL agent has no read-only restriction.** `agent.py._db_uri()` now
+prefers `DATABASE_URL_RO` if set. `DEPLOYMENT.md` §3.5 gives the Neon
+`GRANT SELECT`-only role recipe. Every write path keeps the full-privilege
+`DATABASE_URL`. Defense in depth for the case where a jailbreak beats
+`SYSTEM_CONTEXT` - not a replacement for it.
+
+**MEDIUM - `/schedule/conflicts` O(n^2) DoS.** `ConflictCheckRequest.crns`
+capped at 50 items via `Field(max_length=50)`; `year`/`semester` bounded too.
+
+**MEDIUM - no security headers.** Added an HTTP middleware setting
+`Content-Security-Policy` (allows the page's own inline script/style + Google
+Fonts, `frame-ancestors 'none'`), `X-Frame-Options: DENY`,
+`X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, HSTS.
+
+**LOW fixes:**
+- Driver error text no longer returned to clients - `run_query`, the generic
+  exception handler, and the `/ask` failure paths now log the real error and
+  return a fixed generic message.
+- `/docs`, `/redoc`, `/openapi.json` disabled unless `ENABLE_DOCS` is set.
+- `/admin/ask-log` uses `hmac.compare_digest` and always returns 403 on any
+  failure (unset token, missing, or wrong) - the old 404-vs-403 split
+  revealed whether `ADMIN_TOKEN` was configured.
+- `/sync/request` subject validation tightened to ASCII `isascii() and
+  isalpha()`, length 2-12 (rejects Unicode look-alike letters and markup);
+  `record_request` clamps `pending_count` at 100,000.
+- UI: added an `esc()` HTML-escaper in `index.html` and `freshness.html`,
+  applied to every DB-sourced value that reaches an `innerHTML` string
+  (`instructor`, `description`, `subject`, timestamps). Latent stored XSS -
+  there's no write path to `sections` today, but the encoding should exist
+  regardless.
+
+Not changed (accepted): the per-IP limit still keys on a spoofable header by
+design (the global cap is the real control); `server: uvicorn` header
+(low value, Render-level concern); the timing side-channel on the admin
+token is now `compare_digest` so it's moot.

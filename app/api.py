@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app import db
 from app import sync_requests as sync_reqs
@@ -32,18 +32,55 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 
 STATIC_DIR = Path(__file__).parent.parent / "static"
 
+_DOCS_ON = bool(os.environ.get("ENABLE_DOCS"))
+
 app = FastAPI(
     title="UIUC Course Explorer Data Agent",
     description="Catalog of UIUC course, section, and enrollment data scraped from the public Course Explorer API.",
     version="1.0.0",
+    # Interactive docs and the raw OpenAPI schema are off unless ENABLE_DOCS
+    # is set - they're an information-disclosure surface not needed in prod.
+    docs_url="/docs" if _DOCS_ON else None,
+    redoc_url="/redoc" if _DOCS_ON else None,
+    openapi_url="/openapi.json" if _DOCS_ON else None,
 )
+
+# Baseline security headers on every response. CSP allows the page's own
+# inline <script>/<style> and the Google Fonts it loads; nothing else.
+_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Strict-Transport-Security": "max-age=63072000; includeSubDomains",
+    "Content-Security-Policy": (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src https://fonts.gstatic.com; "
+        "img-src 'self' data:; "
+        "connect-src 'self'; "
+        "frame-ancestors 'none'; "
+        "base-uri 'none'"
+    ),
+}
+
+
+@app.middleware("http")
+async def _add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    for k, v in _SECURITY_HEADERS.items():
+        response.headers.setdefault(k, v)
+    return response
 
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
-    # Last-resort safety net so a bug never surfaces as a raw stack trace to a
-    # client; specific routes should still catch what they can more precisely.
-    return JSONResponse(status_code=500, content={"detail": f"Unexpected server error: {exc}"})
+    # Last-resort safety net. Log the real error server-side; return a generic
+    # message so driver/SQL/stack details never reach the client.
+    import traceback
+    print(f"[unhandled] {request.method} {request.url.path}: {exc!r}", flush=True)
+    traceback.print_exc()
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
 @app.on_event("startup")
@@ -95,11 +132,14 @@ def get_conn():
 
 
 def run_query(conn: db.Connection, query: str, params: list):
-    """Run a SELECT and turn any database error into a clean 500 instead of crashing the route."""
+    """Run a SELECT and turn any database error into a clean 500 instead of
+    crashing the route. The driver error text is logged, not returned - it can
+    echo SQL fragments and backend internals."""
     try:
         return conn.execute(query, params).fetchall()
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Query failed: {exc}")
+        print(f"[query-failed] {exc!r}", flush=True)
+        raise HTTPException(status_code=500, detail="Query failed")
 
 
 class SectionOut(BaseModel):
@@ -262,8 +302,11 @@ def post_sync_request(payload: SyncRequest):
     ranks by when deciding what to re-scrape locally. No rate limit by design
     (see DECISIONS.md) - repeated clicks just raise the number."""
     subject = (payload.subject or "").strip().upper()
-    if not subject or len(subject) > 12 or not subject.isalpha():
-        raise HTTPException(status_code=400, detail="subject must be a short alphabetic code, e.g. MECH")
+    # ASCII letters only, 2-12 chars: real UIUC subject codes (CS, ECE, MATH,
+    # ...). isascii() + isalpha() together reject Unicode "letters" that could
+    # smuggle markup or just junk into the operator's demand panel.
+    if not (2 <= len(subject) <= 12 and subject.isascii() and subject.isalpha()):
+        raise HTTPException(status_code=400, detail="subject must be a 2-12 letter code, e.g. MECH")
     with get_conn() as conn:
         count = sync_reqs.record_request(conn, subject)
     return {"subject": subject, "pending_count": count}
@@ -274,12 +317,13 @@ class AskRequest(BaseModel):
 
 
 def _client_ip(request: Request) -> str:
-    """Best-effort client IP. Behind Render's proxy the real address is the
-    first hop in X-Forwarded-For; fall back to the socket peer for local runs.
-    Spoofable, but good enough for a soft per-IP guardrail."""
+    """Best-effort client IP for the per-IP guardrail. Behind Render's proxy
+    the client is the first X-Forwarded-For hop. This is trivially spoofable,
+    so the per-IP limit is only friction - the ASK_GLOBAL_PER_DAY cap, which
+    keys on nothing client-controlled, is the real budget protection."""
     xff = request.headers.get("x-forwarded-for")
     if xff:
-        return xff.split(",")[0].strip()
+        return xff.split(",")[0].strip()[:64]
     return request.client.host if request.client else "unknown"
 
 
@@ -305,6 +349,14 @@ def ask_agent(payload: AskRequest, request: Request):
                 detail=(f"That question is {len(question)} characters; the limit is "
                         f"{ask_log_mod.MAX_CHARS}. Ask something shorter and more specific."),
             )
+        if ask_log_mod.global_over_limit(conn):
+            ask_log_mod.record(conn, ip, question, "global_limited")
+            raise HTTPException(
+                status_code=429,
+                detail=("The assistant has reached its shared daily limit. Browse "
+                        "Sections and Department Data still work; try the assistant "
+                        "again tomorrow."),
+            )
         blocked, scope = ask_log_mod.over_limit(conn, ip)
         if blocked:
             ask_log_mod.record(conn, ip, question, "rate_limited")
@@ -318,7 +370,8 @@ def ask_agent(payload: AskRequest, request: Request):
     try:
         from app.agent import ask
     except ImportError as exc:
-        raise HTTPException(status_code=500, detail=f"Agent dependencies not installed: {exc}")
+        print(f"[ask] agent import failed: {exc!r}", flush=True)
+        raise HTTPException(status_code=500, detail="Assistant is unavailable")
 
     # agent.ask() catches setup/provider problems and returns them as a plain
     # string; this only guards against something truly unexpected.
@@ -327,9 +380,10 @@ def ask_agent(payload: AskRequest, request: Request):
         answer = ask(question)
     except Exception as exc:  # noqa: BLE001 - defense in depth
         latency = int((time.monotonic() - t0) * 1000)
+        print(f"[ask] agent raised: {exc!r}", flush=True)
         with get_conn() as conn:
             ask_log_mod.record(conn, ip, question, "error", str(exc), latency)
-        raise HTTPException(status_code=502, detail=f"Agent failed unexpectedly: {exc}")
+        raise HTTPException(status_code=502, detail="The assistant failed to answer. Try again shortly.")
 
     latency = int((time.monotonic() - t0) * 1000)
     outcome = ask_log_mod.classify_answer(answer)  # answered | refused | error
@@ -347,14 +401,16 @@ def admin_ask_log(
     limit: int = Query(default=100, le=1000, ge=1),
 ):
     """Recent /ask activity - question text, outcome, client IP, latency.
-    Disabled (404) unless ADMIN_TOKEN is set on the server; then requires it
-    via ?token= or the X-Admin-Token header."""
+    Requires the ADMIN_TOKEN env var to be set on the server AND supplied via
+    ?token= or the X-Admin-Token header. Always answers 403 on any failure
+    (unset, missing, or wrong) so the response doesn't reveal whether the
+    token is configured."""
+    import hmac
+
     expected = os.environ.get("ADMIN_TOKEN")
-    if not expected:
-        raise HTTPException(status_code=404, detail="Not found")
     supplied = token or request.headers.get("x-admin-token")
-    if not supplied or supplied != expected:
-        raise HTTPException(status_code=403, detail="Bad or missing admin token")
+    if not expected or not supplied or not hmac.compare_digest(supplied, expected):
+        raise HTTPException(status_code=403, detail="Forbidden")
     with get_conn() as conn:
         return {"entries": ask_log_mod.recent(conn, limit=limit, ip=ip, outcome=outcome)}
 
@@ -397,9 +453,11 @@ def get_stats():
 
 
 class ConflictCheckRequest(BaseModel):
-    crns: list[str]
-    year: int
-    semester: str
+    # Cap the list: the comparison is O(n^2) over meetings, and a real
+    # schedule is a handful of sections. 50 is generous.
+    crns: list[str] = Field(max_length=50)
+    year: int = Field(ge=2000, le=2100)
+    semester: str = Field(max_length=10)
 
 
 _TIME_FMT = "%I:%M %p"

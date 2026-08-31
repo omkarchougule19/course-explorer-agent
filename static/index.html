@@ -97,7 +97,7 @@
   </div>
 
   <footer>
-    course-explorer-agent &middot; <a href="/api">API info</a> &middot; <a href="/docs">API docs</a>
+    course-explorer-agent &middot; <a href="/api">API info</a> &middot; <a href="/freshness.html">Data freshness</a>
   </footer>
 
 </div>
@@ -105,6 +105,13 @@
 <script src="/time.js"></script>
 <script>
   const $ = (id) => document.getElementById(id);
+
+  // HTML-escape any value that goes into an innerHTML string. Section
+  // instructor / description and department codes are DB-sourced text and
+  // must never be interpolated raw.
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
 
   async function getJSON(url) {
     const res = await fetch(url);
@@ -176,11 +183,12 @@
     const labels = ['Subj', 'Course', 'Section', 'CRN', 'Instructor', 'Status', 'Credit'];
     let html = '<table><thead><tr>' + labels.map(l => `<th>${l}</th>`).join('') + '</tr></thead><tbody>';
     for (const row of rows) {
-      const titleAttr = row.description ? ` title="${row.description.replace(/"/g, '&quot;')}"` : '';
+      const titleAttr = row.description ? ` title="${esc(row.description)}"` : '';
       html += `<tr${titleAttr}>` + cols.map(c => {
-        const val = row[c] ?? '—';
+        const raw = row[c] ?? '—';
+        const val = esc(raw);
         if (c === 'enrollment_status') {
-          const cls = /open/i.test(val) ? 'status-open' : /closed/i.test(val) ? 'status-closed' : '';
+          const cls = /open/i.test(raw) ? 'status-open' : /closed/i.test(raw) ? 'status-closed' : '';
           return `<td class="${cls}">${val}</td>`;
         }
         return `<td>${val}</td>`;
@@ -302,14 +310,15 @@
     }
     let html = '<table><thead><tr><th>Subject</th><th>Sections</th><th>Last Synced</th><th>Requests</th><th></th></tr></thead><tbody>';
     for (const r of rows.slice(0, 300)) {
+      const subj = esc(r.subject);
       const synced = r.last_synced_at;
       const fresh = synced && (Date.now() - parseUtc(synced).getTime()) < SEVEN_DAYS;
       const when = synced ? formatRelativeTime(synced) : 'never';
       const action = fresh
         ? '<span class="status-open">current</span>'
-        : `<button type="button" class="sync-btn" data-subject="${r.subject}">Sync</button>`;
-      html += `<tr><td>${r.subject}</td><td>${r.section_count}</td><td>${when}</td>`
-        + `<td>${r.pending_count || '—'}</td><td>${action}</td></tr>`;
+        : `<button type="button" class="sync-btn" data-subject="${subj}">Sync</button>`;
+      html += `<tr><td>${subj}</td><td>${Number(r.section_count) || 0}</td><td>${esc(when)}</td>`
+        + `<td>${Number(r.pending_count) || '—'}</td><td>${action}</td></tr>`;
     }
     html += '</tbody></table>';
     wrap.innerHTML = html;

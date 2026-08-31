@@ -75,7 +75,10 @@ def record_request(conn: db.Connection, subject: str) -> int:
         "SELECT pending_count FROM sync_requests WHERE subject = ?", (subject,)
     ).fetchone()
     if row:
-        new_count = int(row["pending_count"]) + 1
+        # Clamp: this is an unauthenticated counter with no rate limit, so cap
+        # it well above any plausible real demand rather than let it be pumped
+        # unboundedly.
+        new_count = min(int(row["pending_count"]) + 1, 100_000)
         conn.execute(
             "UPDATE sync_requests SET pending_count = ?, last_requested_at = ? WHERE subject = ?",
             (new_count, now, subject),

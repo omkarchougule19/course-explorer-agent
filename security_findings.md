@@ -240,3 +240,22 @@ on the local SQLite copy, `data/courses.db` backed up and restored. 9 LLM-backed
   `/sync/request` for one subject: no errors, no lost increments (SQLite serialises
   writes). The `level` path (fetch up to 5000 rows, filter in Python) ran in ~60-100 ms
   each - not a meaningful amplification here.
+
+---
+
+## Remediation: 2026-08-31 (all findings from the run above)
+
+| Finding | Status | Fix |
+|---|---|---|
+| HIGH - XFF rate-limit bypass | mitigated | Added `ASK_GLOBAL_PER_DAY` shared cap (default 250) in `ask_log.global_over_limit`, checked before per-IP in `/ask`. Keys on nothing client-controlled. Per-IP kept as friction. |
+| MED - `/schedule/conflicts` O(n^2) DoS | fixed | `ConflictCheckRequest.crns` capped at 50 (`Field(max_length=50)`); `year`/`semester` bounded. |
+| MED - SQL agent not read-only | mitigated (needs operator step) | `agent.py._db_uri()` prefers `DATABASE_URL_RO`; `DEPLOYMENT.md` §3.5 has the Neon SELECT-only role recipe. Prompt guard remains the first layer. |
+| MED - no security headers | fixed | HTTP middleware adds CSP, X-Frame-Options DENY, nosniff, Referrer-Policy, HSTS. |
+| LOW - driver error text leaked | fixed | `run_query`, generic handler, `/ask` paths log the real error, return generic text. |
+| LOW - no output encoding (latent XSS) | fixed | `esc()` helper in `index.html` / `freshness.html`, applied to all DB-sourced values in `innerHTML` strings. |
+| LOW - `/sync/request` accepts junk codes | fixed | ASCII `isascii()+isalpha()`, len 2-12; `pending_count` clamped at 100k. |
+| LOW - `/docs` `/openapi.json` public | fixed | disabled unless `ENABLE_DOCS` set. |
+| LOW - admin token `!=` + 404/403 oracle | fixed | `hmac.compare_digest`; always 403 on any failure. |
+| LOW - `server: uvicorn` fingerprint | accepted | low value; Render-level concern. |
+
+Verified locally against Neon: headers present on `/`; `/docs` + `/openapi.json` 404; `/admin/ask-log` 403 with no `ADMIN_TOKEN`; `/schedule/conflicts` with 60 CRNs -> 422; `/sync/request` unicode/markup/hyphen/digit codes rejected; `/ask` with 250 seeded `answered` rows -> 429 "shared daily limit". Test rows cleared.

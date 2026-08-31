@@ -43,6 +43,10 @@
 <script>
   const $ = (id) => document.getElementById(id);
 
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+
   async function getJSON(url) {
     const res = await fetch(url);
     const body = await res.json().catch(() => ({}));
@@ -77,10 +81,10 @@
       const cls = ageClass(row.last_updated);
       const abs = row.last_updated ? parseUtc(row.last_updated).toLocaleString() : '—';
       html += `<tr>`
-        + `<td>${row.subject}</td>`
-        + `<td>${row.semester} ${row.year}</td>`
-        + `<td>${row.section_count}</td>`
-        + `<td class="${cls}" title="${abs}">${formatRelativeTime(row.last_updated)}</td>`
+        + `<td>${esc(row.subject)}</td>`
+        + `<td>${esc(row.semester)} ${Number(row.year) || ''}</td>`
+        + `<td>${Number(row.section_count) || 0}</td>`
+        + `<td class="${cls}" title="${esc(abs)}">${esc(formatRelativeTime(row.last_updated))}</td>`
         + `</tr>`;
     }
     html += '</tbody></table>';

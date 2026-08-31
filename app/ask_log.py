@@ -10,12 +10,13 @@ Table `ask_log`:
     id, ts (UTC ISO), client_ip, question, outcome, answer_preview, latency_ms
 
 `outcome`:
-    answered      - the agent produced a real answer
-    refused       - the agent declined it as out of scope (heuristic match on
-                    the answer text)
-    rate_limited  - blocked before the LLM by the per-IP limit
-    too_long      - blocked before the LLM by the length cap
-    error         - the agent or LLM provider errored (includes quota)
+    answered       - the agent produced a real answer
+    refused        - the agent declined it as out of scope (heuristic match on
+                     the answer text)
+    rate_limited   - blocked before the LLM by the per-IP limit
+    global_limited - blocked before the LLM by the shared daily cap
+    too_long       - blocked before the LLM by the length cap
+    error          - the agent or LLM provider errored (includes quota)
 
 Only `answered` and `refused` count toward the rate limit - both mean an LLM
 call was actually spent. `error` doesn't, so a provider outage never locks
@@ -28,6 +29,10 @@ Tunable via env vars, all with sane defaults:
     ASK_MAX_CHARS       (500)  reject questions longer than this
     ASK_RATE_PER_HOUR   (10)   max LLM-spending questions per IP per hour
     ASK_RATE_PER_DAY    (40)   ... per IP per day
+    ASK_GLOBAL_PER_DAY  (250)  max LLM-spending questions across ALL clients
+                               per day - the real backstop for the Groq
+                               budget, since the per-IP limit keys on a
+                               spoofable X-Forwarded-For
 """
 
 import os
@@ -38,6 +43,7 @@ from app import db
 MAX_CHARS = int(os.environ.get("ASK_MAX_CHARS", "500"))
 RATE_PER_HOUR = int(os.environ.get("ASK_RATE_PER_HOUR", "10"))
 RATE_PER_DAY = int(os.environ.get("ASK_RATE_PER_DAY", "40"))
+GLOBAL_PER_DAY = int(os.environ.get("ASK_GLOBAL_PER_DAY", "250"))
 
 # Substrings that mark the agent's own scope-refusal, used only to tag the
 # `refused` outcome for the dashboard. Loose on purpose - it's a signal, not
@@ -118,6 +124,20 @@ def over_limit(conn: db.Connection, client_ip: str) -> tuple[bool, str]:
     if count_since(timedelta(days=1)) >= RATE_PER_DAY:
         return True, "day"
     return False, ""
+
+
+def global_over_limit(conn: db.Connection) -> bool:
+    """True once the whole app has spent ASK_GLOBAL_PER_DAY LLM calls in the
+    trailing 24h (answered + refused). Unlike over_limit() this keys on
+    nothing client-controlled, so it holds even against X-Forwarded-For
+    spoofing - it's the actual protection for the provider's daily budget."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(timespec="seconds")
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM ask_log "
+        "WHERE ts >= ? AND outcome IN ('answered', 'refused')",
+        (cutoff,),
+    ).fetchone()
+    return (int(row["n"]) if row else 0) >= GLOBAL_PER_DAY
 
 
 def record(conn: db.Connection, client_ip: str, question: str, outcome: str,

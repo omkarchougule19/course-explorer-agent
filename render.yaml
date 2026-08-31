@@ -28,6 +28,12 @@ services:
       # first deploy.
       - key: DATABASE_URL
         sync: false
+      # Recommended. A Neon role with only SELECT granted - the LLM agent's
+      # SQL tool uses this if set, so a jailbreak can't run DDL/DML. See
+      # DEPLOYMENT.md "Read-only role for the assistant". Falls back to
+      # DATABASE_URL when unset.
+      - key: DATABASE_URL_RO
+        sync: false
       # Required for the /ask assistant. Free key from console.groq.com.
       # GEMINI_API_KEY / OPENAI_API_KEY are optional fallbacks, tried in that
       # order only if GROQ_API_KEY is unset (see app/agent.py).
@@ -42,10 +48,18 @@ services:
       - key: ADMIN_TOKEN
         sync: false
       # Optional guardrail tuning for /ask (see app/ask_log.py). Defaults:
-      # 10/hour, 40/day per client IP, 500-char question cap.
+      # per-IP 10/hour and 40/day, a shared 250/day cap across all clients
+      # (the real budget backstop - per-IP keys on a spoofable header), and a
+      # 500-char question cap.
       - key: ASK_RATE_PER_HOUR
         sync: false
       - key: ASK_RATE_PER_DAY
         sync: false
+      - key: ASK_GLOBAL_PER_DAY
+        sync: false
       - key: ASK_MAX_CHARS
+        sync: false
+      # Optional. Set to any value to expose /docs, /redoc, /openapi.json.
+      # Off by default - it's an information-disclosure surface.
+      - key: ENABLE_DOCS
         sync: false

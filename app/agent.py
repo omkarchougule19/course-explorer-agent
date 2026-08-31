@@ -108,11 +108,18 @@ Rules:
 
 
 def _db_uri() -> str:
-    """SQLAlchemy connection string for whichever backend db.py would connect
-    to. Neon/most Postgres providers hand out `postgres://` or bare
+    """SQLAlchemy connection string for the agent's SQL tool.
+
+    Prefers DATABASE_URL_RO if set - point that at a Postgres role with only
+    SELECT granted, so a prompt-injection that gets past SYSTEM_CONTEXT still
+    can't run DDL/DML (the LangChain toolkit has no statement allowlist). See
+    DEPLOYMENT.md for creating that role. Falls back to DATABASE_URL, then the
+    local SQLite file.
+
+    Neon/most Postgres providers hand out `postgres://` or bare
     `postgresql://` URLs; SQLAlchemy's psycopg2 dialect needs the explicit
     `postgresql+psycopg2://` form."""
-    database_url = os.environ.get("DATABASE_URL")
+    database_url = os.environ.get("DATABASE_URL_RO") or os.environ.get("DATABASE_URL")
     if database_url:
         if database_url.startswith("postgres://"):
             database_url = "postgresql://" + database_url[len("postgres://"):]
