@@ -93,6 +93,10 @@ Rules:
 - LIMIT unless the question asks for a count/aggregate.
 - Empty result: say so plainly, don't guess - grade/TRE data may simply not
   be published yet for a term (real upstream lag).
+- Data is a per-department snapshot from the last sync, not live. When an
+  answer depends on something that changes often - enrollment_status, open
+  seats, a just-added section - add a short note that it reflects the last
+  sync for that department and may be out of date.
 - "What is X about" questions: summarize description in your own words
   (2-3 sentences), never paste it verbatim. If NULL, say no description was
   scraped - don't invent one.

@@ -35,9 +35,22 @@
     <form id="browse-form">
       <div class="field-row">
         <div class="field">
+          <label for="f-term">Term</label>
+          <select id="f-term"><option value="">All terms</option></select>
+        </div>
+        <div class="field">
           <label for="f-subject">Subject</label>
           <select id="f-subject">
             <option value="">All</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="f-level">Level</label>
+          <select id="f-level">
+            <option value="">All levels</option>
+            <option value="undergrad">Undergraduate (&lt;400)</option>
+            <option value="400level">400-level (UG + grad)</option>
+            <option value="grad">Graduate (500+)</option>
           </select>
         </div>
         <div class="field">
@@ -55,6 +68,7 @@
         <button type="submit">Run Query</button>
       </div>
     </form>
+    <p class="hint">Data is a per-department snapshot from the last sync, not live registrar status. Each department's freshness and a refresh button are in <a href="#dept-panel">Department Data</a> below.</p>
     <div class="results-wrap" id="results-wrap"></div>
   </div>
 
@@ -67,7 +81,19 @@
       <input id="ask-input" type="text" placeholder="e.g. who teaches CS 225 this semester?" autocomplete="off">
       <button type="submit">Send</button>
     </form>
-    <p class="hint">Requires GROQ_API_KEY to be set on the server. Answers come from a SQL agent querying this local database, not the live internet.</p>
+    <p class="hint">Requires GROQ_API_KEY to be set on the server. Answers come from a SQL agent querying this database, not the live internet, and reflect each department's last sync — not live enrollment.</p>
+  </div>
+
+  <div class="panel" id="dept-panel">
+    <h2>Department Data</h2>
+    <p class="hint">Each department is refreshed on demand. Hit <strong>Sync</strong> to request a refresh — it's picked up within 24 hours (departments synced in the last 7 days are already current). The number is how many refreshes have been requested since the last sync.</p>
+    <div class="field-row" style="margin-bottom:12px;">
+      <div class="field" style="flex:1 1 220px;">
+        <label for="dept-filter">Filter</label>
+        <input id="dept-filter" type="text" placeholder="type a subject code, e.g. PHYS">
+      </div>
+    </div>
+    <div class="results-wrap" id="dept-wrap"><p class="empty-state">loading…</p></div>
   </div>
 
   <footer>
@@ -170,11 +196,19 @@
   $('browse-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const params = new URLSearchParams();
+    const term = $('f-term').value.trim();        // "2026|fall" or ""
     const subject = $('f-subject').value.trim();
+    const level = $('f-level').value.trim();
     const course = $('f-course').value.trim();
     const instructor = $('f-instructor').value.trim();
     const limit = $('f-limit').value.trim();
+    if (term) {
+      const [y, s] = term.split('|');
+      params.set('year', y);
+      params.set('semester', s);
+    }
     if (subject) params.set('subject', subject);
+    if (level) params.set('level', level);
     if (course) params.set('course_number', course);
     if (instructor) params.set('instructor', instructor);
     if (limit) params.set('limit', limit);
@@ -231,9 +265,98 @@
     }
   });
 
+  // ---- Term selector ----------------------------------------------------
+  const CURRENT_TERM = 'fall 2026';  // keep in sync with app/terms.py
+
+  async function loadTerms() {
+    try {
+      const stats = await getJSON('/stats');
+      const select = $('f-term');
+      const order = { spring: 0, summer: 1, fall: 2 };
+      const terms = (stats.terms_covered || []).slice().sort((a, b) => {
+        const [sa, ya] = a.split(' '), [sb, yb] = b.split(' ');
+        return (yb - ya) || (order[sb] - order[sa]);
+      });
+      for (const t of terms) {
+        const [sem, yr] = t.split(' ');
+        const opt = document.createElement('option');
+        opt.value = `${yr}|${sem}`;
+        opt.textContent = t;
+        if (t === CURRENT_TERM) opt.selected = true;
+        select.appendChild(opt);
+      }
+    } catch (e) { /* term filter just stays "All terms" */ }
+  }
+
+  // ---- Department data panel ------------------------------------------------
+  const SEVEN_DAYS = 7 * 86400000;
+  let deptRows = [];
+
+  function renderDepartments() {
+    const wrap = $('dept-wrap');
+    const q = $('dept-filter').value.trim().toUpperCase();
+    const rows = q ? deptRows.filter(r => r.subject.includes(q)) : deptRows;
+    if (!rows.length) {
+      wrap.innerHTML = '<p class="empty-state">No departments match.</p>';
+      return;
+    }
+    let html = '<table><thead><tr><th>Subject</th><th>Sections</th><th>Last Synced</th><th>Requests</th><th></th></tr></thead><tbody>';
+    for (const r of rows.slice(0, 300)) {
+      const synced = r.last_synced_at;
+      const fresh = synced && (Date.now() - parseUtc(synced).getTime()) < SEVEN_DAYS;
+      const when = synced ? formatRelativeTime(synced) : 'never';
+      const action = fresh
+        ? '<span class="status-open">current</span>'
+        : `<button type="button" class="sync-btn" data-subject="${r.subject}">Sync</button>`;
+      html += `<tr><td>${r.subject}</td><td>${r.section_count}</td><td>${when}</td>`
+        + `<td>${r.pending_count || '—'}</td><td>${action}</td></tr>`;
+    }
+    html += '</tbody></table>';
+    wrap.innerHTML = html;
+  }
+
+  async function loadDepartments() {
+    try {
+      const data = await getJSON('/sync/status');
+      deptRows = data.departments || [];
+      renderDepartments();
+    } catch (e) {
+      $('dept-wrap').innerHTML = `<p class="empty-state">Couldn't load department data: ${e.message}</p>`;
+    }
+  }
+
+  $('dept-filter').addEventListener('input', renderDepartments);
+
+  $('dept-wrap').addEventListener('click', async (e) => {
+    const btn = e.target.closest('.sync-btn');
+    if (!btn) return;
+    const subject = btn.dataset.subject;
+    btn.disabled = true;
+    btn.textContent = '…';
+    try {
+      const res = await fetch('/sync/request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subject }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.detail || `Request failed (${res.status})`);
+      btn.textContent = 'Requested ✓';
+      const row = deptRows.find(r => r.subject === subject);
+      if (row) row.pending_count = body.pending_count;
+      const cell = btn.closest('tr').children[3];
+      if (cell) cell.textContent = body.pending_count;
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = 'Retry';
+    }
+  });
+
   loadStats();
+  loadTerms();
   loadSubjects();
   loadFreshness();
+  loadDepartments();
 </script>
 </body>
 </html>

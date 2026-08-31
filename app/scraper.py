@@ -553,9 +553,35 @@ def run(
     concurrency: int = 10,
     skip_recent_hours: Optional[float] = None,
     section_delay: float = 0.1,
+    quiet_errors: bool = False,
 ):
+    """Scrape `subjects` (or every subject) for one term into the active
+    database.
+
+    Returns a summary dict::
+
+        {
+          "total": <int sections written this run>,
+          "skipped_total": <int courses skipped as recently scraped>,
+          "aborted": <str reason> | None,   # set if a pre-flight check failed
+          "per_subject": {
+            "<SUBJ>": {"courses_found": <int|None>, "sections_written": <int>,
+                       "skipped_recent": <int>},
+            ...
+          },
+        }
+
+    `courses_found` is the count from the subject-level listing *before* the
+    recent-skip filter, so a caller (e.g. app/sync_requests.py) can tell a
+    genuine "this subject has courses" run from a soft-rejected one that came
+    back empty. `None` means the listing request itself failed.
+
+    `quiet_errors=True` collapses the multi-line pre-flight failure messages
+    to a single line - for programmatic callers that surface their own error.
+    """
     conn = init_db()
     embeddings.init_course_embeddings_table(conn)  # no-op on SQLite, see embeddings.py
+    result: dict = {"total": 0, "skipped_total": 0, "aborted": None, "per_subject": {}}
 
     print("Warming up session (visiting the schedule page like a browser first)...", flush=True)
     warmup(year, semester)
@@ -563,31 +589,37 @@ def run(
     probe_url = f"{BASE_URL}/{year}/{semester}.xml"
     if fetch_xml(probe_url) is None:
         conn.close()
-        print(
-            f"\nCan't reach the Course Explorer API ({probe_url}) even after warming up "
-            f"with a normal page load first. This isn't a bug in the scraper logic - the "
-            f"request is being rejected before it even gets to fetching course data. "
-            f"Worth checking:\n"
-            f"  - Open that exact URL directly in your own browser. If it 403s there too, "
-            f"the API is currently blocking automated access outright (possibly heavier "
-            f"than usual during fall registration), and no amount of header tweaking here "
-            f"will fix it - we'd need to fall back to scraping the HTML schedule pages instead.\n"
-            f"  - Try again in a while, this kind of blocking is often temporary.\n"
-            f"  - Try a different network (e.g. mobile hotspot) to rule out an IP-based block.\n",
-            flush=True,
-        )
-        return
+        result["aborted"] = "term-probe-failed"
+        if quiet_errors:
+            print(f"  [warn] {semester} {year}: term probe ({probe_url}) rejected - "
+                  f"skipping this term.", flush=True)
+        else:
+            print(
+                f"\nCan't reach the Course Explorer API ({probe_url}) even after warming up "
+                f"with a normal page load first. This isn't a bug in the scraper logic - the "
+                f"request is being rejected before it even gets to fetching course data. "
+                f"Worth checking:\n"
+                f"  - Open that exact URL directly in your own browser. If it 403s there too, "
+                f"the API is currently blocking automated access outright (possibly heavier "
+                f"than usual during fall registration), and no amount of header tweaking here "
+                f"will fix it - we'd need to fall back to scraping the HTML schedule pages instead.\n"
+                f"  - Try again in a while, this kind of blocking is often temporary.\n"
+                f"  - Try a different network (e.g. mobile hotspot) to rule out an IP-based block.\n",
+                flush=True,
+            )
+        return result
 
     target_subjects = subjects or list_subjects(year, semester)
 
     if not target_subjects:
         conn.close()
+        result["aborted"] = "no-subjects"
         print(
             f"No subjects found for {semester} {year}. Double check the year/semester "
             f"(e.g. --year 2026 --semester fall) or --subjects codes, then try again.",
             flush=True,
         )
-        return
+        return result
 
     mode = "fast" if fast else "detailed"
     print(
@@ -611,10 +643,16 @@ def run(
                 courses = list_courses(year, semester, subject)
             except Exception as exc:  # noqa: BLE001 - keep the run alive regardless of cause
                 tqdm.write(f"  [warn] couldn't list courses for {subject}, skipping subject: {exc}")
+                result["per_subject"][subject] = {
+                    "courses_found": None, "sections_written": 0, "skipped_recent": 0,
+                }
                 continue
 
             if not courses:
                 tqdm.write(f"  [warn] no courses found for {subject} in {semester} {year}, skipping")
+                result["per_subject"][subject] = {
+                    "courses_found": 0, "sections_written": 0, "skipped_recent": 0,
+                }
                 continue
 
             fresh_courses: set[str] = set()
@@ -680,6 +718,11 @@ def run(
 
             note = f", {skipped_here} skipped (recent)" if skipped_here else ""
             tqdm.write(f"  [{subject}] {len(courses)} courses{note}, {subject_sections} sections (running total: {total})")
+            result["per_subject"][subject] = {
+                "courses_found": len(courses),
+                "sections_written": subject_sections,
+                "skipped_recent": skipped_here,
+            }
 
         subject_bar.close()
         target = "Neon Postgres (DATABASE_URL)" if db.is_postgres() else str(DB_PATH)
@@ -689,6 +732,7 @@ def run(
         print(summary, flush=True)
     except KeyboardInterrupt:
         subject_bar.close()
+        result["aborted"] = "interrupted"
         print(
             f"\nInterrupted. {total} section(s) saved so far are safe in "
             f"{'Neon Postgres' if db.is_postgres() else DB_PATH} "
@@ -698,6 +742,10 @@ def run(
         )
     finally:
         conn.close()
+
+    result["total"] = total
+    result["skipped_total"] = skipped_total
+    return result
 
 
 if __name__ == "__main__":

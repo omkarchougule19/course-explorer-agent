@@ -849,3 +849,66 @@ Live verification (`ask(..., verbose=True)` against `DATABASE_URL` = Neon):
 
 The RAG section of `implementation_plan.md` is updated from "structurally
 complete but untested against a live Neon connection" to verified.
+
+## Demand-driven, department-level refresh (no scheduled full re-scrape) (2026-08-31)
+
+With the full monthly scrape abandoned (the WAF soft-block, see Path B), the
+question was how deployed users ever get fresher data than the migration
+snapshot. Decided: **on-demand, per department, operator-processed.**
+
+**Model**
+* Neon holds the last-synced snapshot. Every section carries `scraped_at`;
+  "last synced" for a department = `MAX(scraped_at)` over its sections.
+* New `sync_requests(subject, pending_count, last_requested_at)` table. The
+  UI's "Department Data" panel lists every department with its freshness and,
+  when it's older than 7 days, a **Sync** button. Clicking it does
+  `POST /sync/request`, which increments that department's `pending_count`.
+* **No auth, no session, no rate limit** - the user's explicit call. Repeated
+  clicks just raise the counter; the operator ranks departments by it.
+  Rejected earlier designs: signed-cookie 3-per-4h cap (unneeded complexity
+  for a counter nobody can really abuse into anything worse than a long
+  pending list), IP-based limit (campus NAT makes students share a quota),
+  localStorage (pointless).
+* Processing is manual and local: `python -m app.sync_requests --list` ranks
+  departments by demand; `--run DEPT [DEPT...]` (or `--run --top N`) refreshes
+  them from the operator's residential IP, then subtracts the demand that
+  existed when each department's sync started (clicks during the sync
+  survive). Rejected: emailing the operator on each click (SMTP creds /
+  deliverability on the Render app for marginal value) and a scheduled local
+  run (operator wanted to eyeball demand and stop at the WAF wall himself).
+
+**Term scope of a sync:** current registration term always, plus the next
+term **only if UIUC has published it** (one probe to the term-level XML at
+the start of a `--run`). Syncing all five `terms.py` active terms per
+department would be 5x the WAF exposure for data students rarely need.
+
+**Wall detection:** `scraper.run()` now returns a summary dict with
+`per_subject[SUBJ]["courses_found"]` (count from the subject listing, before
+the recent-skip filter). If a department that has sections on file comes back
+with `courses_found == 0` for the current term, that's a soft-reject; after
+2 such departments in a row `--run` stops and reports. Genuinely-empty
+departments (cross-list rubrics with no real courses) have no prior sections,
+so they don't trip it.
+
+**Staleness is shown, not hidden:** the browse panel carries a "per-department
+snapshot, not live" note; the Department Data panel shows each department's
+age; and `SYSTEM_CONTEXT` now tells the agent to flag that time-sensitive
+answers (enrollment status, open seats) reflect the last sync and may be
+stale. Per the user: "we are showing the last synced date... give results
+according to that data and give disclaimer about it."
+
+**Recent-skip on re-sync:** `--run` passes `skip_recent_hours = 7*24` -
+"nothing changes in 7 days" - so re-syncing a department touched in the last
+week is a near no-op, and the UI hides the Sync button for those.
+
+**Other UI in this change (the "various ways to see content" ask):** the
+browse form gains a **Term** selector (defaults to the current term; before
+this, `/sections` silently mixed all terms) and a 3-way **Level** filter -
+Undergraduate (<400), 400-level (UG + grad), Graduate (500+) - derived from
+the leading digits of `course_number` (TEXT, can carry a trailing letter, so
+filtered in Python, not via a non-portable SQL CAST). UIUC's ranges are from
+catalog.illinois.edu / the provost course guidelines.
+
+**Also:** `scraper.run()` gained a `quiet_errors` flag so `sync_requests.py`
+doesn't print the full multi-line "can't reach the API" essay per department
+when a term probe fails.

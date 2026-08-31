@@ -22,6 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app import db
+from app import sync_requests as sync_reqs
 from app.db import DB_PATH
 
 load_dotenv(Path(__file__).parent.parent / ".env")
@@ -54,6 +55,20 @@ def _warmup_embeddings():
     if db.is_postgres():
         from app import embeddings
         embeddings.warmup()
+
+
+@app.on_event("startup")
+def _ensure_sync_table():
+    """Create the sync_requests table so POST /sync/request works from a fresh
+    database, before the operator CLI has ever run."""
+    try:
+        conn = db.get_connection()
+    except Exception:
+        return  # DB unreachable at boot - routes will surface it per-request
+    try:
+        sync_reqs.init_table(conn)
+    finally:
+        conn.close()
 
 
 @contextmanager
@@ -153,6 +168,28 @@ def get_courses(subject: str, year: Optional[int] = None, semester: Optional[str
     return {"subject": subject.strip().upper(), "courses": [dict(r) for r in rows]}
 
 
+def _course_level(course_number: Optional[str]) -> Optional[str]:
+    """UIUC course-number convention (catalog.illinois.edu): <400 undergrad,
+    400-499 undergrad + graduate, >=500 graduate. Returns 'undergrad',
+    '400level', 'grad', or None if no leading number can be read."""
+    if not course_number:
+        return None
+    digits = ""
+    for ch in str(course_number):
+        if ch.isdigit():
+            digits += ch
+        else:
+            break
+    if not digits:
+        return None
+    n = int(digits)
+    if n >= 500:
+        return "grad"
+    if n >= 400:
+        return "400level"
+    return "undergrad"
+
+
 @app.get("/sections", response_model=list[SectionOut])
 def get_sections(
     subject: Optional[str] = None,
@@ -160,6 +197,7 @@ def get_sections(
     year: Optional[int] = None,
     semester: Optional[str] = None,
     instructor: Optional[str] = None,
+    level: Optional[str] = Query(default=None, description="undergrad | 400level | grad"),
     limit: int = Query(default=100, le=1000, ge=1),
 ):
     """Query individual sections with optional filters."""
@@ -180,12 +218,51 @@ def get_sections(
     if instructor:
         query += " AND instructor LIKE ?"
         params.append(f"%{instructor}%")
+
+    # Level is derived from the course number, which is stored as TEXT and
+    # can carry a trailing letter ("492A") - not something to CAST portably
+    # in SQL. Filter it in Python: pull a wider set (capped), then trim to
+    # `limit`. Without a level filter, keep the plain SQL LIMIT.
+    level = level.lower() if level else None
+    if level in ("undergrad", "400level", "grad"):
+        query += " LIMIT ?"
+        params.append(min(5000, max(limit * 20, 1000)))
+        with get_conn() as conn:
+            rows = run_query(conn, query, params)
+        filtered = [dict(r) for r in rows if _course_level(r["course_number"]) == level]
+        return filtered[:limit]
+
     query += " LIMIT ?"
     params.append(limit)
-
     with get_conn() as conn:
         rows = run_query(conn, query, params)
     return [dict(r) for r in rows]
+
+
+@app.get("/sync/status")
+def get_sync_status():
+    """Per-department demand + freshness for the UI's Departments panel and
+    the operator CLI: pending sync-request count, last-synced age, section
+    count. Public, no auth - it's not sensitive."""
+    with get_conn() as conn:
+        return {"departments": sync_reqs.status(conn)}
+
+
+class SyncRequest(BaseModel):
+    subject: str
+
+
+@app.post("/sync/request")
+def post_sync_request(payload: SyncRequest):
+    """Register demand to refresh one department. Bumps a counter the operator
+    ranks by when deciding what to re-scrape locally. No rate limit by design
+    (see DECISIONS.md) - repeated clicks just raise the number."""
+    subject = (payload.subject or "").strip().upper()
+    if not subject or len(subject) > 12 or not subject.isalpha():
+        raise HTTPException(status_code=400, detail="subject must be a short alphabetic code, e.g. MECH")
+    with get_conn() as conn:
+        count = sync_reqs.record_request(conn, subject)
+    return {"subject": subject, "pending_count": count}
 
 
 class AskRequest(BaseModel):
