@@ -321,3 +321,38 @@ Scope: out-of-scope
 A: Declines - "I don't have information about Stanford courses" - and offers to find UIUC AI courses instead.
 Verdict: satisfactory
 Reason: Does not fabricate a Stanford course list. Correctly scopes to UIUC and offers the legitimate adjacent query.
+
+## Run: 2026-08-31 21:10 (4 in-scope validated against live Neon, 1 blocked by quota)
+
+Post-feature validation (term/level filters, sync_requests, freshness disclaimer,
+migrated Neon data). Answers cross-checked directly against the Neon database.
+
+Q: who teaches CS 225 in fall 2026
+Scope: in-scope
+A: Beckman, M and Solomon, B; notes several sections have a null instructor field.
+Verdict: satisfactory
+Reason: Matches Neon exactly - DISTINCT instructor = {Beckman M, Solomon B, NULL}, 8 null rows. NULL handled honestly.
+
+Q: how many graduate-level CS sections (course number 500 or above) are there in fall 2026
+Scope: in-scope
+A: 95.
+Verdict: satisfactory
+Reason: Matches Neon (95 sections with leading course number >= 500) and agrees with the app's own /sections?level=grad count - the agent's SQL threshold logic and the API's Python level filter are consistent.
+
+Q: what days and times does CS 225 meet in fall 2026
+Scope: in-scope
+A: Full 12-row table (CRN, meeting type, days, start-end, building, room); notes the 2 lecture CRNs share one schedule; appends "reflects the most recent catalog sync and may be out-of-date".
+Verdict: satisfactory
+Reason: All 12 meetings rows match Neon exactly. The freshness caveat is the new SYSTEM_CONTEXT instruction firing correctly on a time-sensitive answer.
+
+Q: does ECON 202 satisfy a quantitative reasoning gen ed requirement
+Scope: in-scope
+A: Yes - listed with QR code QR1 in the spring 2023 gen-ed snapshot.
+Verdict: satisfactory
+Reason: Matches gen_ed_categories on Neon (ECON 202, qr='QR1', "Economic Statistics I").
+
+Q: which courses have descriptions about databases
+Scope: in-scope (RAG / course_content_search)
+A: (not answered - Groq daily token cap: "The LLM provider's rate limit was hit.")
+Verdict: incomplete
+Reason: Quota exhausted mid-batch. The pgvector RAG path was already validated twice earlier this session ("what courses cover machine learning", "find courses about climate change") - both returned real description matches. Retry this phrasing once the daily budget recovers.
