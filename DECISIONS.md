@@ -912,3 +912,43 @@ catalog.illinois.edu / the provost course guidelines.
 **Also:** `scraper.run()` gained a `quiet_errors` flag so `sync_requests.py`
 doesn't print the full multi-line "can't reach the API" essay per department
 when a term probe fails.
+
+## /ask guardrails + activity log (2026-08-31)
+
+The assistant runs on Groq's free tier (200,000 tokens/day, ~80-100 real
+questions). Without protection a few users asking junk could exhaust that for
+everyone, and there was no record of what people were asking.
+
+**Added `app/ask_log.py` + `ask_log` table.** Every `/ask` attempt is
+persisted: timestamp, client IP (first hop of `X-Forwarded-For`), question,
+`outcome` (`answered` / `refused` / `rate_limited` / `too_long` / `error`),
+answer preview, latency.
+
+**Pre-LLM guardrails in the `/ask` route:**
+* Length cap - `ASK_MAX_CHARS` (default 500), rejected `422` before any call.
+* Per-IP rate limit - `ASK_RATE_PER_HOUR` (10) / `ASK_RATE_PER_DAY` (40),
+  counted from `ask_log` itself (no separate counter table; cutoffs computed
+  in Python to stay portable). Only `answered` + `refused` count - a call was
+  actually spent on those. `error` doesn't count, so a Groq outage never
+  locks users out. Over the limit -> `429` pointing them at the browse tools.
+* The scope/injection guardrail already in `SYSTEM_CONTEXT` (from the earlier
+  QA-hardening work) stays the semantic filter; the log's `refused` tag
+  surfaces what it's catching so `SYSTEM_CONTEXT` can be sharpened over time.
+
+**`GET /admin/ask-log`** - recent activity, filterable by `ip` / `outcome`.
+Gated on the `ADMIN_TOKEN` env var: the endpoint 404s while it's unset, then
+requires the token via `?token=` or `X-Admin-Token`. No user-facing auth
+system was added - this is the only privileged endpoint and a shared secret
+is proportionate.
+
+Rejected: a keyword denylist on questions (false-positive prone, and the
+LLM scope-refusal already handles off-topic questions); a full sessions/auth
+system (out of proportion for one admin endpoint); Redis or an in-memory
+counter for rate limiting (the log table is already the source of truth and
+survives restarts).
+
+**`DEPLOYMENT.md` added** - full Render + Neon runbook: first-time setup, the
+data-load sequence, env var reference, the demand-driven refresh workflow,
+term-roll steps, the guardrail/log operations, free-tier limits, and a
+troubleshooting table. `render.yaml` gained the new env vars (all optional,
+`sync: false`).

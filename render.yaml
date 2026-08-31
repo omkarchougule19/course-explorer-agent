@@ -23,11 +23,29 @@ services:
     startCommand: uvicorn app.api:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /api
     envVars:
+      # Required. Neon connection string (postgres://... - the app rewrites it
+      # to the psycopg2 form itself). Set in the Render dashboard after the
+      # first deploy.
       - key: DATABASE_URL
         sync: false
+      # Required for the /ask assistant. Free key from console.groq.com.
+      # GEMINI_API_KEY / OPENAI_API_KEY are optional fallbacks, tried in that
+      # order only if GROQ_API_KEY is unset (see app/agent.py).
       - key: GROQ_API_KEY
         sync: false
       - key: GEMINI_API_KEY
         sync: false
       - key: OPENAI_API_KEY
+        sync: false
+      # Optional. Enables GET /admin/ask-log (recent assistant activity). The
+      # endpoint 404s while this is unset. Use a long random string.
+      - key: ADMIN_TOKEN
+        sync: false
+      # Optional guardrail tuning for /ask (see app/ask_log.py). Defaults:
+      # 10/hour, 40/day per client IP, 500-char question cap.
+      - key: ASK_RATE_PER_HOUR
+        sync: false
+      - key: ASK_RATE_PER_DAY
+        sync: false
+      - key: ASK_MAX_CHARS
         sync: false

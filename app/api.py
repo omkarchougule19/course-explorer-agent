@@ -10,6 +10,8 @@ Docs:
     http://127.0.0.1:8000/docs
 """
 
+import os
+import time
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +25,7 @@ from pydantic import BaseModel
 
 from app import db
 from app import sync_requests as sync_reqs
+from app import ask_log as ask_log_mod
 from app.db import DB_PATH
 
 load_dotenv(Path(__file__).parent.parent / ".env")
@@ -58,15 +61,16 @@ def _warmup_embeddings():
 
 
 @app.on_event("startup")
-def _ensure_sync_table():
-    """Create the sync_requests table so POST /sync/request works from a fresh
-    database, before the operator CLI has ever run."""
+def _ensure_app_tables():
+    """Create the app's own bookkeeping tables (sync_requests, ask_log) so
+    their routes work against a fresh database, before any CLI has run."""
     try:
         conn = db.get_connection()
     except Exception:
         return  # DB unreachable at boot - routes will surface it per-request
     try:
         sync_reqs.init_table(conn)
+        ask_log_mod.init_table(conn)
     finally:
         conn.close()
 
@@ -269,26 +273,90 @@ class AskRequest(BaseModel):
     question: str
 
 
+def _client_ip(request: Request) -> str:
+    """Best-effort client IP. Behind Render's proxy the real address is the
+    first hop in X-Forwarded-For; fall back to the socket peer for local runs.
+    Spoofable, but good enough for a soft per-IP guardrail."""
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
 @app.post("/ask")
-def ask_agent(payload: AskRequest):
-    """Translate a plain English question into a SQL query against the dataset
-    and return a natural language answer. Requires OPENAI_API_KEY to be set."""
-    if not payload.question or not payload.question.strip():
+def ask_agent(payload: AskRequest, request: Request):
+    """Plain-English question -> SQL/vector agent -> natural-language answer.
+    Requires GROQ_API_KEY (or GEMINI/OPENAI) on the server. Every attempt is
+    written to ask_log; a per-IP rate limit and a length cap run before the
+    LLM so junk can't drain the provider's daily budget (see app/ask_log.py
+    and DECISIONS.md)."""
+    question = (payload.question or "").strip()
+    if not question:
         raise HTTPException(status_code=400, detail="question can't be empty")
+
+    ip = _client_ip(request)
+
+    # --- pre-LLM guardrails ---------------------------------------------------
+    with get_conn() as conn:
+        if len(question) > ask_log_mod.MAX_CHARS:
+            ask_log_mod.record(conn, ip, question, "too_long")
+            raise HTTPException(
+                status_code=422,
+                detail=(f"That question is {len(question)} characters; the limit is "
+                        f"{ask_log_mod.MAX_CHARS}. Ask something shorter and more specific."),
+            )
+        blocked, scope = ask_log_mod.over_limit(conn, ip)
+        if blocked:
+            ask_log_mod.record(conn, ip, question, "rate_limited")
+            raise HTTPException(
+                status_code=429,
+                detail=(f"You've hit the limit of AI questions per {scope}. The Browse "
+                        f"Sections and Department Data tools still work, and you can ask "
+                        f"the assistant again later."),
+            )
 
     try:
         from app.agent import ask
     except ImportError as exc:
         raise HTTPException(status_code=500, detail=f"Agent dependencies not installed: {exc}")
 
-    # agent.ask() already catches setup problems (missing key, missing DB,
-    # OpenAI errors) and returns them as a plain string, so this route only
-    # needs to guard against something truly unexpected.
+    # agent.ask() catches setup/provider problems and returns them as a plain
+    # string; this only guards against something truly unexpected.
+    t0 = time.monotonic()
     try:
-        answer = ask(payload.question)
-    except Exception as exc:  # noqa: BLE001 - defense in depth, agent.ask() should rarely raise
+        answer = ask(question)
+    except Exception as exc:  # noqa: BLE001 - defense in depth
+        latency = int((time.monotonic() - t0) * 1000)
+        with get_conn() as conn:
+            ask_log_mod.record(conn, ip, question, "error", str(exc), latency)
         raise HTTPException(status_code=502, detail=f"Agent failed unexpectedly: {exc}")
-    return {"question": payload.question, "answer": answer}
+
+    latency = int((time.monotonic() - t0) * 1000)
+    outcome = ask_log_mod.classify_answer(answer)  # answered | refused | error
+    with get_conn() as conn:
+        ask_log_mod.record(conn, ip, question, outcome, answer, latency)
+    return {"question": question, "answer": answer}
+
+
+@app.get("/admin/ask-log")
+def admin_ask_log(
+    request: Request,
+    token: Optional[str] = None,
+    ip: Optional[str] = None,
+    outcome: Optional[str] = None,
+    limit: int = Query(default=100, le=1000, ge=1),
+):
+    """Recent /ask activity - question text, outcome, client IP, latency.
+    Disabled (404) unless ADMIN_TOKEN is set on the server; then requires it
+    via ?token= or the X-Admin-Token header."""
+    expected = os.environ.get("ADMIN_TOKEN")
+    if not expected:
+        raise HTTPException(status_code=404, detail="Not found")
+    supplied = token or request.headers.get("x-admin-token")
+    if not supplied or supplied != expected:
+        raise HTTPException(status_code=403, detail="Bad or missing admin token")
+    with get_conn() as conn:
+        return {"entries": ask_log_mod.recent(conn, limit=limit, ip=ip, outcome=outcome)}
 
 
 @app.get("/freshness")
