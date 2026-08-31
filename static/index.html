@@ -4,13 +4,16 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>UIUC Course Explorer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700&family=Source+Sans+3:wght@400;600&display=swap">
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
 <div class="wrap">
 
   <div class="banner">
-    <h1>UIUC Course Explorer<span class="cursor" aria-hidden="true"></span></h1>
+    <h1>UIUC Course Explorer</h1>
     <p class="subtitle">Local database, scraped from the public Course Explorer API. Not a live registrar connection.</p>
   </div>
 
@@ -28,7 +31,7 @@
   </div>
 
   <div class="panel">
-    <h2>// Browse Sections</h2>
+    <h2>Browse Sections</h2>
     <form id="browse-form">
       <div class="field-row">
         <div class="field">
@@ -49,23 +52,22 @@
           <label for="f-limit">Limit</label>
           <input id="f-limit" type="number" value="100" min="1" max="1000">
         </div>
-        <button type="submit">[ Run Query ]</button>
+        <button type="submit">Run Query</button>
       </div>
     </form>
     <div class="results-wrap" id="results-wrap"></div>
   </div>
 
   <div class="panel">
-    <h2>// Ask The Agent</h2>
+    <h2>Ask the Agent</h2>
     <div class="scrollback" id="scrollback" aria-live="polite">
-      <div class="line line-sys">uiuc-agent&gt; ready. ask about courses, sections, or instructors in the local database.</div>
+      <div class="line line-sys">Ask about courses, sections, or instructors in the local database.</div>
     </div>
     <form id="ask-form" class="ask-form">
-      <span class="prompt" aria-hidden="true">&gt;</span>
       <input id="ask-input" type="text" placeholder="e.g. who teaches CS 225 this semester?" autocomplete="off">
-      <button type="submit">[ Send ]</button>
+      <button type="submit">Send</button>
     </form>
-    <p class="hint">Requires OPENAI_API_KEY to be set on the server. Answers come from a SQL agent querying this local database, not the live internet.</p>
+    <p class="hint">Requires GROQ_API_KEY to be set on the server. Answers come from a SQL agent querying this local database, not the live internet.</p>
   </div>
 
   <footer>
@@ -204,8 +206,8 @@
     input.value = '';
     input.disabled = true;
 
-    addLine('> ' + question, 'line-q');
-    const thinking = addLine('uiuc-agent> thinking', 'line-sys dots');
+    addLine(question, 'line-q');
+    const thinking = addLine('Thinking', 'line-sys dots');
 
     try {
       const res = await fetch('/ask', {
@@ -216,13 +218,13 @@
       const body = await res.json().catch(() => ({}));
       thinking.remove();
       if (!res.ok) {
-        addLine('uiuc-agent> ' + (body.detail || `request failed (${res.status})`), 'line-sys');
+        addLine(body.detail || `Request failed (${res.status})`, 'line-sys');
       } else {
-        addLine('uiuc-agent> ' + body.answer, 'line-a');
+        addLine(body.answer, 'line-a');
       }
     } catch (err) {
       thinking.remove();
-      addLine('uiuc-agent> connection lost, is the API server still running?', 'line-sys');
+      addLine('Connection lost — is the API server still running?', 'line-sys');
     } finally {
       input.disabled = false;
       input.focus();

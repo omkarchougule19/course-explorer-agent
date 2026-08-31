@@ -1,16 +1,21 @@
   :root {
-    --bg: #15120b;
-    --panel: #1c1810;
-    --panel-alt: #211c12;
-    --border: #4a3a17;
-    --border-bright: #8a6415;
-    --amber: #ffb000;
-    --amber-dim: #a67c1e;
-    --amber-bright: #ffd37a;
-    --green: #5fd97a;
-    --red: #ff6a52;
+    /* UIUC brand palette - values from marketing.illinois.edu/visual-identity/color */
+    --bg: #f4f5f7;            /* page background (also inputs, scrollback) */
+    --panel: #ffffff;         /* raised cards */
+    --panel-alt: #eef2f8;     /* table zebra rows */
+    --border: #c6c7c6;        /* Storm 80% - hairlines */
+    --border-bright: #8e9090; /* Storm 60% - input borders */
+    --ink: #1d1d1d;           /* primary body text */
+    --muted: #5c5f60;         /* labels, hints, footer, system lines */
+    --link: #1d58a7;          /* Industrial blue - links, stat values, emphasis */
+    --open: #006230;          /* Prairie - status "open" / fresh */
+    --closed: #5c0e41;        /* Berry - status "closed" / stale */
+    --brand-blue: #13294b;    /* Illini Blue - header band, headings, buttons */
+    --brand-orange: #ff5f05;  /* Illini Orange - header rule, link hover, focus ring */
     --radius: 3px;
     --mono: "JetBrains Mono", "Fira Code", ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: "Source Sans 3", "Source Sans Pro", system-ui, -apple-system, Arial, sans-serif;
+    --display: "Montserrat", "Arial Black", system-ui, sans-serif;
   }
 
   * { box-sizing: border-box; }
@@ -19,8 +24,8 @@
     margin: 0;
     padding: 0;
     background: var(--bg);
-    color: var(--amber);
-    font-family: var(--mono);
+    color: var(--ink);
+    font-family: var(--sans);
   }
 
   body {
@@ -34,26 +39,26 @@
   }
 
   /* ---------- Banner ---------- */
+  .banner {
+    background: var(--brand-blue);
+    padding: 22px 24px;
+    border-radius: var(--radius) var(--radius) 0 0;
+    border-bottom: 4px solid var(--brand-orange);
+  }
+
   .banner h1 {
-    font-size: 22px;
+    font-family: var(--display);
+    font-size: 24px;
     font-weight: 700;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.01em;
     margin: 0;
-    text-transform: uppercase;
+    color: #fff;
   }
 
-  .banner h1 a { color: inherit; text-decoration: none; }
-  .banner h1 a:hover { color: var(--amber-bright); }
+  .banner h1 a { color: #fff; text-decoration: none; }
+  .banner h1 a:hover { color: var(--brand-orange); }
 
-  .cursor {
-    display: inline-block;
-    width: 10px;
-    height: 18px;
-    background: var(--amber);
-    margin-left: 4px;
-    vertical-align: -3px;
-    animation: blink 1.1s steps(1) infinite;
-  }
+  .cursor { display: none; }
 
   @media (prefers-reduced-motion: reduce) {
     .cursor { animation: none; opacity: 1; }
@@ -66,29 +71,26 @@
   }
 
   .subtitle {
-    color: var(--amber-dim);
+    color: rgba(255, 255, 255, 0.78);
     font-size: 13px;
     margin: 6px 0 0;
   }
 
-  hr.rule {
-    border: none;
-    border-top: 1px solid var(--border);
-    margin: 20px 0;
-  }
+  hr.rule { display: none; }
 
   /* ---------- Stats ---------- */
   .stats {
     display: flex;
     flex-wrap: wrap;
     gap: 28px;
+    margin-top: 24px;
     margin-bottom: 8px;
   }
 
   .stat-label {
     display: block;
     font-size: 11px;
-    color: var(--amber-dim);
+    color: var(--muted);
     letter-spacing: 0.1em;
     text-transform: uppercase;
   }
@@ -97,7 +99,7 @@
     display: block;
     font-size: 20px;
     font-weight: 700;
-    color: var(--amber-bright);
+    color: var(--link);
   }
 
   a.stat-value {
@@ -109,7 +111,7 @@
 
   .system-note {
     font-size: 13px;
-    color: var(--amber-dim);
+    color: var(--muted);
     border: 1px dashed var(--border-bright);
     border-radius: var(--radius);
     padding: 10px 12px;
@@ -125,15 +127,17 @@
     background: var(--panel);
     padding: 18px 20px;
     margin-top: 24px;
+    box-shadow: 0 1px 3px rgba(19, 41, 75, 0.07);
   }
 
   .panel h2 {
+    font-family: var(--display);
     font-size: 13px;
     letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: var(--amber-dim);
+    color: var(--brand-blue);
     margin: 0 0 16px;
-    font-weight: 600;
+    font-weight: 700;
   }
 
   .field-row {
@@ -154,45 +158,47 @@
     font-size: 11px;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: var(--amber-dim);
+    color: var(--muted);
   }
 
   input, select {
-    background: var(--bg);
+    background: #fff;
     border: 1px solid var(--border-bright);
     border-radius: var(--radius);
-    color: var(--amber);
-    font-family: var(--mono);
+    color: var(--ink);
+    font-family: var(--sans);
     font-size: 14px;
     padding: 8px 10px;
   }
 
-  input::placeholder { color: #6b5321; }
+  input::placeholder { color: #8e9090; }
 
   input:focus-visible, select:focus-visible, button:focus-visible {
-    outline: 2px solid var(--amber-bright);
+    outline: 2px solid var(--brand-blue);
     outline-offset: 2px;
   }
+  button:focus-visible { outline-color: var(--brand-orange); }
 
   button {
-    background: transparent;
-    border: 1px solid var(--amber);
-    color: var(--amber);
-    font-family: var(--mono);
+    background: var(--brand-blue);
+    border: 1px solid var(--brand-blue);
+    color: #fff;
+    font-family: var(--sans);
     font-size: 13px;
-    letter-spacing: 0.06em;
+    font-weight: 600;
+    letter-spacing: 0.02em;
     border-radius: var(--radius);
-    padding: 9px 16px;
+    padding: 9px 18px;
     cursor: pointer;
     white-space: nowrap;
   }
 
-  button:hover { background: rgba(255, 176, 0, 0.1); }
-  button:disabled { opacity: 0.4; cursor: default; }
+  button:hover { background: #1d58a7; border-color: #1d58a7; }
+  button:disabled { opacity: 0.45; cursor: default; }
 
   .hint {
     font-size: 12px;
-    color: var(--amber-dim);
+    color: var(--muted);
     margin-top: 10px;
   }
 
@@ -217,20 +223,20 @@
   }
 
   th {
-    color: var(--amber-dim);
+    color: var(--brand-blue);
     text-transform: uppercase;
     font-size: 11px;
     letter-spacing: 0.06em;
-    font-weight: 600;
+    font-weight: 700;
   }
 
   tr:nth-child(even) td { background: var(--panel-alt); }
 
-  .status-open { color: var(--green); }
-  .status-closed { color: var(--red); }
+  .status-open { color: var(--open); }
+  .status-closed { color: var(--closed); }
 
   .empty-state {
-    color: var(--amber-dim);
+    color: var(--muted);
     font-size: 13px;
     padding: 14px 0 2px;
   }
@@ -248,9 +254,9 @@
   }
 
   .line { margin-bottom: 10px; white-space: pre-wrap; word-wrap: break-word; }
-  .line-q { color: var(--amber-bright); font-weight: 600; }
-  .line-a { color: var(--amber); }
-  .line-sys { color: var(--amber-dim); font-style: italic; }
+  .line-q { color: var(--link); font-weight: 600; }
+  .line-a { color: var(--ink); }
+  .line-sys { color: var(--muted); font-style: italic; }
 
   .dots::after {
     content: "";
@@ -269,11 +275,7 @@
     gap: 10px;
   }
 
-  .ask-form .prompt {
-    color: var(--amber-bright);
-    align-self: center;
-    font-weight: 700;
-  }
+  .ask-form .prompt { display: none; }
 
   .ask-form input {
     flex: 1;
@@ -282,12 +284,21 @@
   footer {
     margin-top: 40px;
     font-size: 12px;
-    color: var(--amber-dim);
+    color: var(--muted);
     text-align: center;
   }
 
-  a { color: var(--amber-bright); }
+  a { color: var(--link); }
+  a:hover { color: var(--brand-orange); }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.92em;
+    background: var(--panel-alt);
+    padding: 1px 5px;
+    border-radius: var(--radius);
+  }
 
   /* ---------- Freshness page ---------- */
-  .stale { color: var(--red); }
-  .fresh { color: var(--green); }
+  .stale { color: var(--closed); }
+  .fresh { color: var(--open); }

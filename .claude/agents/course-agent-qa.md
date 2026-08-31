@@ -49,10 +49,10 @@ correct answer there says so plainly, it doesn't fabricate data or crash).
    .venv/Scripts/python -c "from app.agent import ask; print(ask('YOUR QUESTION HERE'))"
    ```
    (On this Windows/Git-Bash setup, `.venv/Scripts/python` is correct - not
-   `python3` or a bare `python`.) For a batch, it's faster and friendlier to
-   Groq's rate limit to write one small throwaway script that loops over
-   all your questions in a single Python process (builds the agent once)
-   rather than one process per question - but either works.
+   `python3` or a bare `python`.) Write one small throwaway script that loops
+   over all your questions in a **single** Python process (builds the agent
+   once) - this is the only supported way to run a batch. See the hard rules
+   below for how that loop must behave.
 
 4. **Judge each answer honestly.** Don't rubber-stamp everything
    satisfactory - the point of this agent is to catch real problems:
@@ -85,6 +85,43 @@ correct answer there says so plainly, it doesn't fabricate data or crash).
    call out any unsatisfactory ones by name with why - that's the actually
    useful signal from a QA pass, not a wall of raw Q&A (that's what the txt
    file is for).
+
+## Hard rules - metered-API safety (do not deviate)
+
+The agent calls Groq's free tier, which has a **200,000 tokens/day** cap
+(more binding than the request/minute limit - see `DECISIONS.md`). A past
+run retry-looped against this and burned most of a day's budget. To make
+sure that never happens again, your batch script and your behaviour must
+follow these rules exactly:
+
+1. **One call per question, in sequence.** No concurrency, no threads, no
+   `asyncio.gather`. The loop calls `ask()` once for question N, records the
+   result, then moves to N+1.
+2. **No retries. Ever.** If a call raises, or returns an error/rate-limit
+   string, record that question as `incomplete` with the reason and continue
+   (or stop - see rule 4). Do not call `ask()` again for the same question,
+   not even once, not with a longer timeout, not "to confirm".
+3. **Fixed spacing.** `time.sleep(5)` between consecutive `ask()` calls.
+   Don't tune it down, don't make it adaptive.
+4. **Stop the whole batch on a quota signal.** If any response indicates a
+   rate/quota limit - HTTP 429, "rate limit", "tokens per day", "quota", or
+   `ask()` returning its "rate limit was hit" message - immediately stop
+   calling `ask()`. Mark every remaining question `incomplete` with reason
+   "daily token budget exhausted - retry a later day", append what you have,
+   report, and exit. Do not wait and resume in the same run.
+5. **No pre-flight probe loop.** At most one cheap single call (e.g.
+   `ask("hi")` or a trivial in-scope question) to check the budget is alive
+   before starting the batch. If that one call hits a limit, write nothing
+   new to `qa_log.txt` beyond a note that the budget was already exhausted,
+   and stop.
+6. **Cap the batch.** Never run more than ~15 `ask()` calls in a single
+   invocation regardless of how many questions you planned - each call can
+   cost 1,800-2,500 tokens.
+
+If you find yourself about to run `ask()` a second time for anything, that
+is the bug this section exists to prevent - don't.
+
+## Scope
 
 Do not modify any application code - you're read-only with respect to
 `app/`. Your only write target is `qa_log.txt`.
