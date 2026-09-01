@@ -183,12 +183,16 @@ course-explorer-agent/
 ├── data/
 │   └── courses.db      # created after first scrape
 ├── docs/
+│   ├── PROJECT_BIBLE.html # single orientation doc: what/why/how, start here
 │   └── architecture.html  # storage model, request flow, and RAG loop, illustrated
 ├── requirements.txt
 └── README.md
 ```
 
-For how the pieces fit together — the two storage layers, the schema, the
-request path, and the multi-query RAG loop — open `docs/architecture.html`
-in a browser. `DECISIONS.md` is the running log of *why* each choice was
-made; `DEPLOYMENT.md` is the Render + Neon runbook.
+New here? Open `docs/PROJECT_BIBLE.html` — the single orientation doc
+covering what the project is, why it is shaped this way, every component,
+the full data model, request flows, deployment, and the runbook. For an
+illustrated view of the two storage layers, the schema, the request path,
+and the multi-query RAG loop, open `docs/architecture.html`. `DECISIONS.md`
+is the running log of *why* each choice was made; `DEPLOYMENT.md` is the
+Render + Neon runbook.
