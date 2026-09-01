@@ -926,7 +926,7 @@ answer preview, latency.
 
 **Pre-LLM guardrails in the `/ask` route:**
 * Length cap - `ASK_MAX_CHARS` (default 500), rejected `422` before any call.
-* Per-IP rate limit - `ASK_RATE_PER_HOUR` (10) / `ASK_RATE_PER_DAY` (40),
+* Per-IP rate limit - `ASK_RATE_PER_HOUR` (10) / `ASK_RATE_PER_DAY` (60),
   counted from `ask_log` itself (no separate counter table; cutoffs computed
   in Python to stay portable). Only `answered` + `refused` count - a call was
   actually spent on those. `error` doesn't count, so a Groq outage never
@@ -1265,3 +1265,29 @@ full 5-table schema and `include_tables` pins it:
   traffic), a smaller Groq model for the SQL step (`gpt-oss-120b` is
   already MoE-fast on Groq), and a non-agent "one SQL call" fast path
   (loses robustness on unusual questions).
+
+## Per-IP daily question cap raised 40 -> 60 (2026-09-01)
+
+Real exploratory sessions were hitting the `ASK_RATE_PER_DAY` ceiling of 40
+LLM-spending questions per client IP in a rolling 24h and getting a `429`.
+Raised the default to **60** (`app/ask_log.py`; still env-overridable via
+`ASK_RATE_PER_DAY`).
+
+**Why 60 and not higher:** the shared, non-spoofable backstop
+`ASK_GLOBAL_PER_DAY` stays at 250, and the Groq free tier is ~80-100 real
+questions/day of token budget (see the tokens-not-requests entry above). 60
+keeps a single IP well under both, so one heavy user still cannot drain the
+day's provider budget alone.
+
+- **Rejected 80** - roughly one entire day's Groq budget available to a
+  single IP; fine at today's traffic but fragile the moment two users are
+  active.
+- **Rejected 100** - one active IP could consume the whole documented daily
+  budget; only sensible alongside a raised `ASK_GLOBAL_PER_DAY` or a paid
+  tier.
+- **Left `ASK_RATE_PER_HOUR` at 10** - that is the real anti-burst guard;
+  the per-day number is about not wall-ing a long legitimate session, not
+  about abuse.
+
+Docs synced: `DEPLOYMENT.md` env table + guardrails section, and the
+`## /ask guardrails + activity log` bullet above.

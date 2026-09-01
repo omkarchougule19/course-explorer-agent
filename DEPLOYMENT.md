@@ -90,7 +90,7 @@ python -m app.sync_requests --list        # should list ~187 departments with a 
 | `OPENAI_API_KEY` | no | second fallback |
 | `ADMIN_TOKEN` | no | required to use `GET /admin/ask-log`; without it the endpoint always 403s |
 | `ASK_RATE_PER_HOUR` | no (default 10) | per-IP assistant question cap / hour (friction only — the IP comes from a spoofable header) |
-| `ASK_RATE_PER_DAY` | no (default 40) | per-IP assistant question cap / day |
+| `ASK_RATE_PER_DAY` | no (default 60) | per-IP assistant question cap / day |
 | `ASK_GLOBAL_PER_DAY` | no (default 250) | **shared** cap across all clients / day — the real protection for the Groq budget |
 | `ASK_MAX_CHARS` | no (default 500) | reject questions longer than this |
 | `ENABLE_DOCS` | no | set to any value to expose `/docs`, `/redoc`, `/openapi.json` (off by default) |
@@ -213,7 +213,7 @@ Every call is checked **before** the LLM runs:
    the Groq token budget: it keys on nothing the client controls, so it holds
    even when the per-IP limit below is bypassed. Over it → `429`.
 3. **Per-IP rate limit** — `ASK_RATE_PER_HOUR` (10) and `ASK_RATE_PER_DAY`
-   (40) per client IP. Friction only — the IP is the first `X-Forwarded-For`
+   (60) per client IP. Friction only — the IP is the first `X-Forwarded-For`
    hop, which a caller can forge, so treat this as a nuisance filter, not a
    control. Over the limit → `429` pointing at the browse tools. Only
    `answered` and `refused` calls count toward (2) and (3); provider errors

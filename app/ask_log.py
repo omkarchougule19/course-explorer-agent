@@ -28,7 +28,7 @@ gated on the ADMIN_TOKEN env var (endpoint 404s if that's unset).
 Tunable via env vars, all with sane defaults:
     ASK_MAX_CHARS       (500)  reject questions longer than this
     ASK_RATE_PER_HOUR   (10)   max LLM-spending questions per IP per hour
-    ASK_RATE_PER_DAY    (40)   ... per IP per day
+    ASK_RATE_PER_DAY    (60)   ... per IP per day
     ASK_GLOBAL_PER_DAY  (250)  max LLM-spending questions across ALL clients
                                per day - the real backstop for the Groq
                                budget, since the per-IP limit keys on a
@@ -42,7 +42,7 @@ from app import db
 
 MAX_CHARS = int(os.environ.get("ASK_MAX_CHARS", "500"))
 RATE_PER_HOUR = int(os.environ.get("ASK_RATE_PER_HOUR", "10"))
-RATE_PER_DAY = int(os.environ.get("ASK_RATE_PER_DAY", "40"))
+RATE_PER_DAY = int(os.environ.get("ASK_RATE_PER_DAY", "60"))
 GLOBAL_PER_DAY = int(os.environ.get("ASK_GLOBAL_PER_DAY", "250"))
 
 # Substrings that mark the agent's own scope-refusal, used only to tag the
