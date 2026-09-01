@@ -122,21 +122,18 @@
 
   class AuthError extends Error {}
 
-  async function adminFetch(path) {
-    const res = await fetch(path, { headers: { 'X-Admin-Token': getToken() } });
-    if (res.status === 403) { throw new AuthError('forbidden'); }
+  // One helper for every admin call. A 403 becomes an AuthError so callers
+  // can drop back to the token gate; any other non-2xx throws with the
+  // server's detail message.
+  async function adminReq(path, method = 'GET') {
+    const res = await fetch(path, { method, headers: { 'X-Admin-Token': getToken() } });
+    if (res.status === 403) throw new AuthError('forbidden');
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.detail || `Request failed (${res.status})`);
     return body;
   }
-
-  async function adminPost(path) {
-    const res = await fetch(path, { method: 'POST', headers: { 'X-Admin-Token': getToken() } });
-    if (res.status === 403) { throw new AuthError('forbidden'); }
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.detail || `Request failed (${res.status})`);
-    return body;
-  }
+  const adminFetch = (path) => adminReq(path);
+  const adminPost = (path) => adminReq(path, 'POST');
 
   function showGate(rejected) {
     $('dash').hidden = true;
