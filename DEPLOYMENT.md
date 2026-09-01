@@ -240,14 +240,67 @@ Every attempt is written to `ask_log`:
 | `answer_preview` | first 500 chars of the answer |
 | `latency_ms` | agent round-trip |
 
-### 5.3 Reading the log
+`/ask/summary` is a **public** endpoint (no token) that returns only
+`{"unique_7d": <int>}` — the count of distinct client IPs in the last 7 days,
+for the landing page's "People Asking" KPI tile. No IPs or question text are
+exposed.
 
-Set `ADMIN_TOKEN`, then:
+### 5.2b The `answer_feedback` table
+
+The 👍/👎 control under each assistant answer writes here (`app/feedback.py`).
+Every vote is one row; re-voting the same answer replaces the prior row
+(de-duped on `client_ip` + `question` + `answer`).
+
+| column | note |
+|---|---|
+| `ts` | UTC ISO timestamp |
+| `client_ip` | first hop of X-Forwarded-For |
+| `vote` | `up` or `down` |
+| `question` / `answer` | browser-supplied, capped at 1000 / 4000 chars |
+| `history_json` | JSON `[{q,a}, …]` snapshot of the chat — **downvotes only** |
+| `reviewed_at` | `NULL` until an operator triages that downvote |
+
+`POST /ask/feedback` is public and best-effort: a storage failure returns
+`{"ok": false}` with HTTP 200, never a 5xx, so a thumbs click can't break the
+page. The answer text is client-supplied — acceptable because it only feeds
+the human review queue, is length-capped on write, and HTML-escaped on
+render.
+
+**Biweekly:** open `/admin.html` → *Downvotes — needs review*, read each
+transcript, fix the cause (`SYSTEM_CONTEXT`, schema, embeddings), then
+**Mark reviewed**.
+
+### 5.3 Reading the log — dashboard + endpoints
+
+The dashboard lives at `https://<your-app>.onrender.com/admin.html`. The HTML
+shell is public, but every panel's data is behind `ADMIN_TOKEN`: enter the
+token once and it is held in that browser tab's `sessionStorage` and sent as
+the `X-Admin-Token` header. "Lock" clears it.
+
+Panels: usage stat tiles (unique clients 24h / 7d / all-time, question
+volume, downvotes-to-review), outcome breakdown, a 30-day activity chart, a
+per-client-IP rollup (the app's stand-in for a "sessions" list), the query
+history table with filters, and the downvote review queue.
+
+All admin routes are `ADMIN_TOKEN`-gated and always answer `403` on any
+failure (unset / missing / wrong token) so the response never reveals whether
+the token is configured:
+
+| route | purpose |
+|---|---|
+| `GET /admin/ask-log?outcome=&ip=&limit=` | recent `/ask` rows (unchanged) |
+| `GET /admin/ask-stats` | stat-tile aggregates + outcome breakdown + feedback tallies |
+| `GET /admin/clients?limit=` | per-client-IP rollup |
+| `GET /admin/activity?days=` | questions + unique clients per UTC day |
+| `GET /admin/feedback?vote=&reviewed=&limit=` | feedback rows; `vote=down&reviewed=0` is the triage queue |
+| `POST /admin/feedback/{id}/reviewed` | stamp `reviewed_at` on one downvote |
 
 ```bash
 curl "https://<your-app>.onrender.com/admin/ask-log?token=$ADMIN_TOKEN&limit=100"
 curl "https://<your-app>.onrender.com/admin/ask-log?token=$ADMIN_TOKEN&outcome=refused"
 curl "https://<your-app>.onrender.com/admin/ask-log?token=$ADMIN_TOKEN&ip=1.2.3.4"
+curl "https://<your-app>.onrender.com/admin/ask-stats?token=$ADMIN_TOKEN"
+curl "https://<your-app>.onrender.com/admin/feedback?token=$ADMIN_TOKEN&vote=down&reviewed=0"
 ```
 
 Or straight from Neon:
@@ -301,5 +354,6 @@ users). Browse and Department Data are unaffected — they never call the LLM.
 | `/ask` always says the provider rate limit was hit | Groq's 200K tokens/day is spent. Resets daily. |
 | `course_content_search` never fires / semantic questions give SQL-only answers | `course_embeddings` is empty on Neon — run `python -m app.backfill_embeddings` locally. |
 | `grade_distributions` / `teachers_ranked_excellent` queries return nothing | Upstream hasn't published for the term. Expected. |
-| `/admin/ask-log` always returns 403 | `ADMIN_TOKEN` isn't set on the server, or the `?token=` / `X-Admin-Token` you sent doesn't match it. (It 403s rather than 404s on purpose, so the response doesn't reveal whether the token is configured.) |
+| `/admin/*` (dashboard, ask-log, ask-stats, feedback…) always returns 403 | `ADMIN_TOKEN` isn't set on the server, or the `?token=` / `X-Admin-Token` you sent doesn't match it. (Every failure 403s rather than 404s on purpose, so the response doesn't reveal whether the token is configured.) |
+| `/admin.html` loads but panels say "Couldn't load" / show the token gate | The page shell is public; the panels need `ADMIN_TOKEN`. Enter it in the gate. A slow first load right after idle is Neon + Render waking — retry. |
 | `/docs` returns 404 | Expected — set `ENABLE_DOCS` to turn it on. |

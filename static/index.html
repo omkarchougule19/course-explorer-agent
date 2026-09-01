@@ -27,6 +27,7 @@
     <div class="kpi"><span class="stat-label">Sections</span><span class="stat-value" id="stat-sections" data-count>—</span></div>
     <div class="kpi"><span class="stat-label">Courses</span><span class="stat-value" id="stat-courses" data-count>—</span></div>
     <div class="kpi"><span class="stat-label">Subjects</span><span class="stat-value" id="stat-subjects" data-count>—</span></div>
+    <div class="kpi"><span class="stat-label">People Asking</span><span class="stat-value" id="stat-visitors" data-count>—</span><span class="stat-sub">last 7 days</span></div>
     <div class="kpi"><span class="stat-label">Terms</span><span class="stat-value" id="stat-terms">—</span><span class="stat-sub" id="stat-terms-sub"></span></div>
     <div class="kpi"><span class="stat-label">Last Updated</span><a class="stat-value" id="stat-updated" href="/freshness.html">—</a><span class="stat-sub" id="stat-updated-sub"></span></div>
   </div>
@@ -196,6 +197,13 @@
     }
   }
 
+  async function loadAskSummary() {
+    try {
+      const data = await getJSON('/ask/summary');
+      countUp($('stat-visitors'), data.unique_7d);
+    } catch (e) { /* leave the tile at — */ }
+  }
+
   async function loadFreshness() {
     try {
       const data = await getJSON('/freshness');
@@ -295,6 +303,58 @@
     return div;
   }
 
+  const THUMB_UP =
+    '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10v12"/>' +
+    '<path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/></svg>';
+  const THUMB_DOWN =
+    '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M17 14V2"/>' +
+    '<path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/></svg>';
+
+  // Thumbs up/down under a settled answer. On a vote we POST the question,
+  // the answer text, and the recent windowed history (which already includes
+  // this turn, since recordTurn ran first) so a downvote captures the whole
+  // exchange for the biweekly review queue. Best-effort: a failed save just
+  // shows a note and leaves the buttons live.
+  function attachFeedback(afterEl, q, a) {
+    const bar = document.createElement('div');
+    bar.className = 'feedback';
+    bar.innerHTML =
+      '<span class="fb-label">Helpful?</span>' +
+      '<button type="button" class="fb-up" aria-label="Helpful">' + THUMB_UP + '</button>' +
+      '<button type="button" class="fb-down" aria-label="Not helpful">' + THUMB_DOWN + '</button>' +
+      '<span class="fb-note" hidden>couldn’t save that</span>';
+    afterEl.insertAdjacentElement('afterend', bar);
+    $('scrollback').scrollTop = $('scrollback').scrollHeight;
+
+    const up = bar.querySelector('.fb-up');
+    const down = bar.querySelector('.fb-down');
+    const note = bar.querySelector('.fb-note');
+
+    const vote = async (which, btn) => {
+      up.disabled = down.disabled = true;
+      note.hidden = true;
+      try {
+        const res = await fetch('/ask/feedback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            vote: which, question: q, answer: a,
+            history: chatHistory.slice(-HISTORY_TURNS_SENT),
+          }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok || !body.ok) throw new Error('save failed');
+        btn.classList.add('voted');
+        if (which === 'down') btn.classList.add('down');
+      } catch (e) {
+        note.hidden = false;
+        up.disabled = down.disabled = false;
+      }
+    };
+    up.addEventListener('click', () => vote('up', up));
+    down.addEventListener('click', () => vote('down', down));
+  }
+
   // Parse complete SSE frames from `buffer`, fire onEvent(name, data) for
   // each, return the unconsumed tail.
   function drainSSE(buffer, onEvent) {
@@ -377,7 +437,10 @@
         answerLine.className = 'line line-a md';
         const answer = text || 'I couldn’t produce an answer for that.';
         answerLine.innerHTML = window.renderMarkdown(answer);
-        if (!asError) recordTurn(question, answer);
+        if (!asError) {
+          recordTurn(question, answer);
+          attachFeedback(answerLine, question, answer);
+        }
       }
       scroll();
       input.disabled = false;
@@ -553,6 +616,7 @@
   loadTerms();
   loadSubjects();
   loadFreshness();
+  loadAskSummary();
   loadDepartments();
 </script>
 </body>

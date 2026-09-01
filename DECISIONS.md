@@ -1291,3 +1291,84 @@ day's provider budget alone.
 
 Docs synced: `DEPLOYMENT.md` env table + guardrails section, and the
 `## /ask guardrails + activity log` bullet above.
+
+## Admin dashboard for assistant usage + query history (2026-09-01)
+
+`ask_log` had one read path - `GET /admin/ask-log`, raw JSON. Added a
+token-gated dashboard at `/admin.html` plus supporting endpoints
+(`/admin/ask-stats`, `/admin/clients`, `/admin/activity`) and a public
+`/ask/summary` for a landing-page "People Asking" KPI tile.
+
+**"Sessions" = per-`client_ip` rollup.** There are no accounts or session
+ids, so the closest real signal for "who used this" is a GROUP BY over
+`client_ip`: question count, first/last seen, model-call count. Named the
+panel "Clients" and said plainly in the copy that it's a per-IP stand-in.
+
+**Static token-gated page, not real auth.** Single operator, and `ADMIN_TOKEN`
+was already the gate for `/admin/ask-log`. Building a user/session system for
+one person is unjustified. The `/admin.html` shell is public (it's just
+markup); every panel's *data* needs the token, entered once and kept in that
+tab's `sessionStorage`, sent as `X-Admin-Token`. A 403 anywhere drops back to
+the gate.
+
+**Several small endpoints, not one `/admin/dashboard` blob.** Operator's
+call. Each is independently curl-testable and cacheable, and the panels fail
+soft one at a time - a slow `/admin/clients` doesn't blank the stat tiles.
+
+**Counts are read-time aggregates, never a counter table.** `COUNT(DISTINCT
+client_ip)`, `GROUP BY outcome`, `substr(ts,1,10)` day buckets - all plain SQL
+that runs on SQLite and Postgres via the `?`-placeholder layer. So the
+numbers survive Render restarts for free: the data lives in Neon, not process
+memory, exactly like the existing rate-limit counters. Rejected a cron /
+keepalive precompute - Render free has no reliable scheduler and a keepalive
+query fights Neon's scale-to-zero.
+
+**Chart is hand-rolled inline SVG.** The page CSP is `script-src 'self'
+'unsafe-inline'` - no external JS - so a charting library isn't an option.
+~30 lines of `<rect>` generation covers a 30-day bar chart.
+
+**Unique-client count caveats** (documented, not shown to end users): the IP
+is a spoofable `X-Forwarded-For` hop and a shared NAT collapses many people to
+one - it's a rough floor, not analytics. "All-time" means since `ask_log`
+shipped (2026-08-31), counting only rows in the serving database.
+
+## 👍/👎 answer feedback + downvote review queue (2026-09-01)
+
+No signal existed on whether answers were any good. Added a thumbs control
+under every real assistant answer (`static/index.html`), a public
+`POST /ask/feedback`, an `answer_feedback` table (`app/feedback.py`), and a
+"Downvotes — needs review" panel on the admin dashboard with a
+`POST /admin/feedback/{id}/reviewed` action.
+
+**One table with a `reviewed_at` column, not two tables.** The ask was to put
+downvoted transcripts "in another table" for biweekly processing. A single
+`answer_feedback` table filtered on `vote='down' AND reviewed_at IS NULL`
+*is* that queue, and it also holds the upvotes for an up/down ratio without a
+second schema. Marking a row reviewed is an `UPDATE`, not a move.
+
+**Browser sends the transcript; server doesn't mint an answer id.** Avoids
+changing the `/ask` and `/ask/stream` response contracts (the SSE `done`
+frame stays a bare string). The answer text is therefore client-supplied -
+accepted because it only ever feeds a human review queue, every field is
+length-capped in `app/feedback.py`, and the dashboard `esc()`-es everything
+on render. History is JSON, clipped per field (not on the encoded blob, which
+would break the JSON), downvotes only.
+
+**Upvote = count-only.** A 👍 stores just the vote + Q/A text; only 👎 keeps
+`history_json`. Keeps the table lean - the transcript only matters when
+something went wrong.
+
+**De-dupe on (client_ip, question, answer) by DELETE-then-INSERT**, not a
+rate limiter. Re-voting the same answer replaces the prior row (and lets a
+user flip 👍↔👎). Bounds one client to one row per distinct answer without a
+new limiter. Not a UNIQUE constraint because `client_ip` legitimately repeats
+across different answers and the "same feedback" key isn't a natural key.
+
+**Feedback writes never 5xx.** `POST /ask/feedback` catches every exception
+and returns `{"ok": false}` with HTTP 200; the page shows a small "couldn't
+save" note and leaves the buttons live. A thumbs click is not worth a broken
+page.
+
+Docs synced: `DEPLOYMENT.md` §5.2b (`answer_feedback` table), §5.3 (dashboard
++ endpoint table), and the troubleshooting rows for `/admin/*` and
+`/admin.html`.

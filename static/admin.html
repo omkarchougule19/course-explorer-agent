@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Admin — UIUC Course Explorer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Crimson+Text:ital,wght@0,400;0,600;1,400&family=EB+Garamond:wght@400;600;700&family=Source+Sans+3:wght@400;600;700&display=swap">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header class="banner">
+  <div class="wrap">
+    <h1 class="with-lock">
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 2 7l10 5 10-5Z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+      Assistant Admin
+      <button type="button" class="lock-btn" id="lock" hidden>Lock</button>
+    </h1>
+    <p class="subtitle">Usage, query history and answer-quality feedback for the Ask assistant. Data is read live from <code>ask_log</code> / <code>answer_feedback</code>.</p>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- token gate -->
+  <div class="panel admin-gate" id="gate" hidden>
+    <h2>Admin token</h2>
+    <p>Enter the <code>ADMIN_TOKEN</code> set on the server. It is kept only in this tab (<code>sessionStorage</code>) and sent as a header.</p>
+    <form id="gate-form">
+      <input id="gate-token" type="password" autocomplete="off" placeholder="token" aria-label="Admin token">
+      <button type="submit">Unlock</button>
+    </form>
+    <p class="fb-note" id="gate-err" hidden>That token was rejected.</p>
+  </div>
+
+  <!-- dashboard -->
+  <div id="dash" hidden>
+
+    <p class="section-label">Overview</p>
+    <div class="kpi-strip" id="tiles">
+      <div class="kpi"><span class="stat-label">Unique · 24h</span><span class="stat-value" id="t-u24">—</span></div>
+      <div class="kpi"><span class="stat-label">Unique · 7d</span><span class="stat-value" id="t-u7">—</span></div>
+      <div class="kpi"><span class="stat-label">Unique · all time</span><span class="stat-value" id="t-uall">—</span></div>
+      <div class="kpi"><span class="stat-label">Questions · 24h</span><span class="stat-value" id="t-q24">—</span></div>
+      <div class="kpi"><span class="stat-label">Downvotes to review</span><span class="stat-value" id="t-dvr">—</span><span class="stat-sub" id="t-fb">—</span></div>
+    </div>
+
+    <section class="panel" id="p-outcomes">
+      <h2>Outcome breakdown</h2>
+      <p class="hint">How the last 24 hours / all-time <code>/ask</code> attempts resolved. <code>answered</code> + <code>refused</code> are the ones that spent a model call.</p>
+      <dl class="outcome-dl" id="outcomes"><div><dt>loading…</dt><dd></dd></div></dl>
+    </section>
+
+    <section class="panel" id="p-activity">
+      <h2>Activity — last 30 days</h2>
+      <p class="hint">Questions per UTC day. Hover a bar for the exact count.</p>
+      <div class="chart" id="chart"><p class="empty-state">loading…</p></div>
+    </section>
+
+    <section class="panel" id="p-clients">
+      <h2>Clients <span class="hint" style="font-weight:400">(per IP — the closest thing to a session list)</span></h2>
+      <div class="results-wrap" id="clients-wrap"><p class="empty-state">loading…</p></div>
+    </section>
+
+    <section class="panel" id="p-history">
+      <h2>Query history</h2>
+      <div class="field-row" style="margin-bottom: var(--s4);">
+        <div class="field">
+          <label for="f-outcome">Outcome</label>
+          <select id="f-outcome">
+            <option value="">All</option>
+            <option value="answered">answered</option>
+            <option value="refused">refused</option>
+            <option value="rate_limited">rate_limited</option>
+            <option value="global_limited">global_limited</option>
+            <option value="too_long">too_long</option>
+            <option value="error">error</option>
+          </select>
+        </div>
+        <div class="field"><label for="f-ip">Client IP</label><input id="f-ip" type="text" placeholder="e.g. 1.2.3.4"></div>
+        <div class="field" style="flex:0 1 96px;"><label for="f-limit">Limit</label><input id="f-limit" type="number" value="100" min="1" max="1000"></div>
+        <button type="button" id="f-run">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          Refresh
+        </button>
+      </div>
+      <div class="results-wrap" id="history-wrap"><p class="empty-state">loading…</p></div>
+    </section>
+
+    <section class="panel" id="p-review">
+      <h2>Downvotes — needs review</h2>
+      <p class="hint">
+        Every 👎 with its chat transcript. Work this queue biweekly: read the exchange, fix the
+        cause (SYSTEM_CONTEXT, schema, embeddings), then <strong>Mark reviewed</strong>.
+        <label style="margin-left:var(--s3); text-transform:none; letter-spacing:0; font-weight:400;">
+          <input type="checkbox" id="show-reviewed" style="width:auto;"> show reviewed too
+        </label>
+      </p>
+      <div class="results-wrap" id="review-wrap"><p class="empty-state">loading…</p></div>
+    </section>
+
+  </div>
+
+  <footer>
+    <a href="/">&larr; back to explorer</a> &middot; <a href="/api">API info</a>
+  </footer>
+
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+  const TOKEN_KEY = 'adminToken';
+  const getToken = () => { try { return sessionStorage.getItem(TOKEN_KEY) || ''; } catch (e) { return ''; } };
+  const setToken = (t) => { try { sessionStorage.setItem(TOKEN_KEY, t); } catch (e) {} };
+  const clearToken = () => { try { sessionStorage.removeItem(TOKEN_KEY); } catch (e) {} };
+
+  class AuthError extends Error {}
+
+  async function adminFetch(path) {
+    const res = await fetch(path, { headers: { 'X-Admin-Token': getToken() } });
+    if (res.status === 403) { throw new AuthError('forbidden'); }
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.detail || `Request failed (${res.status})`);
+    return body;
+  }
+
+  async function adminPost(path) {
+    const res = await fetch(path, { method: 'POST', headers: { 'X-Admin-Token': getToken() } });
+    if (res.status === 403) { throw new AuthError('forbidden'); }
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.detail || `Request failed (${res.status})`);
+    return body;
+  }
+
+  function showGate(rejected) {
+    $('dash').hidden = true;
+    $('lock').hidden = true;
+    $('gate').hidden = false;
+    $('gate-err').hidden = !rejected;
+    $('gate-token').focus();
+  }
+  function showDash() {
+    $('gate').hidden = true;
+    $('dash').hidden = false;
+    $('lock').hidden = false;
+    loadAll();
+  }
+
+  // A panel loader wrapper: renders into `wrap`, routes 403 to the gate,
+  // shows any other failure inline so one dead panel never blanks the page.
+  async function panel(wrapId, fn) {
+    const wrap = $(wrapId);
+    try {
+      await fn(wrap);
+    } catch (e) {
+      if (e instanceof AuthError) { clearToken(); showGate(true); return; }
+      wrap.innerHTML = `<p class="empty-state">Couldn't load: ${esc(e.message)}</p>`;
+    }
+  }
+
+  const fmtTs = (ts) => ts ? esc(String(ts).replace('T', ' ').replace('+00:00', 'Z')) : '—';
+
+  // ask_log / answer_feedback store ts as ISO-8601 with a +00:00 offset,
+  // which `new Date()` parses natively - unlike time.js's parseUtc(), which
+  // is built for SQLite's offset-less CURRENT_TIMESTAMP and would yield NaN.
+  function relTime(ts) {
+    if (!ts) return '—';
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return esc(String(ts));
+    const s = Math.round((Date.now() - d.getTime()) / 1000);
+    if (s < 60) return 'just now';
+    const m = Math.round(s / 60); if (m < 60) return m + 'm ago';
+    const h = Math.round(m / 60); if (h < 24) return h + 'h ago';
+    const dd = Math.round(h / 24); if (dd < 30) return dd + 'd ago';
+    const mo = Math.round(dd / 30); if (mo < 12) return mo + 'mo ago';
+    return Math.round(mo / 12) + 'y ago';
+  }
+
+  async function loadTiles() {
+    try {
+      const { summary: s } = await adminFetch('/admin/ask-stats');
+      $('t-u24').textContent = s.unique_24h;
+      $('t-u7').textContent = s.unique_7d;
+      $('t-uall').textContent = s.unique_all;
+      $('t-q24').textContent = s.questions_24h;
+      const fb = s.feedback || { up: 0, down: 0, down_unreviewed: 0 };
+      $('t-dvr').textContent = fb.down_unreviewed;
+      $('t-fb').textContent = `${fb.up} up · ${fb.down} down total`;
+
+      const order = ['answered', 'refused', 'rate_limited', 'global_limited', 'too_long', 'error'];
+      const a = s.outcomes_24h || {}, b = s.outcomes_all || {};
+      $('outcomes').innerHTML = order.map((k) =>
+        `<div><dt>${k} <span style="opacity:.6">(24h)</span></dt><dd>${a[k] || 0}</dd></div>` +
+        `<div><dt>${k} <span style="opacity:.6">(all)</span></dt><dd>${b[k] || 0}</dd></div>`
+      ).join('');
+    } catch (e) {
+      if (e instanceof AuthError) { clearToken(); showGate(true); return; }
+      $('outcomes').innerHTML = `<div><dt>Couldn't load: ${esc(e.message)}</dt><dd></dd></div>`;
+    }
+  }
+
+  function loadActivity() {
+    return panel('chart', async (wrap) => {
+      const { daily } = await adminFetch('/admin/activity?days=30');
+      if (!daily || !daily.length) { wrap.innerHTML = '<p class="empty-state">No activity yet.</p>'; return; }
+      const W = 900, H = 180, padB = 22, padL = 6;
+      const max = Math.max(...daily.map((d) => d.questions), 1);
+      const bw = (W - padL * 2) / daily.length;
+      let bars = '';
+      daily.forEach((d, i) => {
+        const h = Math.round((H - padB) * (d.questions / max));
+        const x = padL + i * bw;
+        const y = H - padB - h;
+        bars += `<rect class="bar" x="${(x + bw * 0.15).toFixed(1)}" y="${y}" `
+          + `width="${(bw * 0.7).toFixed(1)}" height="${h}"><title>${esc(d.day)}: ${d.questions} questions, ${d.uniq} unique</title></rect>`;
+        if (i % 5 === 0) bars += `<text class="tick" x="${(x + bw / 2).toFixed(1)}" y="${H - 8}" text-anchor="middle">${esc(d.day.slice(5))}</text>`;
+      });
+      wrap.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="questions per day">`
+        + `<line class="axis" x1="${padL}" y1="${H - padB}" x2="${W - padL}" y2="${H - padB}"/>${bars}</svg>`;
+    });
+  }
+
+  function loadClients() {
+    return panel('clients-wrap', async (wrap) => {
+      const { clients } = await adminFetch('/admin/clients?limit=100');
+      if (!clients || !clients.length) { wrap.innerHTML = '<p class="empty-state">No clients yet.</p>'; return; }
+      let h = '<table><thead><tr><th>Client IP</th><th>Questions</th><th>Model calls</th><th>First seen</th><th>Last seen</th></tr></thead><tbody>';
+      for (const c of clients) {
+        h += `<tr><td class="crn">${esc(c.client_ip)}</td>`
+          + `<td class="num">${c.questions}</td><td class="num">${c.llm_calls}</td>`
+          + `<td title="${fmtTs(c.first_seen)}">${relTime(c.first_seen)}</td>`
+          + `<td title="${fmtTs(c.last_seen)}">${relTime(c.last_seen)}</td></tr>`;
+      }
+      wrap.innerHTML = h + '</tbody></table>';
+    });
+  }
+
+  function outcomePill(o) {
+    const warn = ['rate_limited', 'global_limited', 'too_long'];
+    const cls = o === 'answered' ? 'pill-open' : o === 'refused' ? 'pill-closed'
+      : o === 'error' ? 'pill-err' : warn.includes(o) ? 'pill-warn' : '';
+    return cls ? `<span class="pill ${cls}">${esc(o)}</span>` : esc(o);
+  }
+
+  function loadHistory() {
+    return panel('history-wrap', async (wrap) => {
+      const p = new URLSearchParams();
+      const oc = $('f-outcome').value.trim();
+      const ip = $('f-ip').value.trim();
+      const lim = $('f-limit').value.trim();
+      if (oc) p.set('outcome', oc);
+      if (ip) p.set('ip', ip);
+      if (lim) p.set('limit', lim);
+      const { entries } = await adminFetch('/admin/ask-log?' + p.toString());
+      if (!entries || !entries.length) { wrap.innerHTML = '<p class="empty-state">No matching rows.</p>'; return; }
+      let h = '<table><thead><tr><th>Time</th><th>IP</th><th>Outcome</th><th>ms</th><th>Question</th><th>Answer preview</th></tr></thead><tbody>';
+      for (const e of entries) {
+        h += `<tr><td title="${fmtTs(e.ts)}">${relTime(e.ts)}</td>`
+          + `<td class="crn">${esc(e.client_ip ?? '—')}</td>`
+          + `<td>${outcomePill(e.outcome)}</td>`
+          + `<td class="num">${e.latency_ms ?? '—'}</td>`
+          + `<td><span class="cell-clip">${esc(e.question)}</span></td>`
+          + `<td><span class="cell-clip">${esc(e.answer_preview ?? '')}</span></td></tr>`;
+      }
+      wrap.innerHTML = h + '</tbody></table>';
+      wrap.querySelectorAll('.cell-clip').forEach((el) =>
+        el.addEventListener('click', () => el.classList.toggle('open')));
+    });
+  }
+
+  function renderHistoryJson(raw) {
+    if (!raw) return '';
+    let turns;
+    try { turns = JSON.parse(raw); } catch (e) { return `<div class="hist-turn">${esc(raw)}</div>`; }
+    return turns.map((t) =>
+      `<div class="hist-turn"><b>Q:</b> ${esc(t.q)}<br><b>A:</b> ${esc(t.a)}</div>`).join('');
+  }
+
+  function loadReview() {
+    return panel('review-wrap', async (wrap) => {
+      const showRev = $('show-reviewed').checked;
+      const q = showRev ? '/admin/feedback?vote=down' : '/admin/feedback?vote=down&reviewed=0';
+      const { feedback } = await adminFetch(q);
+      if (!feedback || !feedback.length) {
+        wrap.innerHTML = `<p class="empty-state">${showRev ? 'No downvotes recorded.' : 'Nothing to review. 🎉'}</p>`;
+        return;
+      }
+      let h = '<table><thead><tr><th>Time</th><th>IP</th><th>Question</th><th>Answer</th><th>History</th><th></th></tr></thead><tbody>';
+      for (const f of feedback) {
+        const reviewed = !!f.reviewed_at;
+        h += `<tr class="${reviewed ? 'reviewed' : ''}" data-id="${f.id}">`
+          + `<td title="${fmtTs(f.ts)}">${relTime(f.ts)}</td>`
+          + `<td class="crn">${esc(f.client_ip ?? '—')}</td>`
+          + `<td><span class="cell-clip">${esc(f.question)}</span></td>`
+          + `<td><span class="cell-clip">${esc(f.answer)}</span></td>`
+          + `<td><span class="cell-clip">${f.history_json ? 'view transcript' : '—'}</span>`
+          + `<div class="hist-full" hidden>${renderHistoryJson(f.history_json)}</div></td>`
+          + `<td>${reviewed ? '<span class="pill pill-open">reviewed</span>'
+            : `<button type="button" class="mark-btn">Mark reviewed</button>`}</td></tr>`;
+      }
+      wrap.innerHTML = h + '</tbody></table>';
+      wrap.querySelectorAll('.cell-clip').forEach((el) => el.addEventListener('click', () => {
+        el.classList.toggle('open');
+        const full = el.parentElement.querySelector('.hist-full');
+        if (full) full.hidden = !full.hidden;
+      }));
+      wrap.querySelectorAll('.mark-btn').forEach((btn) => btn.addEventListener('click', async () => {
+        const tr = btn.closest('tr');
+        btn.disabled = true; btn.textContent = '…';
+        try {
+          await adminPost(`/admin/feedback/${tr.dataset.id}/reviewed`);
+          if ($('show-reviewed').checked) {
+            tr.classList.add('reviewed');
+            btn.replaceWith(Object.assign(document.createElement('span'), { className: 'pill pill-open', textContent: 'reviewed' }));
+          } else {
+            tr.remove();
+            if (!$('review-wrap').querySelector('tbody tr')) loadReview();
+          }
+          loadTiles();
+        } catch (e) {
+          if (e instanceof AuthError) { clearToken(); showGate(true); return; }
+          btn.disabled = false; btn.textContent = 'Retry';
+        }
+      }));
+    });
+  }
+
+  function loadAll() {
+    loadTiles();
+    loadActivity();
+    loadClients();
+    loadHistory();
+    loadReview();
+  }
+
+  $('gate-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const t = $('gate-token').value.trim();
+    if (!t) return;
+    setToken(t);
+    $('gate-token').value = '';
+    showDash();
+  });
+  $('lock').addEventListener('click', () => { clearToken(); location.reload(); });
+  $('f-run').addEventListener('click', loadHistory);
+  $('f-outcome').addEventListener('change', loadHistory);
+  $('show-reviewed').addEventListener('change', loadReview);
+
+  if (getToken()) showDash(); else showGate(false);
+</script>
+</body>
+</html>
