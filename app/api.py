@@ -10,6 +10,7 @@ Docs:
     http://127.0.0.1:8000/docs
 """
 
+import hmac
 import json
 import os
 import time
@@ -19,7 +20,7 @@ from pathlib import Path
 from typing import Literal, Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -502,81 +503,60 @@ def post_ask_feedback(payload: FeedbackRequest, request: Request):
     return {"ok": bool(ok)}
 
 
-def _require_admin(request: Request, token: Optional[str]) -> None:
-    """Gate for every /admin/* route. Requires the ADMIN_TOKEN env var set on
+def require_admin(request: Request, token: Optional[str] = None) -> None:
+    """FastAPI dependency gating every /admin/* route. Needs ADMIN_TOKEN set on
     the server AND supplied via ?token= or the X-Admin-Token header. Always
     raises the same 403 on any failure (unset, missing, or wrong) so the
-    response never reveals whether the token is even configured."""
-    import hmac
-
+    response never reveals whether the token is configured."""
     expected = os.environ.get("ADMIN_TOKEN")
     supplied = token or request.headers.get("x-admin-token")
     if not expected or not supplied or not hmac.compare_digest(supplied, expected):
         raise HTTPException(status_code=403, detail="Forbidden")
 
 
-@app.get("/admin/ask-log")
+_admin = [Depends(require_admin)]
+
+
+@app.get("/admin/ask-log", dependencies=_admin)
 def admin_ask_log(
-    request: Request,
-    token: Optional[str] = None,
     ip: Optional[str] = None,
     outcome: Optional[str] = None,
     limit: int = Query(default=100, le=1000, ge=1),
 ):
-    """Recent /ask activity - question text, outcome, client IP, latency.
-    ADMIN_TOKEN-gated (see _require_admin)."""
-    _require_admin(request, token)
+    """Recent /ask activity - question text, outcome, client IP, latency."""
     with get_conn() as conn:
         return {"entries": ask_log_mod.recent(conn, limit=limit, ip=ip, outcome=outcome)}
 
 
-@app.get("/admin/ask-stats")
-def admin_ask_stats(request: Request, token: Optional[str] = None):
-    """Aggregate assistant-usage numbers for the dashboard stat tiles: unique
-    clients (24h / 7d / all-time), question volume, outcome breakdown, and the
-    feedback up/down tallies. All computed on demand from ask_log /
-    answer_feedback - no counter table."""
-    _require_admin(request, token)
+@app.get("/admin/ask-stats", dependencies=_admin)
+def admin_ask_stats():
+    """Dashboard stat-tile aggregates: unique clients (24h / 7d / all-time),
+    question volume, outcome breakdown, and the feedback up/down tallies. All
+    computed on demand from ask_log / answer_feedback - no counter table."""
     with get_conn() as conn:
         s = ask_log_mod.summary(conn)
-        try:
-            s["feedback"] = feedback_mod.counts(conn)
-        except Exception as exc:  # noqa: BLE001 - the feedback tile is optional
-            print(f"[admin/ask-stats] feedback counts failed: {exc!r}", flush=True)
-            s["feedback"] = {"up": 0, "down": 0, "down_unreviewed": 0}
+        s["feedback"] = feedback_mod.counts(conn)
     return {"summary": s}
 
 
-@app.get("/admin/clients")
-def admin_clients(
-    request: Request,
-    token: Optional[str] = None,
-    limit: int = Query(default=100, le=1000, ge=1),
-):
+@app.get("/admin/clients", dependencies=_admin)
+def admin_clients(limit: int = Query(default=100, le=1000, ge=1)):
     """Per-client-IP rollup - the app's stand-in for a 'sessions' list, since
     there are no accounts. Most recently active first."""
-    _require_admin(request, token)
     with get_conn() as conn:
         return {"clients": ask_log_mod.clients(conn, limit)}
 
 
-@app.get("/admin/activity")
-def admin_activity(
-    request: Request,
-    token: Optional[str] = None,
-    days: int = Query(default=30, le=90, ge=1),
-):
+@app.get("/admin/activity", dependencies=_admin)
+def admin_activity(days: int = Query(default=30, le=90, ge=1)):
     """Questions + distinct clients per UTC day over the trailing `days`, for
     the dashboard's activity chart."""
-    _require_admin(request, token)
     with get_conn() as conn:
         return {"daily": ask_log_mod.daily_counts(conn, days)}
 
 
-@app.get("/admin/feedback")
+@app.get("/admin/feedback", dependencies=_admin)
 def admin_feedback(
-    request: Request,
-    token: Optional[str] = None,
     vote: Optional[str] = None,
     reviewed: Optional[int] = None,
     limit: int = Query(default=100, le=1000, ge=1),
@@ -584,23 +564,16 @@ def admin_feedback(
     """Thumbs up/down rows for the review panel. `vote=down&reviewed=0` is the
     biweekly triage queue. `reviewed`: 0 = not yet reviewed, 1 = reviewed,
     omitted = all."""
-    _require_admin(request, token)
     reviewed_flag = None if reviewed is None else bool(reviewed)
     with get_conn() as conn:
-        return {
-            "feedback": feedback_mod.recent(
-                conn, vote=vote, reviewed=reviewed_flag, limit=limit
-            )
-        }
+        return {"feedback": feedback_mod.recent(
+            conn, vote=vote, reviewed=reviewed_flag, limit=limit)}
 
 
-@app.post("/admin/feedback/{feedback_id}/reviewed")
-def admin_feedback_reviewed(
-    feedback_id: int, request: Request, token: Optional[str] = None
-):
+@app.post("/admin/feedback/{feedback_id}/reviewed", dependencies=_admin)
+def admin_feedback_reviewed(feedback_id: int):
     """Mark one downvote row as handled (stamps reviewed_at). `already` is
     true if it was already reviewed or the id doesn't exist."""
-    _require_admin(request, token)
     with get_conn() as conn:
         changed = feedback_mod.mark_reviewed(conn, feedback_id)
     return {"ok": True, "id": feedback_id, "already": not changed}

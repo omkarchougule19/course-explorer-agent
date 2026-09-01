@@ -16,13 +16,12 @@ review pass. `reviewed_at` stays NULL until an operator marks that downvote
 handled (GET/POST /admin/feedback* in api.py).
 
 De-duped on (client_ip, question, answer): re-voting the same answer replaces
-the previous row rather than piling up, which also lets a user flip 👍<->👎.
-The answer text is supplied by the browser (there is no server-side answer
-id); acceptable because the data only ever feeds a human review queue, every
-field is length-capped here, and the dashboard HTML-escapes it on render.
+the previous row and lets a user flip 👍<->👎. The answer text comes from the
+browser (there's no server-side answer id) - fine because it only feeds a
+human review queue, is length-capped here, and is HTML-escaped by the
+dashboard on render.
 
-Writes have no auth (it's just feedback). Reads are via GET /admin/feedback,
-gated on the ADMIN_TOKEN env var.
+Writes have no auth. Reads are via GET /admin/feedback, gated on ADMIN_TOKEN.
 """
 
 import json
@@ -151,17 +150,21 @@ def mark_reviewed(conn: db.Connection, feedback_id: int) -> bool:
 
 
 def counts(conn: db.Connection) -> dict:
-    """{up, down, down_unreviewed} for the dashboard's feedback tile."""
-    rows = conn.execute(
-        "SELECT vote, COUNT(*) AS n, "
-        "SUM(CASE WHEN reviewed_at IS NULL THEN 1 ELSE 0 END) AS unreviewed "
-        "FROM answer_feedback GROUP BY vote"
-    ).fetchall()
+    """{up, down, down_unreviewed} for the dashboard's feedback tile. Fails
+    soft to zeroes so a slow Neon wake can't 500 the stats endpoint."""
     out = {"up": 0, "down": 0, "down_unreviewed": 0}
+    try:
+        rows = conn.execute(
+            "SELECT vote, COUNT(*) AS n, "
+            "SUM(CASE WHEN reviewed_at IS NULL THEN 1 ELSE 0 END) AS unreviewed "
+            "FROM answer_feedback GROUP BY vote"
+        ).fetchall()
+    except Exception as exc:  # noqa: BLE001 - the tile is optional
+        print(f"[feedback.counts] failed: {exc!r}", flush=True)
+        return out
     for r in rows:
-        if r["vote"] == "up":
-            out["up"] = int(r["n"])
-        elif r["vote"] == "down":
-            out["down"] = int(r["n"])
+        if r["vote"] in out:
+            out[r["vote"]] = int(r["n"])
+        if r["vote"] == "down":
             out["down_unreviewed"] = int(r["unreviewed"] or 0)
     return out

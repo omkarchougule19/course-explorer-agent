@@ -185,11 +185,10 @@ def recent(conn: db.Connection, limit: int = 100, ip: "str | None" = None,
 
 # --------------------------------------------------------------------------
 # Read-side aggregates for GET /admin/ask-stats, /admin/clients, /admin/activity
-# and the public GET /ask/summary. Nothing here writes; everything is computed
-# from ask_log on demand, so the numbers survive Render restarts for free (the
-# data lives in Neon, not process memory). Cutoffs are built in Python and the
-# `ts` column is compared as text - ISO-8601 UTC sorts correctly lexically - so
-# the same SQL runs on SQLite and Postgres.
+# and the public GET /ask/summary. Nothing here writes - every number is
+# computed from ask_log on demand (the data lives in Neon, not process memory,
+# so it survives Render restarts). `ts` is compared as text since ISO-8601 UTC
+# sorts lexically, keeping one query text valid on both SQLite and Postgres.
 # --------------------------------------------------------------------------
 
 def _cutoff(since: "timedelta | None") -> "str | None":
@@ -198,45 +197,47 @@ def _cutoff(since: "timedelta | None") -> "str | None":
     return (datetime.now(timezone.utc) - since).isoformat(timespec="seconds")
 
 
-def _count_since(conn: db.Connection, since: "timedelta | None" = None) -> int:
-    """Total ask_log rows (any outcome) in the trailing window, or ever."""
-    sql = "SELECT COUNT(*) AS n FROM ask_log"
-    params: list = []
+def _window(since: "timedelta | None", glue: str = "WHERE") -> tuple:
+    """('', []) for no window, else (' <glue> ts >= ?', [cutoff]) - `glue` is
+    WHERE for a fresh clause or AND to extend an existing one."""
     cutoff = _cutoff(since)
-    if cutoff is not None:
-        sql += " WHERE ts >= ?"
-        params.append(cutoff)
+    return (f" {glue} ts >= ?", [cutoff]) if cutoff else ("", [])
+
+
+def _scalar(conn: db.Connection, sql: str, params: list) -> int:
     row = conn.execute(sql, params).fetchone()
     return int(row["n"]) if row else 0
+
+
+def _count_since(conn: db.Connection, since: "timedelta | None" = None) -> int:
+    """Total ask_log rows (any outcome) in the trailing window, or ever."""
+    w, p = _window(since)
+    return _scalar(conn, "SELECT COUNT(*) AS n FROM ask_log" + w, p)
 
 
 def unique_clients(conn: db.Connection, since: "timedelta | None" = None) -> int:
-    """Distinct client IPs seen in ask_log, optionally only within the trailing
-    window. Excludes the '' / 'unknown' placeholder _client_ip() falls back to
-    when there's no usable X-Forwarded-For, so it counts identifiable clients
-    only. Spoofable and NAT-collapsed - a rough floor, not analytics."""
-    sql = ("SELECT COUNT(DISTINCT client_ip) AS n FROM ask_log "
-           "WHERE client_ip IS NOT NULL AND client_ip NOT IN ('', 'unknown')")
-    params: list = []
-    cutoff = _cutoff(since)
-    if cutoff is not None:
-        sql += " AND ts >= ?"
-        params.append(cutoff)
-    row = conn.execute(sql, params).fetchone()
-    return int(row["n"]) if row else 0
+    """Distinct client IPs in ask_log, optionally within the trailing window.
+    Excludes the '' / 'unknown' placeholder _client_ip() falls back to when
+    there's no usable X-Forwarded-For (NULL is excluded by the NOT IN too), so
+    it counts identifiable clients only - a spoofable, NAT-collapsed floor,
+    not analytics."""
+    w, p = _window(since, "AND")
+    return _scalar(
+        conn,
+        "SELECT COUNT(DISTINCT client_ip) AS n FROM ask_log "
+        "WHERE client_ip NOT IN ('', 'unknown')" + w,
+        p,
+    )
 
 
 def outcome_counts(conn: db.Connection, since: "timedelta | None" = None) -> dict:
     """{outcome: count} over ask_log, optionally windowed. Outcomes with no
     rows are simply absent - callers use .get(name, 0)."""
-    sql = "SELECT outcome, COUNT(*) AS n FROM ask_log"
-    params: list = []
-    cutoff = _cutoff(since)
-    if cutoff is not None:
-        sql += " WHERE ts >= ?"
-        params.append(cutoff)
-    sql += " GROUP BY outcome"
-    return {r["outcome"]: int(r["n"]) for r in conn.execute(sql, params).fetchall()}
+    w, p = _window(since)
+    rows = conn.execute(
+        "SELECT outcome, COUNT(*) AS n FROM ask_log" + w + " GROUP BY outcome", p
+    ).fetchall()
+    return {r["outcome"]: int(r["n"]) for r in rows}
 
 
 def clients(conn: db.Connection, limit: int = 100) -> list:
@@ -252,7 +253,7 @@ def clients(conn: db.Connection, limit: int = 100) -> list:
         "MAX(ts) AS last_seen, "
         "SUM(CASE WHEN outcome IN ('answered', 'refused') THEN 1 ELSE 0 END) AS llm_calls "
         "FROM ask_log "
-        "WHERE client_ip IS NOT NULL AND client_ip NOT IN ('', 'unknown') "
+        "WHERE client_ip NOT IN ('', 'unknown') "
         "GROUP BY client_ip "
         "ORDER BY MAX(ts) DESC "
         "LIMIT ?",
@@ -275,7 +276,7 @@ def daily_counts(conn: db.Connection, days: int = 30) -> list:
     `days`. `substr(ts, 1, 10)` takes the YYYY-MM-DD prefix and behaves the
     same on SQLite and Postgres because `ts` is an ISO-8601 text string."""
     days = max(1, min(int(days), 90))
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
+    cutoff = _cutoff(timedelta(days=days))
     rows = conn.execute(
         "SELECT substr(ts, 1, 10) AS day, "
         "COUNT(*) AS questions, "
@@ -295,15 +296,16 @@ def summary(conn: db.Connection) -> dict:
     """Everything the dashboard's stat tiles need, in one call. Any DB error
     yields a zeroed dict rather than propagating - a slow Neon wake must not
     500 the admin page."""
+    day, week = timedelta(days=1), timedelta(days=7)
     try:
         return {
-            "unique_24h": unique_clients(conn, timedelta(days=1)),
-            "unique_7d": unique_clients(conn, timedelta(days=7)),
-            "unique_all": unique_clients(conn, None),
-            "questions_24h": _count_since(conn, timedelta(days=1)),
-            "questions_7d": _count_since(conn, timedelta(days=7)),
-            "outcomes_24h": outcome_counts(conn, timedelta(days=1)),
-            "outcomes_all": outcome_counts(conn, None),
+            "unique_24h": unique_clients(conn, day),
+            "unique_7d": unique_clients(conn, week),
+            "unique_all": unique_clients(conn),
+            "questions_24h": _count_since(conn, day),
+            "questions_7d": _count_since(conn, week),
+            "outcomes_24h": outcome_counts(conn, day),
+            "outcomes_all": outcome_counts(conn),
         }
     except Exception as exc:  # noqa: BLE001 - dashboard must render regardless
         print(f"[ask_log.summary] failed: {exc!r}", flush=True)
