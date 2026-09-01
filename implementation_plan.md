@@ -143,8 +143,8 @@ On top of the existing text-to-SQL agent, add a semantic retrieval tool for desc
 1. **At scrape time (local, monthly):** for every course with a non-null `description`, embed the text with a self-hosted `fastembed` model (`BAAI/bge-small-en-v1.5`) and upsert the vector into a `course_embeddings` table in Neon (one row per distinct `(subject, course_number)`, not per section — the description is shared across sections).
 2. **At query time (Render, online):** the LangChain agent has two tools:
    * `sql_query` (existing) — for instructor, CRN, enrollment, credit hours, counts, filters.
-   * `course_content_search` (new) — embeds the question with the same local model, runs a `pgvector` cosine-distance search (`<=>` operator) against `course_embeddings`, returns the top-k matching course descriptions as context.
-3. The agent's prompt is extended to explain when to use each tool (structured fact vs. "what is this course about" / "find courses about X").
+   * `course_content_search` (new) — **multi-query**: one cheap non-streaming LLM call rewrites the topic and adds a few related facets, all embedded locally in one batch, each searched against `course_embeddings` via `pgvector` cosine (`<=>`), and the result lists fused with Reciprocal Rank Fusion into one de-duplicated top-k set. `RAG_MULTIQUERY=0` reverts to a single-query search. See `DECISIONS.md`.
+3. The agent's prompt is extended to explain when to use each tool (structured fact vs. "what is this course about" / "find courses about X") and that the content tool self-expands, so one call is enough.
 
 ### Schema addition
 ```sql

@@ -1068,6 +1068,80 @@ cards equal-height with an Illini-orange top rule and a count-up on load.
   `ui-standards-course-explorer` memory - the user wants infra/provider
   names kept out of the UI.)
 
+## Multi-query expansion in front of the RAG tool (2026-08-31)
+
+The user asked for the technique where the AI "reformats the question so RAG
+works better and generates 3-4 related questions on the topic" before the
+retrieval step. Named: multi-query retrieval / RAG-Fusion (query expansion +
+Reciprocal Rank Fusion), with a dash of query decomposition.
+
+**Where it went:** entirely inside the `course_content_search` tool in
+`app/agent.py` - the vector path only. The SQL path (structured lookups,
+counts) never calls that tool, so it's untouched and pays nothing. Not a
+pre-pass on the raw user question, because that would also run for SQL
+questions and can mislead them.
+
+**What it does per semantic question:**
+1. One **non-streaming** LLM call rewrites the topic (cleaned, de-jargoned)
+   and adds `RAG_SUBQUERIES` (default 3) distinct *facets* - not paraphrases.
+   "machine learning" -> `["machine learning", "supervised learning
+   algorithms", "unsupervised learning techniques", "ethical AI and bias
+   mitigation"]` (verified live against Groq). This is the "3-4 related
+   questions" and the "reformat" in one call. Falls back to `[query]` on any
+   parse/LLM failure so retrieval always runs.
+2. All phrases embedded locally in one `embed_texts` batch (fastembed, CPU,
+   no API cost).
+3. Each embedded with `embeddings.search_similar_by_vector` (new - takes a
+   pre-computed vector so the batch isn't re-embedded), `RAG_K_PER` (6) deep.
+4. `_rrf_merge` fuses the result lists: `score += 1/(60 + rank)` keyed on
+   `(subject, course_number)`, keeping the smallest cosine distance seen per
+   course. Returns `RAG_K_RETURN` (10).
+5. `SYSTEM_CONTEXT` now tells the model the tool self-expands and to write a
+   thematic overview from the merged set, not a flat list.
+
+**Why not full query decomposition (separate sub-answers then synthesis):**
+the facet-oriented expansion already delivers both the retrieval-recall win
+and the topic-coverage the user wanted, for one extra LLM call. A real
+decomposition pass is 2-3 extra Groq calls per question against the
+200k-tokens/day free budget and changes answer shape/length - held back
+until facet expansion is shown to be insufficient for broad "survey"
+questions.
+
+**Explicitly rejected: cross-encoder reranking** (the usual RAG-Fusion
+finisher). `bge-reranker-base` is ~1GB; Render's free tier is 512MB with
+~275MB measured headroom (see the embeddings memory-footprint entry). Won't
+fit. RRF is the merge step instead - no model, ~12 lines.
+
+**Streaming safety:** the expansion call runs *inside* the agent run. Two
+guards keep its tokens out of the streamed answer: it uses a dedicated
+`streaming=False` client, and `astream_answer` now tracks tool-call depth
+and ignores every `on_chat_model_stream` event fired while `tool_depth > 0`.
+
+**Cost:** +1 Groq call (~250 tokens) and +~400ms per *semantic* question
+only. Kill switch: `RAG_MULTIQUERY=0`.
+
+**Verified:** `_rrf_merge` (ranking, dedupe, min-distance retention) and
+`_expand_query` (JSON extraction from noisy output, all fallback paths, live
+Groq expansion) unit-tested; a streamed SQL question confirmed no
+regression. The full pgvector path (expansion -> multi-search -> merge ->
+answer) is **not** verified end-to-end - this dev box has no `DATABASE_URL`,
+so `course_content_search` isn't even registered on local SQLite. Same
+standing gap as the rest of the RAG layer; needs a Neon run.
+
+### Hierarchy flip: the assistant is the headline, browsing is secondary
+
+The user's call: "make ask AI the highlight on the website and not the
+browse sections part." Restructured so **Ask the Course Assistant** is a
+full-width hero panel directly under the KPI strip - elevated (orange top
+rule + `--shadow-md`), a 26px heading, a lead sentence, a large input, and
+four example-question chips that fill and submit on click (chips remove
+themselves after the first question). Browse Sections and Department Data
+moved below a small "Browse the data directly" section label, in a plain
+`.tools` stack with a dialed-down 19px `h2` - still fully functional, just
+visually the fallback path. The sticky side-rail layout from the previous
+iteration is gone (the assistant no longer needs to follow a long table -
+it *is* the top of the page).
+
 ## Assistant answers: streaming + Markdown rendering + latency cuts (2026-08-31)
 
 Three connected changes to the `/ask` experience, driven by the answer

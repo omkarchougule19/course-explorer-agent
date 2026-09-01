@@ -35,9 +35,32 @@
     No data yet. Run <code>python app/scraper.py --year 2026 --semester fall</code> from the project root, then reload this page.
   </div>
 
-  <div class="layout">
+  <section class="panel ask-hero">
+    <h2>Ask the Course Assistant</h2>
+    <p class="ask-lead">Ask anything about UIUC courses, sections, instructors, or gen-eds — the assistant writes and runs the SQL for you. Answers come from this local database, not the live internet, and reflect each department's last sync.</p>
+    <form id="ask-form" class="ask-form">
+      <input id="ask-input" type="text" placeholder="e.g. Which CS courses have the most sections this fall?" autocomplete="off">
+      <button type="submit">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+        Send
+      </button>
+    </form>
+    <div class="chips" id="chips">
+      <button type="button" class="chip">Who teaches CS 225 this fall?</button>
+      <button type="button" class="chip">Which courses satisfy a QR gen-ed?</button>
+      <button type="button" class="chip">What does STAT 400 cover?</button>
+      <button type="button" class="chip">Find courses about machine learning</button>
+    </div>
+    <div class="scrollback" id="scrollback" aria-live="polite">
+      <div class="line line-sys" id="sb-placeholder">Your conversation will appear here.</div>
+    </div>
+  </section>
 
-    <section class="panel area-browse">
+  <p class="section-label">Browse the data directly</p>
+
+  <div class="tools">
+
+    <section class="panel" id="browse-panel">
       <h2>Browse Sections</h2>
       <form id="browse-form">
         <div class="field-row">
@@ -80,21 +103,7 @@
       <div class="results-wrap" id="results-wrap"></div>
     </section>
 
-    <aside class="rail">
-      <section class="panel">
-        <h2>Ask the Agent</h2>
-        <div class="scrollback" id="scrollback" aria-live="polite">
-          <div class="line line-sys">Ask about courses, sections, or instructors in the local database — e.g. “which CS courses have the most sections this fall?”</div>
-        </div>
-        <form id="ask-form" class="ask-form">
-          <input id="ask-input" type="text" placeholder="Ask a question…" autocomplete="off">
-          <button type="submit">Send</button>
-        </form>
-        <p class="hint">Answers come from a SQL agent that queries this database directly — not the live internet — and reflect each department's last sync, so enrollment counts may be out of date.</p>
-      </section>
-    </aside>
-
-    <section class="panel area-dept" id="dept-panel">
+    <section class="panel" id="dept-panel">
       <h2>Department Data</h2>
       <p class="hint">Each department is refreshed on demand. Hit <strong>Sync</strong> to request a refresh — it's picked up within 24 hours (departments synced in the last 7 days are already current). The number is how many refreshes have been requested since the last sync. The list is ordered by pending requests, then by how stale the data is; use the filter or <strong>Show all</strong> for the rest.</p>
       <div class="field-row" style="margin: var(--s4) 0 0;">
@@ -306,6 +315,13 @@
     return buffer;
   }
 
+  $('chips').addEventListener('click', (e) => {
+    const chip = e.target.closest('.chip');
+    if (!chip) return;
+    $('ask-input').value = chip.textContent;
+    $('ask-form').requestSubmit();
+  });
+
   $('ask-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const input = $('ask-input');
@@ -313,6 +329,8 @@
     if (!question) return;
     input.value = '';
     input.disabled = true;
+    $('chips')?.remove();
+    $('sb-placeholder')?.remove();
 
     addLine(question, 'line-q');
     const answerLine = addLine('', 'line-a');
