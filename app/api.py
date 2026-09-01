@@ -315,6 +315,11 @@ def post_sync_request(payload: SyncRequest):
 
 class AskRequest(BaseModel):
     question: str
+    # Optional windowed conversation history from the browser: a list of
+    # {"q": ..., "a": ...} prior turns. The server re-trims it (last 3 turns,
+    # each clipped) in agent.build_agent_input - it's context only, never
+    # trusted for length or re-answered.
+    history: Optional[list] = Field(default=None, max_length=20)
 
 
 def _client_ip(request: Request) -> str:
@@ -386,7 +391,7 @@ def ask_agent(payload: AskRequest, request: Request):
     # string; this only guards against something truly unexpected.
     t0 = time.monotonic()
     try:
-        answer = ask(question)
+        answer = ask(question, history=payload.history)
     except Exception as exc:  # noqa: BLE001 - defense in depth
         latency = int((time.monotonic() - t0) * 1000)
         print(f"[ask] agent raised: {exc!r}", flush=True)
@@ -431,7 +436,7 @@ async def ask_agent_stream(payload: AskRequest, request: Request):
         parts: list[str] = []
         final_text = ""
         try:
-            async for kind, text in astream_answer(question):
+            async for kind, text in astream_answer(question, payload.history):
                 if kind == "token":
                     parts.append(text)
                     yield _sse("token", text)

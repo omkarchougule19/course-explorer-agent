@@ -1068,6 +1068,48 @@ cards equal-height with an Illini-orange top rule and a count-up on load.
   `ui-standards-course-explorer` memory - the user wants infra/provider
   names kept out of the UI.)
 
+## Windowed conversation history + stop defaulting to tables (2026-08-31)
+
+The user wanted students to be able to chat continuously ("compressed chat
+history"), and the assistant to stop answering everything as a table.
+
+**History - windowed, not summarised.** Options weighed: (A) client sends
+the last few raw turns, server-truncated; (B) a rolling LLM summary the
+client carries and the server updates with an extra call each turn. The user
+chose **A**. Student chats are short, windowing is enough, and it costs
+**zero extra LLM calls** - B's flat-cost advantage only matters for long
+sessions.
+
+- **State lives in the browser.** The server stays stateless - no sessions,
+  no store (a sessions/auth system was already rejected for this app).
+  `AskRequest` gains `history: list[{q, a}]` (`max_length=20`, Pydantic).
+  Both `/ask` and `/ask/stream` pass it through.
+- `agent.build_agent_input(question, history)` re-trims server-side
+  regardless of what the client sent - last 3 turns, question clipped to
+  200 chars, each answer to 250 - and prepends a "Conversation history
+  (context only - do not re-answer these)" block to the agent `input`
+  string. Everything downstream (guardrails, rate limits, RAG, `ask_log`
+  which still records only the raw question) is untouched.
+- `SYSTEM_CONTEXT` gained a rule: use the history only to resolve
+  back-references ("it", "those", "the second one"), never re-answer.
+- Frontend: `chatHistory` array, last 3 sent per request, last 10 kept. A
+  **New chat** button (in the panel heading, hidden until there's history)
+  clears it and restores the example chips; a page reload also starts fresh
+  since nothing is persisted. Verified live: "What is CS 233 about?" then
+  "how many credit hours is it?" correctly resolved *it* = CS 233.
+
+**Tables no longer the default.** `SYSTEM_CONTEXT` now says: prose or a short
+bullet list by default; a Markdown table only for genuinely tabular results
+(3+ fields across several rows to compare); 1-3 items or a single field or a
+count get a sentence. `md.js` still renders tables when they do appear.
+Verified: the two follow-up answers above and an instructor list all came
+back as prose / bullets, not tables.
+
+**Incidental fix:** added `[hidden] { display: none !important }` to
+`style.css`. The global `button { display: inline-flex }` rule (author
+origin) was overriding the UA `[hidden]` rule, so `<button hidden>` (the New
+chat button, and any future hidden button) rendered anyway.
+
 ## Multi-query expansion in front of the RAG tool (2026-08-31)
 
 The user asked for the technique where the AI "reformats the question so RAG

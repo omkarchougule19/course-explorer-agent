@@ -36,8 +36,8 @@
   </div>
 
   <section class="panel ask-hero">
-    <h2>Ask the Course Assistant</h2>
-    <p class="ask-lead">Ask anything about UIUC courses, sections, instructors, or gen-eds — the assistant writes and runs the SQL for you. Answers come from this local database, not the live internet, and reflect each department's last sync.</p>
+    <h2>Ask the Course Assistant <button type="button" class="link-btn" id="new-chat" hidden>New chat</button></h2>
+    <p class="ask-lead">Ask anything about UIUC courses, sections, instructors, or gen-eds — the assistant writes and runs the SQL for you. It remembers the last few turns, so you can ask follow-ups. Answers come from this local database, not the live internet, and reflect each department's last sync.</p>
     <form id="ask-form" class="ask-form">
       <input id="ask-input" type="text" placeholder="e.g. Which CS courses have the most sections this fall?" autocomplete="off">
       <button type="submit">
@@ -315,6 +315,29 @@
     return buffer;
   }
 
+  // Windowed conversation memory: the browser keeps the transcript and
+  // sends the last few turns back so follow-ups ("who teaches it?") resolve.
+  // Server re-trims; nothing is persisted, so a reload starts fresh.
+  let chatHistory = [];
+  const HISTORY_TURNS_SENT = 3;
+  const HISTORY_TURNS_KEPT = 10;
+  const HISTORY_ANSWER_CLIP = 600;
+
+  function recordTurn(q, a) {
+    chatHistory.push({ q, a: String(a || '').slice(0, HISTORY_ANSWER_CLIP) });
+    if (chatHistory.length > HISTORY_TURNS_KEPT) chatHistory = chatHistory.slice(-HISTORY_TURNS_KEPT);
+    $('new-chat').hidden = false;
+  }
+
+  $('new-chat').addEventListener('click', () => {
+    chatHistory = [];
+    $('new-chat').hidden = true;
+    $('chips').style.display = '';
+    $('scrollback').innerHTML =
+      '<div class="line line-sys" id="sb-placeholder">Your conversation will appear here.</div>';
+    $('ask-input').focus();
+  });
+
   $('chips').addEventListener('click', (e) => {
     const chip = e.target.closest('.chip');
     if (!chip) return;
@@ -329,7 +352,8 @@
     if (!question) return;
     input.value = '';
     input.disabled = true;
-    $('chips')?.remove();
+    const chipsEl = $('chips');
+    if (chipsEl) chipsEl.style.display = 'none';
     $('sb-placeholder')?.remove();
 
     addLine(question, 'line-q');
@@ -351,7 +375,9 @@
         answerLine.textContent = 'The assistant failed to answer. Try again shortly.';
       } else {
         answerLine.className = 'line line-a md';
-        answerLine.innerHTML = window.renderMarkdown(text || 'I couldn’t produce an answer for that.');
+        const answer = text || 'I couldn’t produce an answer for that.';
+        answerLine.innerHTML = window.renderMarkdown(answer);
+        if (!asError) recordTurn(question, answer);
       }
       scroll();
       input.disabled = false;
@@ -362,7 +388,7 @@
       const res = await fetch('/ask/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question }),
+        body: JSON.stringify({ question, history: chatHistory.slice(-HISTORY_TURNS_SENT) }),
       });
 
       if (!res.ok || !res.body) {

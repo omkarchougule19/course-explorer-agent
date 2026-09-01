@@ -112,10 +112,20 @@ Rules:
 - "What is X about" questions: summarize description in your own words
   (2-3 sentences), never paste it verbatim. If NULL, say no description was
   scraped - don't invent one.
-- Be thorough: for multi-row results, list each row (don't drop info), state
-  row count, name the term you defaulted to if the question didn't specify
-  one, include columns relevant to what was asked (credit_hours,
-  enrollment_status, etc). Simple yes/no/count questions get short answers.
+- Format: answer in clear prose or a short bullet list by default. Use a
+  Markdown table ONLY when the result is genuinely tabular - 3+ fields
+  across several rows a reader would compare (e.g. a section list with CRN,
+  instructor and time). For 1-3 items, or a single field, or a count, use a
+  sentence.
+- Be thorough: for multi-row results cover every row (don't drop info),
+  state the row count, name the term you defaulted to if the question
+  didn't specify one, and include the fields relevant to what was asked
+  (credit_hours, enrollment_status, etc). Simple yes/no/count questions get
+  short answers.
+- A conversation history block may precede the question. Use it only to
+  resolve back-references ("it", "that course", "those", "the second one");
+  never re-answer an earlier question, and ignore the history if it isn't
+  relevant to the current one.
 """.strip()
 
 
@@ -355,6 +365,48 @@ def friendly_error(exc: Exception) -> str:
     return f"Something went wrong answering that question: {exc}"
 
 
+# --- conversation history (windowed, so students can chat continuously) -------
+# The server is stateless - the browser holds the transcript and sends the
+# last few turns back with each question. Everything is re-trimmed here rather
+# than trusting the client's sizes, and it only ever becomes extra context in
+# the agent's `input` string - the guardrails, rate limits and RAG path are
+# untouched.
+_HISTORY_MAX_TURNS = 3
+_HISTORY_Q_CHARS = 200
+_HISTORY_A_CHARS = 250
+
+
+def _format_history(history) -> str:
+    if not isinstance(history, (list, tuple)) or not history:
+        return ""
+    lines = []
+    for turn in list(history)[-_HISTORY_MAX_TURNS:]:
+        if not isinstance(turn, dict):
+            continue
+        q = str(turn.get("q", "")).strip().replace("\n", " ")[:_HISTORY_Q_CHARS]
+        a = str(turn.get("a", "")).strip().replace("\n", " ")
+        if len(a) > _HISTORY_A_CHARS:
+            a = a[:_HISTORY_A_CHARS].rstrip() + "…"
+        if q:
+            lines.append(f"Student: {q}")
+        if a:
+            lines.append(f"Assistant: {a}")
+    return "\n".join(lines)
+
+
+def build_agent_input(question: str, history=None) -> str:
+    """The string handed to the agent as `input`: the current question, with
+    a short trailing window of prior turns prepended when there is one."""
+    hist = _format_history(history)
+    if not hist:
+        return question
+    return (
+        "Conversation history (context only - do not re-answer these):\n"
+        f"{hist}\n\n"
+        f"Current question: {question}"
+    )
+
+
 def _sections_empty() -> bool:
     """True only if the DB is reachable AND sections has zero rows. A
     connection failure returns False so the caller falls through to the agent,
@@ -370,7 +422,7 @@ def _sections_empty() -> bool:
         return False
 
 
-def ask(question: str, verbose: bool = False) -> str:
+def ask(question: str, verbose: bool = False, history=None) -> str:
     if not question or not question.strip():
         return "Ask me something about the course data, e.g. \"Who teaches CS 225?\""
 
@@ -385,14 +437,14 @@ def ask(question: str, verbose: bool = False) -> str:
         return "The database exists but has no rows yet. Run scraper.py first, then ask again."
 
     try:
-        result = agent.invoke({"input": question})
+        result = agent.invoke({"input": build_agent_input(question, history)})
     except Exception as exc:  # noqa: BLE001 - provider/network/agent errors all land here
         return friendly_error(exc)
 
     return result.get("output", str(result))
 
 
-async def astream_answer(question: str):
+async def astream_answer(question: str, history=None):
     """Async generator yielding (kind, text) tuples for the /ask/stream route:
 
         ("status", label)  - the agent started a tool; show it as progress
@@ -421,7 +473,9 @@ async def astream_answer(question: str):
     final: str | None = None
     tool_depth = 0
     try:
-        async for ev in agent.astream_events({"input": q}, version="v2"):
+        async for ev in agent.astream_events(
+            {"input": build_agent_input(q, history)}, version="v2"
+        ):
             kind = ev.get("event")
             if kind == "on_tool_start":
                 tool_depth += 1

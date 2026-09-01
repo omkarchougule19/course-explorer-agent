@@ -47,6 +47,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }   /* beats the `button { display: inline-flex }` rule below */
 
 html {
   background: var(--bg);
@@ -203,7 +204,19 @@ hr.rule { display: none; }
   border-top: 3px solid var(--orange);
   box-shadow: var(--shadow-md);
 }
-.ask-hero h2 { font-size: 26px; }
+.ask-hero h2 {
+  font-size: 26px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s3);
+}
+.ask-hero h2 .link-btn {
+  align-self: center;
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 600;
+}
 .ask-lead {
   margin: 0 0 var(--s4);
   max-width: 68ch;
