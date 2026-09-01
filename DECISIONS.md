@@ -1001,3 +1001,137 @@ Not changed (accepted): the per-IP limit still keys on a spoofable header by
 design (the global cap is the real control); `server: uvicorn` header
 (low value, Render-level concern); the timing side-channel on the admin
 token is now `compare_digest` so it's moot.
+
+---
+
+## UI redesign: dashboard-grid layout on an academic serif system (2026-08-31)
+
+Second pass over the static UI, run through the `ui-ux-pro-max` skill. The
+first reskin (see "UI reskin: UIUC brand identity" above) fixed the palette
+and typography but kept a single 900px column of stacked full-width panels
+that read as a form, not a tool.
+
+- **Style direction** picked from the skill's `--design-system` output:
+  "Data-Dense Dashboard" (KPI cards, minimal padding, row-hover, sized
+  loading feedback, grid layout). The skill's recommended palette
+  (blue-primary + amber-accent) is already what the UIUC brand tokens are,
+  so the palette was kept unchanged - only structure and type moved.
+- **Typography** changed Montserrat -> **EB Garamond** (headings, KPI
+  values, `h2`) + **Crimson Text** (prose: chat answers, hints, the
+  subtitle), with **Source Sans 3 retained for UI chrome** (form labels,
+  buttons, table cells). Chosen deliberately over serif-everywhere: Crimson
+  Text at 13px in a dense zebra table hurts scan speed, so tabular data and
+  controls stay sans. Both new families are OFL, loaded from the same
+  `fonts.googleapis.com` origin the CSP already allows - no CSP change.
+- **Layout** is now CSS Grid: a `.kpi-strip` of bordered stat cards
+  (`repeat(auto-fit, minmax(150px, 1fr))`), then a `minmax(0,1fr) 340px`
+  split at `min-width: 1024px` - Browse Sections as the main column, Ask
+  the Agent + Department Data in an `<aside>` - collapsing to one column
+  below that. `--maxw` widened 900 -> 1120px.
+- **Interaction polish**: table `tr:hover` tint + `position: sticky` header;
+  a shimmer **skeleton** with `aria-busy` on the browse results while a
+  query runs (replaced the bare "querying database..." text); 140-160ms
+  fade/rise entrance animations gated behind
+  `@media (prefers-reduced-motion: no-preference)`; three inline Lucide SVG
+  icons (graduation cap in the banner, search on Run Query, refresh on
+  Sync) - inline because the CSP blocks external script/SVG, and *not* the
+  UIUC block-I, which is trademark-restricted (noted in the earlier reskin
+  entry).
+- `freshness.html` shares `style.css`, so it inherited the redesign; only
+  its font `<link>` needed updating.
+
+### Follow-up iteration (same day, after review)
+
+The first cut of this redesign was rejected - "blocks not even aligned". The
+`browse | rail` / `dept | rail` grid was sound but an earlier attempt at
+`browse | rail` / `dept dept` (Department table spanning full width) left the
+`position: sticky` assistant rail floating *over* the full-width table below
+it. Reverted: the rail keeps its own 360px column across both rows
+(`"browse rail" / "dept rail"`), `align-self: start`, so it stays beside the
+left-column tables with no overlap and no dead void. Banner is now a
+full-bleed `<header>` with an inner `.wrap`; the KPI strip pulls up with a
+negative margin to overlap the banner's bottom edge (dashboard-hero look),
+cards equal-height with an Illini-orange top rule and a count-up on load.
+
+- **"Terms" KPI** stopped being `fall 2026, spring 2026, summer 2026` jammed
+  into a number slot - it now shows the count (`3`) with the term list as a
+  small sub-line. "Last Updated" got the same treatment (subject + term as
+  the sub-line).
+- **Department Data list is paged.** ~187 rows was a wall on first load.
+  Default shows the top 20 ranked by pending sync requests, then by
+  staleness, then alphabetically - i.e. the departments that actually need
+  attention - with a "Show all / Show fewer" toggle. Typing in the filter
+  box always shows the full matching set (filtering implies intent).
+- **Removed `GROQ_API_KEY` from user-facing copy.** The assistant panel hint
+  named the server env var; that's a deployment detail, not something a site
+  visitor needs. Reworded to describe behaviour only. (See the
+  `ui-standards-course-explorer` memory - the user wants infra/provider
+  names kept out of the UI.)
+
+## Assistant answers: streaming + Markdown rendering + latency cuts (2026-08-31)
+
+Three connected changes to the `/ask` experience, driven by the answer
+taking "a lot of time to revert" and coming back as raw pipe-and-dash
+Markdown that's unreadable in a proportional font.
+
+### `POST /ask/stream` - Server-Sent Events
+
+New route alongside the unchanged `/ask` (kept as the non-JS fallback and
+the documented `curl` entry point; the browser UI now uses the stream).
+`agent.astream_answer()` is an async generator over
+`AgentExecutor.astream_events(..., version="v2")` that yields
+`("status" | "token" | "done")` tuples; the route formats them as SSE
+frames (`data:` JSON-encoded so answer newlines don't break framing).
+
+- **Tier chosen: C (stream + status lines)**, not B (answer tokens only).
+  A SQL agent spends most of its latency *before* the final answer (schema
+  reasoning, SQL generation, execution), so streaming just the answer would
+  still show a frozen "Thinking" for the slow part. Status events
+  ("Running SQL…", "Reading the results…") fill that gap, and B is a strict
+  subset of C's plumbing - no extra cost.
+- **Guardrails unchanged**: `_ask_precheck()` (length cap / shared daily cap
+  / per-IP limit) was factored out of `ask_agent` and runs *synchronously
+  before* the stream opens, so a blocked call still returns a normal JSON
+  error, not a stream. `ask_log.record()` moved into the generator's
+  `finally`, classifying the accumulated buffer.
+- **Middleware risk checked**: the `BaseHTTPMiddleware` security-headers
+  layer does not buffer the stream (it only sets headers) - verified with
+  `curl -N` that frames arrive incrementally. `X-Accel-Buffering: no` set
+  for proxies.
+- Frontend: `fetch` + `ReadableStream` reader + a hand-rolled SSE frame
+  parser (not `EventSource`, which is GET-only and can't POST the
+  question). Plain `textContent` while streaming; on `done`, the node is
+  swapped to the Markdown-rendered HTML.
+
+### `static/md.js` - minimal Markdown renderer
+
+~90 lines, no dependency. A library was rejected: the page CSP only allows
+same-origin scripts (no CDN), and the agent only ever emits GitHub pipe
+tables, `**bold**`, `*italic*`, `` `code` ``, lists, and paragraphs.
+**Security**: every text fragment is `escapeHtml()`-ed *before* any markup
+is added, so no raw HTML from the model can reach `innerHTML`; formatting
+only ever inserts a fixed tag set. The rendered `<table class="chat-table">`
+inherits the browse table's styling, which is the actual fix for the
+"can't tell the columns apart" complaint.
+
+### Latency cuts in `agent.py`
+
+The `create_sql_agent` default does ~5 serial LLM round-trips per question
+(`sql_db_list_tables` -> `sql_db_schema` -> `sql_db_query_checker` ->
+`sql_db_query` -> synthesize). Since `SYSTEM_CONTEXT` already documents the
+full 5-table schema and `include_tables` pins it:
+
+- Added an **"Efficiency" block to `SYSTEM_CONTEXT`** instructing the model
+  to skip `sql_db_list_tables` / `sql_db_schema` (unless a query errors with
+  a missing-table/column) and `sql_db_query_checker`, and to aim for one
+  `sql_db_query` call. Verified live: "how many CS sections in fall 2026"
+  now goes straight to `Running SQL…` with no schema-discovery calls, and a
+  12-row table answer streams in ~2s.
+- `max_iterations` 8 -> 6 (a well-formed answer now needs ~2 iterations).
+- `_build_llm(streaming=...)` threads `streaming=True` into the provider
+  client so token deltas actually fire; harmless for the sync `ask()` path.
+- Considered and **not done**: an exact-question answer cache keyed on
+  `ask_log` (staleness after a department sync, marginal benefit at this
+  traffic), a smaller Groq model for the SQL step (`gpt-oss-120b` is
+  already MoE-fast on Groq), and a non-agent "one SQL call" fast path
+  (loses robustness on unusual questions).

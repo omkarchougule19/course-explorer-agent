@@ -10,6 +10,7 @@ Docs:
     http://127.0.0.1:8000/docs
 """
 
+import json
 import os
 import time
 from contextlib import contextmanager
@@ -19,7 +20,7 @@ from typing import Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -327,45 +328,53 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+def _ask_precheck(question: str, ip: str) -> Optional[tuple[int, str]]:
+    """Run the pre-LLM guardrails shared by /ask and /ask/stream: length cap,
+    shared daily cap, per-IP rate limit. Records the blocking outcome to
+    ask_log and returns (status_code, detail) if blocked, else None. See
+    app/ask_log.py and DECISIONS.md for the rationale."""
+    with get_conn() as conn:
+        if len(question) > ask_log_mod.MAX_CHARS:
+            ask_log_mod.record(conn, ip, question, "too_long")
+            return 422, (f"That question is {len(question)} characters; the limit is "
+                         f"{ask_log_mod.MAX_CHARS}. Ask something shorter and more specific.")
+        if ask_log_mod.global_over_limit(conn):
+            ask_log_mod.record(conn, ip, question, "global_limited")
+            return 429, ("The assistant has reached its shared daily limit. Browse "
+                         "Sections and Department Data still work; try the assistant "
+                         "again tomorrow.")
+        blocked, scope = ask_log_mod.over_limit(conn, ip)
+        if blocked:
+            ask_log_mod.record(conn, ip, question, "rate_limited")
+            return 429, (f"You've hit the limit of AI questions per {scope}. The Browse "
+                         f"Sections and Department Data tools still work, and you can ask "
+                         f"the assistant again later.")
+    return None
+
+
+def _sse(event: str, data: str) -> str:
+    """Format one Server-Sent Events frame. The data is JSON-encoded so
+    embedded newlines don't break SSE's line-oriented framing."""
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
 @app.post("/ask")
 def ask_agent(payload: AskRequest, request: Request):
     """Plain-English question -> SQL/vector agent -> natural-language answer.
     Requires GROQ_API_KEY (or GEMINI/OPENAI) on the server. Every attempt is
     written to ask_log; a per-IP rate limit and a length cap run before the
     LLM so junk can't drain the provider's daily budget (see app/ask_log.py
-    and DECISIONS.md)."""
+    and DECISIONS.md). The browser UI uses /ask/stream instead; this stays as
+    the non-streaming fallback and the documented curl entry point."""
     question = (payload.question or "").strip()
     if not question:
         raise HTTPException(status_code=400, detail="question can't be empty")
 
     ip = _client_ip(request)
 
-    # --- pre-LLM guardrails ---------------------------------------------------
-    with get_conn() as conn:
-        if len(question) > ask_log_mod.MAX_CHARS:
-            ask_log_mod.record(conn, ip, question, "too_long")
-            raise HTTPException(
-                status_code=422,
-                detail=(f"That question is {len(question)} characters; the limit is "
-                        f"{ask_log_mod.MAX_CHARS}. Ask something shorter and more specific."),
-            )
-        if ask_log_mod.global_over_limit(conn):
-            ask_log_mod.record(conn, ip, question, "global_limited")
-            raise HTTPException(
-                status_code=429,
-                detail=("The assistant has reached its shared daily limit. Browse "
-                        "Sections and Department Data still work; try the assistant "
-                        "again tomorrow."),
-            )
-        blocked, scope = ask_log_mod.over_limit(conn, ip)
-        if blocked:
-            ask_log_mod.record(conn, ip, question, "rate_limited")
-            raise HTTPException(
-                status_code=429,
-                detail=(f"You've hit the limit of AI questions per {scope}. The Browse "
-                        f"Sections and Department Data tools still work, and you can ask "
-                        f"the assistant again later."),
-            )
+    blocked = _ask_precheck(question, ip)
+    if blocked:
+        raise HTTPException(status_code=blocked[0], detail=blocked[1])
 
     try:
         from app.agent import ask
@@ -390,6 +399,70 @@ def ask_agent(payload: AskRequest, request: Request):
     with get_conn() as conn:
         ask_log_mod.record(conn, ip, question, outcome, answer, latency)
     return {"question": question, "answer": answer}
+
+
+@app.post("/ask/stream")
+async def ask_agent_stream(payload: AskRequest, request: Request):
+    """Same contract as /ask, but streams the answer as Server-Sent Events so
+    the UI can render it token-by-token with a live "Running SQL…" status.
+
+    Frames: `status` (progress label), `token` (answer delta), `done` (the
+    full authoritative answer, emitted once), `error` (unexpected failure).
+    Guardrails run synchronously before the stream opens, so a blocked call
+    still returns a normal JSON error, not a stream."""
+    question = (payload.question or "").strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="question can't be empty")
+
+    ip = _client_ip(request)
+
+    blocked = _ask_precheck(question, ip)
+    if blocked:
+        raise HTTPException(status_code=blocked[0], detail=blocked[1])
+
+    try:
+        from app.agent import astream_answer
+    except ImportError as exc:
+        print(f"[ask/stream] agent import failed: {exc!r}", flush=True)
+        raise HTTPException(status_code=500, detail="Assistant is unavailable")
+
+    async def event_stream():
+        t0 = time.monotonic()
+        parts: list[str] = []
+        final_text = ""
+        try:
+            async for kind, text in astream_answer(question):
+                if kind == "token":
+                    parts.append(text)
+                    yield _sse("token", text)
+                elif kind == "status":
+                    yield _sse("status", text)
+                elif kind == "done":
+                    final_text = text
+                    yield _sse("done", text)
+        except Exception as exc:  # noqa: BLE001 - defense in depth
+            print(f"[ask/stream] agent raised: {exc!r}", flush=True)
+            yield _sse("error", "The assistant failed to answer. Try again shortly.")
+            if not final_text:
+                final_text = "Something went wrong answering that question."
+        finally:
+            latency = int((time.monotonic() - t0) * 1000)
+            answer = final_text or "".join(parts)
+            outcome = ask_log_mod.classify_answer(answer)
+            try:
+                with get_conn() as conn:
+                    ask_log_mod.record(conn, ip, question, outcome, answer, latency)
+            except Exception as exc:  # noqa: BLE001 - logging must not break the response
+                print(f"[ask/stream] ask_log write failed: {exc!r}", flush=True)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # tell any proxy not to buffer the stream
+        },
+    )
 
 
 @app.get("/admin/ask-log")

@@ -59,6 +59,14 @@ are not a general-purpose assistant.
 - Self-check before answering: does this need querying the tables below? If
   no, decline.
 
+Efficiency (this keeps answers fast - follow it):
+- The full schema is written out below. Do NOT call sql_db_list_tables or
+  sql_db_schema - you already know every table and column. Only look at the
+  schema if a query fails with a "no such table/column" error.
+- Do NOT call sql_db_query_checker. Write the SQL and run it directly with
+  sql_db_query; if it errors, read the message and fix the query.
+- Aim to answer in a single sql_db_query call whenever the question allows.
+
 Tables:
 - sections(year, semester, subject, course_number, course_label, crn,
   section_name, instructor, enrollment_status, credit_hours, description,
@@ -129,27 +137,34 @@ def _db_uri() -> str:
     return f"sqlite:///{DB_PATH}"
 
 
-def _build_llm():
+def _build_llm(streaming: bool = False):
     """Pick the LLM provider from whichever API key is set: GROQ_API_KEY
     (preferred - free; ~80-100 real questions/day in practice, bound by a
     200K tokens/day cap more than the 1,000 requests/day figure - see
     DECISIONS.md), then GEMINI_API_KEY, then OPENAI_API_KEY as a last resort.
     Imports are local to each branch so a Groq-only setup never needs the
-    Gemini/OpenAI SDKs installed to run, and vice versa."""
+    Gemini/OpenAI SDKs installed to run, and vice versa.
+
+    streaming=True asks the provider to emit token deltas, which the
+    /ask/stream route turns into a live typewriter response. It's harmless
+    for the non-streaming ask() path - the deltas just get reassembled."""
     groq_key = os.environ.get("GROQ_API_KEY")
     if groq_key:
         from langchain_groq import ChatGroq
-        return ChatGroq(model="openai/gpt-oss-120b", temperature=0, api_key=groq_key), "Groq"
+        return ChatGroq(model="openai/gpt-oss-120b", temperature=0, api_key=groq_key,
+                        streaming=streaming), "Groq"
 
     gemini_key = os.environ.get("GEMINI_API_KEY")
     if gemini_key:
         from langchain_google_genai import ChatGoogleGenerativeAI
-        return ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0, google_api_key=gemini_key), "Gemini"
+        return ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0, google_api_key=gemini_key,
+                                      streaming=streaming), "Gemini"
 
     openai_key = os.environ.get("OPENAI_API_KEY")
     if openai_key:
         from langchain_openai import ChatOpenAI
-        return ChatOpenAI(model="gpt-4o-mini", temperature=0, api_key=openai_key), "OpenAI"
+        return ChatOpenAI(model="gpt-4o-mini", temperature=0, api_key=openai_key,
+                          streaming=streaming), "OpenAI"
 
     raise EnvironmentError(
         "No LLM API key found. Set GROQ_API_KEY (recommended - free, get one at "
@@ -185,12 +200,12 @@ def _make_course_content_search_tool():
     return course_content_search
 
 
-def build_agent(verbose: bool = False):
+def build_agent(verbose: bool = False, streaming: bool = False):
     if not db.is_postgres() and not DB_PATH.exists():
         raise FileNotFoundError(f"No database at {DB_PATH}. Run scraper.py first.")
 
     try:
-        llm, provider = _build_llm()
+        llm, provider = _build_llm(streaming=streaming)
     except EnvironmentError:
         raise
     except Exception as exc:
@@ -217,11 +232,59 @@ def build_agent(verbose: bool = False):
             # worst case per question instead of letting one bad question (or
             # a retry loop calling ask() repeatedly) exhaust the daily token
             # budget. See DECISIONS.md for the incident that motivated this.
-            max_iterations=8,
+            # Lowered 8 -> 6 alongside the "don't call schema/checker tools"
+            # prompt rules above: a well-formed answer now needs ~2 iterations
+            # (query, then synthesize), so 6 still leaves slack for one retry.
+            max_iterations=6,
         )
     except Exception as exc:
         raise RuntimeError(f"Couldn't build the SQL agent (provider: {provider}): {exc}") from exc
     return agent
+
+
+# Tool name -> short human label, shown as a live status line while the
+# streaming agent works (see astream_answer / the /ask/stream route). The
+# efficiency rules in SYSTEM_CONTEXT tell the model to skip the list-tables /
+# schema / query-checker tools, but they're mapped here anyway in case it
+# reaches for one after a failed query.
+_TOOL_LABELS = {
+    "sql_db_query": "Running SQL…",
+    "sql_db_query_checker": "Checking the query…",
+    "sql_db_schema": "Reading the schema…",
+    "sql_db_list_tables": "Looking at the tables…",
+    "course_content_search": "Searching course descriptions…",
+}
+
+
+def friendly_error(exc: Exception) -> str:
+    """Map a provider/network/agent exception to a short plain-English line.
+    Kept in sync with ask_log._ERROR_MARKERS so these get tagged `error` and
+    don't count against a user's rate limit."""
+    msg = str(exc)
+    low = msg.lower()
+    if "rate limit" in low or "429" in msg:
+        return "The LLM provider's rate limit was hit. Wait a bit and try again."
+    if "authentication" in low or "api key" in low or "401" in msg:
+        return ("The LLM provider rejected the API key. Double check GROQ_API_KEY / "
+                "GEMINI_API_KEY / OPENAI_API_KEY in your .env file.")
+    if "timeout" in low or "timed out" in low:
+        return "The request to the LLM provider timed out. Try again in a moment."
+    return f"Something went wrong answering that question: {exc}"
+
+
+def _sections_empty() -> bool:
+    """True only if the DB is reachable AND sections has zero rows. A
+    connection failure returns False so the caller falls through to the agent,
+    which surfaces its own clearer error."""
+    try:
+        conn = db.get_connection()
+        try:
+            row = conn.execute("SELECT COUNT(*) as n FROM sections").fetchone()
+        finally:
+            conn.close()
+        return row["n"] == 0
+    except Exception:
+        return False
 
 
 def ask(question: str, verbose: bool = False) -> str:
@@ -235,30 +298,73 @@ def ask(question: str, verbose: bool = False) -> str:
         # so callers (CLI, FastAPI route) always get something displayable.
         return f"Can't answer that right now: {exc}"
 
-    try:
-        conn = db.get_connection()
-        row = conn.execute("SELECT COUNT(*) as n FROM sections").fetchone()
-        row_count = row["n"]
-        conn.close()
-    except Exception:
-        row_count = None
-    if row_count == 0:
+    if _sections_empty():
         return "The database exists but has no rows yet. Run scraper.py first, then ask again."
 
     try:
         result = agent.invoke({"input": question})
     except Exception as exc:  # noqa: BLE001 - provider/network/agent errors all land here
-        msg = str(exc)
-        if "rate limit" in msg.lower() or "429" in msg:
-            return "The LLM provider's rate limit was hit. Wait a bit and try again."
-        if "authentication" in msg.lower() or "api key" in msg.lower() or "401" in msg:
-            return ("The LLM provider rejected the API key. Double check GROQ_API_KEY / "
-                     "GEMINI_API_KEY / OPENAI_API_KEY in your .env file.")
-        if "timeout" in msg.lower() or "timed out" in msg.lower():
-            return "The request to the LLM provider timed out. Try again in a moment."
-        return f"Something went wrong answering that question: {exc}"
+        return friendly_error(exc)
 
     return result.get("output", str(result))
+
+
+async def astream_answer(question: str):
+    """Async generator yielding (kind, text) tuples for the /ask/stream route:
+
+        ("status", label)  - the agent started a tool; show it as progress
+        ("token",  delta)  - a piece of the answer text, as the LLM writes it
+        ("done",   text)   - the authoritative full answer (or a setup/error
+                             message); always emitted exactly once, last
+
+    All setup/provider failures are delivered as a single ("done", message)
+    rather than raised, mirroring ask()."""
+    q = (question or "").strip()
+    if not q:
+        yield "done", "Ask me something about the course data, e.g. \"Who teaches CS 225?\""
+        return
+
+    try:
+        agent = build_agent(streaming=True)
+    except (FileNotFoundError, EnvironmentError, RuntimeError) as exc:
+        yield "done", f"Can't answer that right now: {exc}"
+        return
+
+    if _sections_empty():
+        yield "done", "The database exists but has no rows yet. Run scraper.py first, then ask again."
+        return
+
+    streamed: list[str] = []
+    final: str | None = None
+    try:
+        async for ev in agent.astream_events({"input": q}, version="v2"):
+            kind = ev.get("event")
+            if kind == "on_tool_start":
+                yield "status", _TOOL_LABELS.get(ev.get("name", ""), "Working…")
+            elif kind == "on_tool_end":
+                yield "status", "Reading the results…"
+            elif kind == "on_chat_model_stream":
+                chunk = ev.get("data", {}).get("chunk")
+                text = getattr(chunk, "content", "") or ""
+                # Some providers hand back content as a list of parts.
+                if isinstance(text, list):
+                    text = "".join(
+                        p.get("text", "") for p in text if isinstance(p, dict)
+                    )
+                if text:
+                    streamed.append(text)
+                    yield "token", text
+            elif kind == "on_chain_end" and ev.get("name") == "AgentExecutor":
+                out = ev.get("data", {}).get("output")
+                if isinstance(out, dict):
+                    final = out.get("output")
+                elif isinstance(out, str):
+                    final = out
+    except Exception as exc:  # noqa: BLE001 - provider/network/agent errors
+        yield "done", friendly_error(exc)
+        return
+
+    yield "done", final or "".join(streamed) or "I couldn't produce an answer for that."
 
 
 if __name__ == "__main__":
