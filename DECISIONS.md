@@ -1068,6 +1068,20 @@ cards equal-height with an Illini-orange top rule and a count-up on load.
   `ui-standards-course-explorer` memory - the user wants infra/provider
   names kept out of the UI.)
 
+### Hierarchy flip: the assistant is the headline, browsing is secondary
+
+The user's call: "make ask AI the highlight on the website and not the
+browse sections part." Restructured so **Ask the Course Assistant** is a
+full-width hero panel directly under the KPI strip - elevated (orange top
+rule + `--shadow-md`), a 26px heading, a lead sentence, a large input, and
+four example-question chips that fill and submit on click (chips remove
+themselves after the first question). Browse Sections and Department Data
+moved below a small "Browse the data directly" section label, in a plain
+`.tools` stack with a dialed-down 19px `h2` - still fully functional, just
+visually the fallback path. The sticky side-rail layout from the previous
+iteration is gone (the assistant no longer needs to follow a long table -
+it *is* the top of the page).
+
 ## Assistant answers: streaming + Markdown rendering + latency cuts (2026-08-31)
 
 Three connected changes to the `/ask` experience, driven by the answer
