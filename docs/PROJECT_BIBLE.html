@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UIUC Course Explorer — Project Bible</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Crimson+Text:ital,wght@0,400;0,600;1,400&family=EB+Garamond:wght@400;600;700&family=Source+Sans+3:wght@400;600;700&display=swap">
+<style>
+  :root{
+    --blue:#13294b; --blue2:#1d4e89; --orange:#ff5f05; --link:#1d58a7;
+    --bg:#eef1f5; --panel:#fff; --ink:#14181f; --ink2:#3f4650; --muted:#6a7078;
+    --line:#d4d7dc; --line2:#b7bcc4; --code-bg:#f1f4f8; --ok:#0a7d3c;
+    --display:"EB Garamond",Georgia,serif;
+    --serif:"Crimson Text",Georgia,serif;
+    --sans:"Source Sans 3",system-ui,-apple-system,"Segoe UI",Arial,sans-serif;
+    --mono:"JetBrains Mono",ui-monospace,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    line-height:1.55;padding:0 0 80px;-webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:940px;margin:0 auto;padding:0 20px}
+  header.banner{
+    background:linear-gradient(150deg,#17325f,var(--blue) 55%,#0d1e39);
+    color:#fff;border-bottom:4px solid var(--orange);
+  }
+  header.banner .wrap{padding:38px 20px}
+  header.banner h1{
+    font-family:var(--display);font-weight:600;font-size:30px;margin:0;
+  }
+  header.banner p{
+    font-family:var(--serif);font-style:italic;font-size:16px;
+    color:rgba(255,255,255,.82);margin:8px 0 0;max-width:64ch;
+  }
+  h2{
+    font-family:var(--display);font-size:24px;color:var(--blue);
+    margin:44px 0 4px;padding-bottom:6px;position:relative;scroll-margin-top:16px;
+  }
+  h2::after{content:"";position:absolute;left:0;bottom:-1px;width:44px;height:3px;background:var(--orange);border-radius:2px}
+  h3{font-family:var(--display);font-size:18px;color:var(--blue);margin:24px 0 8px}
+  p.lead{font-family:var(--serif);font-size:16px;color:var(--ink2);margin:10px 0}
+  ul.plain{font-family:var(--serif);font-size:15px;color:var(--ink2);margin:10px 0;padding-left:22px}
+  ul.plain li{margin:6px 0}
+  ul.plain li b{color:var(--blue);font-family:var(--sans);font-size:14px}
+  code{font-family:var(--mono);font-size:.86em;background:var(--code-bg);color:var(--ink);padding:1px 5px;border-radius:4px}
+  header.banner code{background:rgba(255,255,255,.16);color:#fff}
+  a{color:var(--link)}
+
+  /* table of contents */
+  nav.toc{
+    background:var(--panel);border:1px solid var(--line);border-radius:8px;
+    padding:16px 20px;margin-top:24px;box-shadow:0 1px 2px rgba(16,32,60,.06);
+  }
+  nav.toc h4{margin:0 0 8px;font-family:var(--sans);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--blue)}
+  nav.toc ol{margin:0;padding-left:22px;columns:2;column-gap:32px;font-size:14px}
+  nav.toc li{margin:3px 0;break-inside:avoid}
+  @media(max-width:620px){nav.toc ol{columns:1}}
+
+  /* vertical flow */
+  ol.flow{list-style:none;margin:18px 0 0;padding:0}
+  ol.flow>li{
+    position:relative;background:var(--panel);border:1px solid var(--line);
+    border-left:4px solid var(--blue2);border-radius:8px;padding:14px 18px;
+    box-shadow:0 1px 2px rgba(16,32,60,.06);
+  }
+  ol.flow>li+li{margin-top:40px}
+  ol.flow>li+li::before{
+    content:"";position:absolute;left:26px;top:-34px;width:2px;height:22px;background:var(--line2);
+  }
+  ol.flow>li+li::after{
+    content:"";position:absolute;left:21px;top:-14px;
+    border:6px solid transparent;border-top-color:var(--orange);
+  }
+  ol.flow .n{
+    display:inline-block;min-width:22px;height:22px;line-height:22px;text-align:center;
+    background:var(--blue);color:#fff;font-weight:700;font-size:12px;border-radius:50%;
+    margin-right:8px;vertical-align:1px;
+  }
+  ol.flow b{color:var(--blue)}
+  ol.flow .sub{font-family:var(--serif);color:var(--muted);font-size:14.5px;margin-top:4px}
+
+  /* two-branch split */
+  .split{display:grid;gap:16px;margin-top:18px}
+  @media(min-width:680px){.split{grid-template-columns:1fr 1fr}}
+  .branch{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px 18px}
+  .branch.sql{border-top:3px solid var(--blue2)}
+  .branch.rag{border-top:3px solid var(--orange)}
+  .branch h4{margin:0 0 6px;font-family:var(--sans);font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:var(--blue)}
+  .branch p{margin:6px 0;font-family:var(--serif);font-size:14.5px;color:var(--ink2)}
+
+  /* cards */
+  .cards{display:grid;gap:16px;margin-top:18px}
+  @media(min-width:680px){.cards{grid-template-columns:1fr 1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:18px 20px;box-shadow:0 1px 2px rgba(16,32,60,.06)}
+  .card h3{margin-top:0}
+  .tag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+
+  table{width:100%;border-collapse:collapse;font-size:13px;margin:12px 0 0;background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  tbody tr:last-child td{border-bottom:0}
+  th{background:#eef2f8;color:var(--blue);font-size:11px;letter-spacing:.05em;text-transform:uppercase}
+  td:first-child{font-family:var(--mono);font-size:12px;white-space:nowrap;color:var(--blue)}
+  table.wide td:first-child{white-space:normal}
+
+  pre{
+    background:var(--blue);color:#e8eef7;border-radius:8px;padding:16px 18px;
+    overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.5;margin:14px 0 0;
+  }
+  pre .c{color:#8fa9c9}
+  .note{
+    font-family:var(--serif);font-size:14.5px;color:var(--ink2);
+    background:#fff7ed;border:1px solid #fcd9b6;border-left:3px solid var(--orange);
+    border-radius:8px;padding:12px 16px;margin-top:16px;
+  }
+  footer{margin-top:52px;font-family:var(--serif);font-size:13px;color:var(--muted);text-align:center}
+</style>
+</head>
+<body>
+
+<header class="banner">
+  <div class="wrap">
+    <h1>UIUC Course Explorer — Project Bible</h1>
+    <p>The single orientation document: what the project is, why it is shaped this way, how the pieces fit together, and how it is operated. Broad and shallow by design — follow the cross-references into <code>DECISIONS.md</code> (the why), <code>DEPLOYMENT.md</code> (the ops runbook), and <code>architecture.html</code> (the illustrated data flow) for depth.</p>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <nav class="toc">
+    <h4>Contents</h4>
+    <ol>
+      <li><a href="#what">What this is</a></li>
+      <li><a href="#model">Operating model &amp; principles</a></li>
+      <li><a href="#arch">Architecture at a glance</a></li>
+      <li><a href="#components">Components</a></li>
+      <li><a href="#schema">Data model</a></li>
+      <li><a href="#sources">Data sources</a></li>
+      <li><a href="#flows">Request flows</a></li>
+      <li><a href="#agent">The agent in detail</a></li>
+      <li><a href="#deploy">Deployment &amp; configuration</a></li>
+      <li><a href="#ops">Operations / runbook</a></li>
+      <li><a href="#security">Security posture</a></li>
+      <li><a href="#conventions">Conventions</a></li>
+      <li><a href="#limits">Known limitations</a></li>
+      <li><a href="#roadmap">Roadmap / open threads</a></li>
+      <li><a href="#glossary">Glossary</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="what">1. What this is</h2>
+  <p class="lead">A small dataset-and-agent project built on top of UIUC's public Course Explorer API. It:</p>
+  <ol class="flow">
+    <li><span class="n">1</span><b>Scrapes</b> course, section, instructor, meeting, and enrollment data for a rolling window of terms from UIUC's public XML API, plus a few supplementary public datasets (grade distributions, "Teachers Ranked as Excellent", Gen Ed categories).</li>
+    <li><span class="n">2</span><b>Structures</b> it into a documented relational schema that runs unchanged on both SQLite (local dev) and Postgres / Neon (production).</li>
+    <li><span class="n">3</span><b>Exposes</b> it through a FastAPI backend with a browser UI for browsing and filtering sections and asking questions.</li>
+    <li><span class="n">4</span><b>Answers plain-English questions</b> through a LangChain agent that writes and runs its own SQL for structured lookups and does pgvector-backed semantic search for content questions.</li>
+  </ol>
+  <h3>Why it exists</h3>
+  <p class="lead">It is a work sample for AI Engineer / Forward-Deployed Engineer roles. It walks the same core loop as most applied data work: pull from an external source, structure it into a documented schema, expose it through an API, and let a non-technical user ask a question in plain language instead of writing SQL by hand.</p>
+
+  <h2 id="model">2. Operating model and guiding principles</h2>
+  <p class="lead">These constraints shaped nearly every technical decision. Understand them first and the rest of the design follows.</p>
+  <ul class="plain">
+    <li><b>Lifetime-free hosting.</b> No paid tiers. Render free web service + Neon free Postgres. This ruled out Render Persistent Disk, Render's own time-limited free Postgres, and Supabase's auto-pausing free project.</li>
+    <li><b>Scraping runs locally, never in the cloud.</b> UIUC's Course Explorer sits behind a WAF that 403s datacenter IPs (Render, GitHub Actions, AWS / GCP). The scraper runs from a residential IP on the operator's machine and writes straight to Neon over <code>DATABASE_URL</code>.</li>
+    <li><b>Manual, roughly monthly refresh.</b> No cron, no scheduled full re-scrape. <code>scraper.py</code> takes explicit <code>--year/--semester</code> per run. <code>terms.py</code> carries a hand-edited "current term" that rolls forward manually.</li>
+    <li><b>One query text, two backends.</b> Every SQL string in the codebase is written once with <code>?</code> placeholders and SQLite-ish syntax; <code>app/db.py</code> translates at execution time. Nobody needs Postgres running to develop.</li>
+    <li><b>Low traffic.</b> The app is a portfolio piece, not a service with users. Designs favour simplicity and zero standing cost over throughput or horizontal scale.</li>
+    <li><b>Self-hosted embeddings.</b> No embeddings API (Groq has none; adding OpenAI / Cohere would mean a second provider and key). <code>fastembed</code> runs <code>BAAI/bge-small-en-v1.5</code> locally in both the scraper and the web app.</li>
+  </ul>
+  <div class="note">Every one of these has a dated entry in <code>DECISIONS.md</code> with the rejected alternatives and why they lost. That file is the source of truth for <em>why</em>; this section is only the summary.</div>
+
+  <h2 id="arch">3. Architecture at a glance</h2>
+  <pre> Local machine (residential IP)                 Cloud (all free tier)
+ <span class="c">┌───────────────────────────┐                  ┌─────────────────────────────┐</span>
+ <span class="c">│</span> scraper.py                <span class="c">│</span>   XML (allowed)  <span class="c">│</span>  Neon Postgres              <span class="c">│</span>
+ <span class="c">│</span> load_grades / load_tre /  <span class="c">│</span>&lt;──────────────── <span class="c">│</span>   - relational tables       <span class="c">│</span>
+ <span class="c">│</span> load_geneds / backfill    <span class="c">│</span>                  <span class="c">│</span>   - pgvector: course_embeddings
+ <span class="c">│</span>        │  upsert + embed   <span class="c">│</span> ───────────────▶ <span class="c">│</span>            ▲                <span class="c">│</span>
+ <span class="c">└────────┼──────────────────┘</span>   DATABASE_URL   <span class="c">│</span>            │ SQL + vector   <span class="c">│</span>
+          │                                     <span class="c">│</span>  ┌─────────┴──────────────┐ <span class="c">│</span>
+          ▼                                     <span class="c">│</span>  │ FastAPI app (Render)   │ <span class="c">│</span>
+   data/courses.db (SQLite,                     <span class="c">│</span>  │  api.py  +  agent.py   │ <span class="c">│</span>
+   local dev fallback only)                     <span class="c">│</span>  │  static/ browser UI    │ <span class="c">│</span>
+                                                <span class="c">│</span>  └────────────────────────┘ <span class="c">│</span>
+                                                <span class="c">└─────────────────────────────┘</span></pre>
+  <ul class="plain">
+    <li>The <b>scraper side</b> and the <b>serving side</b> never talk directly. Neon is the only shared state. When Render sleeps or redeploys, data is safe in Neon.</li>
+    <li><b>SQLite is a local-dev convenience only.</b> Production is always Postgres. Vector search is Postgres-only by design (no vector type in SQLite), so the RAG tool is inert on a local SQLite setup.</li>
+  </ul>
+
+  <h2 id="components">4. Components</h2>
+
+  <h3>Serving path (<code>app/</code>)</h3>
+  <table class="wide">
+    <thead><tr><th>File</th><th>Role</th></tr></thead>
+    <tbody>
+      <tr><td>api.py</td><td>FastAPI backend. Security-header middleware, generic exception handler, all HTTP endpoints, <code>/ask</code> guardrails (length cap, rate limit), static file serving.</td></tr>
+      <tr><td>agent.py</td><td>The LangChain hybrid agent. Dynamic LLM provider selection, SQL toolkit over an allow-listed set of tables, the <code>course_content_search</code> RAG tool with multi-query expansion + RRF merge, <code>SYSTEM_CONTEXT</code> scope guardrails, windowed conversation history, <code>ask()</code> and <code>astream_answer()</code>.</td></tr>
+      <tr><td>db.py</td><td>The dual-backend connection wrapper. <code>?</code>→<code>%s</code> translation, <code>upsert()</code>, <code>existing_columns()</code>, DDL keyword helpers. The one place either backend is connected.</td></tr>
+      <tr><td>embeddings.py</td><td>Self-hosted embedding model wrapper. <code>course_embeddings</code> table + <code>CREATE EXTENSION vector</code> + HNSW index setup, <code>embed_texts()</code>, <code>search_similar_by_vector()</code>. No-ops on SQLite.</td></tr>
+      <tr><td>ask_log.py</td><td>Append-only activity log of <code>/ask</code> calls (timestamp, client IP, question, outcome classification, answer preview, latency). Backs <code>/admin/ask-log</code>.</td></tr>
+      <tr><td>sync_requests.py</td><td>Per-department "please refresh this" counter. Backs <code>POST /sync/request</code> and <code>GET /sync/status</code>; the operator reads it to decide what to re-scrape next. Also runnable as a CLI.</td></tr>
+      <tr><td>terms.py</td><td>Shared definition of the active term window: current term ±2, walking the spring / summer / fall cycle. Used by the history-loading scripts so they don't hoard decades of data.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Ingestion path (<code>app/</code>, run locally)</h3>
+  <table class="wide">
+    <thead><tr><th>File</th><th>Role</th></tr></thead>
+    <tbody>
+      <tr><td>scraper.py</td><td>The Course Explorer XML scraper → <code>sections</code> + <code>meetings</code>. Concurrent per-course fetches, <code>--fast</code> / <code>--concurrency</code> / <code>--skip-recent</code> / <code>--section-delay</code> flags, automatic schema migration, resumable, embeds descriptions as it goes when pointed at Postgres.</td></tr>
+      <tr><td>load_grades.py</td><td>Loads historical grade distributions from wadefagen/datasets → <code>grade_distributions</code>.</td></tr>
+      <tr><td>load_tre.py</td><td>Loads "Teachers Ranked as Excellent" → <code>teachers_ranked_excellent</code>.</td></tr>
+      <tr><td>load_geneds.py</td><td>Loads Gen Ed category assignments → <code>gen_ed_categories</code>.</td></tr>
+      <tr><td>load_catalog_snapshot.py</td><td>Loads a one-term catalog description snapshot (historical backfill).</td></tr>
+      <tr><td>backfill_embeddings.py</td><td>Standalone: (re)embed every course description already in the DB into <code>course_embeddings</code>. Used after a bulk load or an embedding-model change; drops &amp; rebuilds the HNSW index around the load.</td></tr>
+      <tr><td>migrate_sqlite_to_neon.py</td><td>One-shot: copy a fully-populated local SQLite DB into Neon. This is how production data was first populated, instead of scraping straight to the cloud.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Frontend (<code>static/</code>)</h3>
+  <table class="wide">
+    <thead><tr><th>File</th><th>Role</th></tr></thead>
+    <tbody>
+      <tr><td>index.html</td><td>Single-page browser UI. The assistant (streamed answers, Markdown rendering) is the headline; section browsing / filtering is secondary.</td></tr>
+      <tr><td>freshness.html</td><td>Data-freshness detail subpage (per-term / per-subject scrape recency). A summary holder sits on the home page.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Docs</h3>
+  <table class="wide">
+    <thead><tr><th>File</th><th>Role</th></tr></thead>
+    <tbody>
+      <tr><td>README.md</td><td>Quickstart: setup, scrape, run, ask, schema table, repo layout.</td></tr>
+      <tr><td>DECISIONS.md</td><td>The running log of <em>why</em>. Every architecture / data-source / scope decision with its rationale and the rejected alternatives. Append-only, dated sections.</td></tr>
+      <tr><td>DEPLOYMENT.md</td><td>Render + Neon runbook: the hybrid-sync rationale, env vars, first-populate steps, monthly-refresh procedure, 403 mitigation options.</td></tr>
+      <tr><td>implementation_plan.md</td><td>The build plan — <em>what</em> to build and in what order.</td></tr>
+      <tr><td>docs/architecture.html</td><td>Illustrated: the two storage layers, the schema, the request path, the multi-query RAG loop.</td></tr>
+      <tr><td>docs/PROJECT_BIBLE.html</td><td>This file.</td></tr>
+      <tr><td>qa_log.txt</td><td>Output log from the <code>course-agent-qa</code> subagent — real answer-quality regression checks.</td></tr>
+      <tr><td>security_findings.md</td><td>Dated red-team passes from the <code>course-app-redteam</code> subagent, with fixes.</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="schema">5. Data model</h2>
+  <p class="lead">All tables live in one database. Types are the logical intent; <code>db.py</code> maps DDL keywords per backend (<code>SERIAL</code>/<code>AUTOINCREMENT</code>, <code>TIMESTAMP</code>/<code>TEXT</code>).</p>
+  <table>
+    <thead><tr><th>Table</th><th>One row per…</th><th>Key columns &amp; notes</th></tr></thead>
+    <tbody>
+      <tr><td>sections</td><td>course section (CRN) per term</td><td>year, semester (lowercase), subject (uppercase code), course_number, course_label, crn, section_name, instructor (nullable — detailed mode only), enrollment_status (nullable, <b>not live</b> — value at scrape time), credit_hours (as published, e.g. "3 OR 4 hours"), <b>description</b> (catalog text, nullable, same for every section of a course), part_of_term, section_start_date, section_end_date, scraped_at. <code>UNIQUE(year, semester, subject, course_number, crn)</code></td></tr>
+      <tr><td>meetings</td><td>meeting block per section (lecture + separate discussion, co-taught splits)</td><td>year, semester, subject, course_number, crn, meeting_type, days_of_week, start_time, end_time, building, room, instructor. Populated from XML the scraper already fetches.</td></tr>
+      <tr><td>grade_distributions</td><td>section × term × instructor</td><td>Letter-grade counts a_plus … f, w, students, plus sched_type, primary_instructor, course_title. <code>UNIQUE(year, term, subject, course_number, sched_type, primary_instructor)</code>. From wadefagen/datasets.</td></tr>
+      <tr><td>teachers_ranked_excellent</td><td>instructor × term</td><td>year, term, unit, last_name, first_name, role, ranking, course_number. Join to instructors is best-effort, name-only — see the caveat in <code>DECISIONS.md</code>.</td></tr>
+      <tr><td>gen_ed_categories</td><td>course</td><td>acp, cs, hum, nat, qr, sbs category columns, plus snapshot term. <code>UNIQUE(subject, course_number)</code>.</td></tr>
+      <tr><td>course_embeddings</td><td>course (Postgres only)</td><td><code>PRIMARY KEY (subject, course_number)</code>, description, <code>embedding VECTOR(384)</code>, updated_at. HNSW index, cosine ops. Does not exist on SQLite. Written inline by the scraper and by <code>backfill_embeddings.py</code>.</td></tr>
+      <tr><td>ask_log</td><td><code>/ask</code> call</td><td>ts, client_ip, question, outcome (classified: answered / refused-scope / rate-limited / error / …), answer_preview, latency_ms.</td></tr>
+      <tr><td>sync_requests</td><td>department</td><td>subject (PK), pending_count, last_requested_at. Read-modify-write increment; a lost count under concurrency is acceptable (operator ranks by relative magnitude).</td></tr>
+    </tbody>
+  </table>
+  <div class="note">The SQL agent is only shown five of these tables (<code>sections</code>, <code>meetings</code>, <code>grade_distributions</code>, <code>teachers_ranked_excellent</code>, <code>gen_ed_categories</code>) — <code>INCLUDED_TABLES</code> in <code>agent.py</code>. <code>course_embeddings</code> is reached only through the dedicated RAG tool; <code>ask_log</code> and <code>sync_requests</code> are internal.</div>
+
+  <h2 id="sources">6. Data sources</h2>
+  <table class="wide">
+    <thead><tr><th>Source</th><th>Feeds</th><th>Access &amp; notes</th></tr></thead>
+    <tbody>
+      <tr><td>Course Explorer XML API<br><code>courses.illinois.edu/cisapp/explorer/…</code></td><td>sections, meetings, descriptions</td><td>Public, unauthenticated, <b>WAF-blocked from datacenters</b>. Schedule endpoints for subjects / courses / sections; a separate catalog module for descriptions. Detailed mode costs 1 extra request per course (description) + 1 per section (instructor / enrollment / meetings).</td></tr>
+      <tr><td>wadefagen/datasets (GitHub)</td><td>grade_distributions, historical catalog snapshot</td><td>Public CSV. Pre-scraped UIUC GPA dataset. One term used for the historical description backfill.</td></tr>
+      <tr><td>"Teachers Ranked as Excellent" list</td><td>teachers_ranked_excellent</td><td>Public. Name-only join to instructors.</td></tr>
+      <tr><td>Gen Ed category listing</td><td>gen_ed_categories</td><td>Public. Snapshot, not per-term tracked.</td></tr>
+    </tbody>
+  </table>
+  <p class="lead">Explicitly rejected sources: live seat-availability tracking (re-scrape instead), RateMyProfessor scraping. See <code>DECISIONS.md</code>.</p>
+
+  <h2 id="flows">7. Request flows</h2>
+
+  <h3><code>POST /ask</code> and <code>POST /ask/stream</code></h3>
+  <ol class="flow">
+    <li><span class="n">1</span><b>Guardrails in <code>api.py</code></b> — max question length, per-IP rate limit, shared daily cap. Blocked → plain JSON error, no stream. Every attempt is written to <code>ask_log</code>.</li>
+    <li><span class="n">2</span><b>Windowed history</b> — an optional <code>history</code> list of <code>{q, a}</code> turns from the browser (capped at 20 in the request, last 3 actually used) is formatted by <code>agent.py</code> <code>_format_history()</code> and prepended to the agent input as a context-only block. <b>The server keeps no session state.</b></li>
+    <li><span class="n">3</span><b>The agent picks a tool</b>
+      <div class="split">
+        <div class="branch sql">
+          <h4>SQL toolkit</h4>
+          <p>Structured questions: who teaches X, how many sections, open seats, grade history, Gen Ed tags. Writes and runs SQL against the allow-listed tables. A named course's description is read straight from <code>sections.description</code> here.</p>
+        </div>
+        <div class="branch rag">
+          <h4>course_content_search</h4>
+          <p>Content / topic questions ("what does CS 225 cover", "courses about machine learning"). Expands the topic into ~3 facets, embeds each locally, runs one pgvector search per facet, merges with Reciprocal Rank Fusion, returns the top results as context. Detailed in section 8.</p>
+        </div>
+      </div>
+    </li>
+    <li><span class="n">4</span><b>Scope guardrails</b> — <code>SYSTEM_CONTEXT</code> keeps the agent in scope: it refuses general knowledge, trivia, coding requests, and prompt-injection attempts ("ignore previous instructions") rather than answering them.</li>
+    <li><span class="n">5</span><b>Answer</b> — returned as Markdown. <code>/ask/stream</code> sends it back as Server-Sent Events (<code>status</code> → <code>token</code> → <code>done</code>); <code>static/index.html</code> renders it incrementally. Tables are no longer the default answer shape — prose unless the question wants a table. The final answer is classified and logged.</li>
+  </ol>
+
+  <h3>Plain reads</h3>
+  <p class="lead"><code>GET /sections</code>, <code>/subjects</code>, <code>/courses/{subject}</code>, <code>/stats</code>, <code>/freshness</code> are filtered reads straight from the relational tables via <code>db.py</code>. No LLM. <code>/admin/ask-log</code>, <code>/schedule/conflicts</code>, and <code>/courses/{s}/{n}/grade-trend</code> are admin / analytics reads over <code>ask_log</code> and the relational tables.</p>
+
+  <h3><code>POST /sync/request</code> → <code>GET /sync/status</code></h3>
+  <p class="lead">A browser user viewing a stale or absent department can request a refresh; the counter bumps. The operator reads <code>/sync/status</code> (or the CLI) before the next local scrape to decide what to pull. This is the demand-driven, department-level refresh model — there is no scheduled full re-scrape.</p>
+
+  <h2 id="agent">8. The agent in detail (<code>agent.py</code>)</h2>
+  <ul class="plain">
+    <li><b>LLM provider is auto-selected</b> from whichever key is set, in order: <code>GROQ_API_KEY</code> (preferred — free, best daily quota), <code>GEMINI_API_KEY</code>, <code>OPENAI_API_KEY</code>. Model: Groq <code>openai/gpt-oss-120b</code>.</li>
+    <li><b>Groq's binding limit is tokens per day (~200k), not request count.</b> The full schema context is sent every call (~1.8–2.5k tokens), so the real ceiling is ~80–100 questions/day. A retry-storm once burned the daily quota — retries are now bounded.</li>
+    <li><b>SQL access is direct and unsandboxed</b> against the DB. Acceptable because the data is read-only reference data and (in prod) Neon; a scoped read-only DB user would be required before pointing it at anything writable. The toolkit has no statement allow-list.</li>
+    <li><b>Multi-query expansion + RRF</b> sit only in front of the vector tool. Structured SQL questions never pay that extra LLM call. Tunable via <code>RAG_MULTIQUERY</code>, <code>RAG_SUBQUERIES</code>, <code>RAG_K_PER</code>, <code>RAG_K_RETURN</code>.</li>
+    <li><b>Conversation history is windowed and stateless.</b> The browser holds the transcript and sends a trailing window each call; the server never stores it. History is context-only — the agent is instructed never to re-answer an earlier turn and to ignore history that is not relevant.</li>
+    <li><b>Scope guardrails live in <code>SYSTEM_CONTEXT</code></b>, reinforced by the <code>course-agent-qa</code> subagent (answer-quality regression) and the <code>course-app-redteam</code> subagent (prompt injection, SQLi, disclosure, abuse).</li>
+  </ul>
+  <div class="note">For the step-by-step Retrieve → Augment → Generate loop with the exact pgvector operator and RRF formula, see section 5 of <code>architecture.html</code>.</div>
+
+  <h2 id="deploy">9. Deployment and configuration</h2>
+  <p class="lead">Full runbook: <code>DEPLOYMENT.md</code>. Summary:</p>
+  <ul class="plain">
+    <li><b>Host:</b> Render free web service, <code>render.yaml</code> in repo. <code>uvicorn app.api:app</code>.</li>
+    <li><b>Database:</b> Neon free Postgres. No expiry; compute autoscales to zero after ~5 min idle and wakes on the next query.</li>
+    <li><b>Vectors:</b> <code>pgvector</code> on the same Neon database — no add-on, no separate vector service.</li>
+  </ul>
+  <table class="wide">
+    <thead><tr><th>Variable</th><th>Where</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td>DATABASE_URL</td><td>Render + local scraper runs</td><td>Postgres connection string. <b>Its presence is what switches <code>db.py</code> to Postgres.</b> Absent → local SQLite at <code>data/courses.db</code>.</td></tr>
+      <tr><td>GROQ_API_KEY</td><td>Render (and local, for <code>agent.py</code>)</td><td>Preferred LLM provider.</td></tr>
+      <tr><td>GEMINI_API_KEY / OPENAI_API_KEY</td><td>optional</td><td>Fallback LLM providers, in that priority order after Groq.</td></tr>
+      <tr><td>ENABLE_DOCS</td><td>optional</td><td>Turns on <code>/docs</code>, <code>/redoc</code>, <code>/openapi.json</code>. Off in prod — information-disclosure surface.</td></tr>
+      <tr><td>RAG_MULTIQUERY, RAG_SUBQUERIES, RAG_K_PER, RAG_K_RETURN</td><td>optional</td><td>RAG expansion / retrieval tuning. Sensible defaults in code.</td></tr>
+    </tbody>
+  </table>
+  <div class="note"><code>.env</code> in the project root is auto-loaded by <code>api.py</code>, <code>agent.py</code>, and the data scripts. A past bug: the <code>load_*</code> scripts did <em>not</em> load <code>.env</code>, so "scrape straight to Neon" silently wrote to local SQLite instead — fixed.</div>
+
+  <h2 id="ops">10. Operations / runbook</h2>
+  <ul class="plain">
+    <li><b>Monthly refresh:</b> locally, <code>python -m app.scraper --year YYYY --semester SEASON --subjects …</code> with <code>DATABASE_URL</code> set to Neon. Check <code>GET /sync/status</code> first to see which departments users asked for. Do <b>not</b> use <code>--skip-recent</code> on a run meant to backfill a newly-added column.</li>
+    <li><b>Rolling the term window:</b> edit <code>CURRENT_YEAR</code> / <code>CURRENT_SEMESTER</code> in <code>app/terms.py</code> as terms advance, then re-run the history loaders.</li>
+    <li><b>403 from the scraper:</b> you are probably not on a residential IP, or going too fast / concurrent. Lower <code>--concurrency</code>, raise <code>--section-delay</code>. Cloud runners (GitHub Actions) do not fix this — same datacenter-IP block. Mitigation options are listed in <code>DEPLOYMENT.md</code>.</li>
+    <li><b>Embeddings after a bulk load or model change:</b> <code>python -m app.backfill_embeddings</code>.</li>
+    <li><b>First-time prod populate:</b> scrape locally to SQLite, verify, then <code>python -m app.migrate_sqlite_to_neon</code>.</li>
+    <li><b>Descriptions come back all NULL after a detailed scrape:</b> the catalog XML tag name differs from the candidates in <code>DESCRIPTION_TAGS</code> in <code>scraper.py</code>. Fetch one catalog URL by hand, read the real element name, one-line fix.</li>
+    <li><b>Regression-check the agent</b> after touching <code>agent.py</code> / <code>SYSTEM_CONTEXT</code> / schema / <code>embeddings.py</code>: run the <code>course-agent-qa</code> subagent (writes <code>qa_log.txt</code>). After touching <code>api.py</code> / guardrails / logging: run <code>course-app-redteam</code> (writes <code>security_findings.md</code>).</li>
+  </ul>
+
+  <h2 id="security">11. Security posture</h2>
+  <ul class="plain">
+    <li>Baseline security headers on every response — CSP allowing only the page's own inline JS/CSS and Google Fonts, <code>X-Frame-Options: DENY</code>, HSTS, <code>nosniff</code>, <code>no-referrer</code>.</li>
+    <li>Generic exception handler — driver / SQL / stack detail never reaches the client; the real error is logged server-side.</li>
+    <li><code>/ask</code> has a question-length cap and a per-IP rate limit.</li>
+    <li>Interactive API docs and the OpenAPI schema are off unless <code>ENABLE_DOCS</code>.</li>
+    <li>Prompt-injection / jailbreak resistance is a prompt-level guardrail in <code>SYSTEM_CONTEXT</code>, not a hard sandbox. The SQL tool can run arbitrary SELECT (and, technically, more) against the DB — mitigated by the data being read-only reference data, not by engine restrictions.</li>
+    <li>Red-team history and fixes are in <code>security_findings.md</code> (first pass: 1 high, 3 medium, 6 low — all fixed).</li>
+  </ul>
+
+  <h2 id="conventions">12. Conventions</h2>
+  <ul class="plain">
+    <li><b>One query text, both backends.</b> Write <code>?</code> placeholders and SQLite-ish syntax; never branch on backend outside <code>db.py</code>. Use <code>db.upsert()</code> instead of hand-writing <code>INSERT OR REPLACE</code> / <code>ON CONFLICT</code>.</li>
+    <li><b><code>semester</code> / <code>term</code> values are lowercase; <code>subject</code> codes are uppercase.</b></li>
+    <li><b>Decisions get logged.</b> Any architecture, data-source, or scope decision — including rejected alternatives and why they lost — gets a new dated section appended to <code>DECISIONS.md</code>. <code>implementation_plan.md</code> is <em>what</em>; <code>DECISIONS.md</code> is <em>why</em>.</li>
+    <li><b>The scraper is resumable and idempotent.</b> Rows upsert on their unique key; <code>Ctrl+C</code> is always safe.</li>
+    <li><b>No new standing cost, no new provider, no paid tier</b> without a logged decision.</li>
+  </ul>
+
+  <h2 id="limits">13. Known limitations</h2>
+  <ul class="plain">
+    <li>Cross-listed courses (CS 440 / ECE 448) are stored as separate rows per subject; not deduplicated.</li>
+    <li><code>enrollment_status</code> is a scrape-time snapshot, not live.</li>
+    <li>No intra-run diff mode — a course is either fully re-fetched or (with <code>--skip-recent</code>) skipped entirely; no "only refresh enrollment" path.</li>
+    <li>The SQL agent has unsandboxed DB access (see section 11).</li>
+    <li>Groq's ~200k-tokens/day cap means ~80–100 real questions/day in production.</li>
+    <li>TRE → instructor join is name-only and imperfect.</li>
+    <li>Gen Ed data is a single snapshot, not tracked per term.</li>
+    <li>Vector search requires Postgres; a local SQLite setup has no RAG tool.</li>
+  </ul>
+
+  <h2 id="roadmap">14. Roadmap / open threads</h2>
+  <p class="lead">Tracked in <code>implementation_plan.md</code> and the tail of <code>DECISIONS.md</code>. Themes: richer meeting / location querying, schedule-conflict tooling, wider historical grade coverage, and continued UI iteration on the assistant-first layout.</p>
+
+  <h2 id="glossary">15. Glossary</h2>
+  <ul class="plain">
+    <li><b>CRN</b> — Course Reference Number. Unique per section per term.</li>
+    <li><b>Detailed / fast mode</b> — the scraper with vs. without the per-section instructor / enrollment / meeting requests and the per-course description request.</li>
+    <li><b>Hybrid agent</b> — the answer engine combining a SQL toolkit (structured lookups) and a pgvector RAG tool (semantic / content questions).</li>
+    <li><b>Multi-query expansion</b> — one LLM call that rewrites a topic into several facets before the vector search, whose results are then merged with RRF.</li>
+    <li><b>RRF</b> — Reciprocal Rank Fusion; rank-based merge of several ranked result lists.</li>
+    <li><b>Hybrid sync</b> — the operating model: scrape locally from a residential IP, write to cloud Postgres; the Render app only ever reads Neon.</li>
+    <li><b>Active term window</b> — current term ±2, spring / summer / fall cycle; the span of history the loaders keep (<code>terms.py</code>).</li>
+    <li><b>TRE</b> — "Teachers Ranked as Excellent", a published UIUC list.</li>
+  </ul>
+
+  <footer>
+    UIUC Course Explorer Data Agent · project bible · last reviewed 2026-08-31 · see <code>DECISIONS.md</code> for the reasoning behind each choice
+  </footer>
+
+</div>
+</body>
+</html>

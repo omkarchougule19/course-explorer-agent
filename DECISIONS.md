@@ -1068,6 +1068,20 @@ cards equal-height with an Illini-orange top rule and a count-up on load.
   `ui-standards-course-explorer` memory - the user wants infra/provider
   names kept out of the UI.)
 
+## Architecture reference doc (2026-08-31)
+
+Added `docs/architecture.html` - a standalone, dependency-free page (inline
+CSS, no JS, no CDN beyond the Google Fonts link) walking through: the two
+storage layers (relational tables vs the `course_embeddings` pgvector
+store), the full schema, how data gets loaded (local scrape -> Neon, Render
+reads only), how a `/ask` question flows (guardrails -> history-augmented
+input -> the agent's SQL-vs-RAG tool choice -> streamed generation), the
+multi-query RAG loop step by step, and the stateless conversation-memory
+model. Styled to match the app (UIUC navy/orange, EB Garamond + Source Sans
+3). It's the "what it looks like" companion to this file's "why"; kept as a
+repo file rather than an Artifact because the user asked for it in the
+project folder. Linked from the README repo-layout section.
+
 ## Windowed conversation history + stop defaulting to tables (2026-08-31)
 
 The user wanted students to be able to chat continuously ("compressed chat
