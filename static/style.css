@@ -575,3 +575,145 @@ footer {
   .sk-line { animation: none; background: #e7ebf1; }
   .dots::after { animation: none; content: "..."; }
 }
+
+/* ---------- Answer feedback (index.html) ---------- */
+.feedback {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-top: var(--s2);
+}
+.feedback .fb-label {
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.feedback button {
+  padding: 4px 8px;
+  color: var(--muted);
+  background: #fff;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+}
+.feedback button:hover { filter: none; color: var(--blue); border-color: var(--blue); }
+.feedback button .icon { width: 14px; height: 14px; }
+.feedback button.voted {
+  color: #fff;
+  background: var(--blue);
+  border-color: var(--blue);
+}
+.feedback button.voted.down { background: var(--closed); border-color: var(--closed); }
+.feedback .fb-note { font-family: var(--serif); font-size: 13px; color: var(--closed); }
+
+/* ---------- Admin dashboard (admin.html) ---------- */
+.pill-warn { color: #8a5a00; background: rgba(255, 149, 0, 0.10); }
+.pill-err  { color: var(--closed); background: rgba(138, 28, 92, 0.10); }
+
+.admin-gate {
+  max-width: 380px;
+  margin: 12vh auto 0;
+  text-align: center;
+}
+.admin-gate p { font-family: var(--serif); color: var(--ink-2); margin: 0 0 var(--s4); }
+.admin-gate form { display: flex; gap: var(--s2); }
+.admin-gate input { flex: 1; }
+
+.banner .lock-btn {
+  margin-left: auto;
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+}
+.banner .lock-btn:hover { filter: none; background: rgba(255, 255, 255, 0.24); }
+.banner h1.with-lock { display: flex; align-items: center; gap: 12px; }
+
+.outcome-dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--s2) var(--s4);
+  margin: var(--s4) 0 0;
+  font-family: var(--sans);
+  font-size: 13px;
+}
+.outcome-dl div { display: flex; justify-content: space-between; border-bottom: 1px dotted var(--line); padding: 3px 0; }
+.outcome-dl dt { color: var(--muted); }
+.outcome-dl dd { margin: 0; font-variant-numeric: tabular-nums; font-weight: 700; color: var(--blue); }
+
+.chart { width: 100%; overflow-x: auto; }
+.chart svg { display: block; width: 100%; height: 180px; font-family: var(--sans); }
+.chart .bar { fill: var(--blue-2); }
+.chart .bar:hover { fill: var(--orange); }
+.chart .axis { stroke: var(--line-strong); stroke-width: 1; }
+.chart .tick { fill: var(--muted); font-size: 9px; }
+
+tr.reviewed td { opacity: 0.5; }
+td .cell-clip {
+  display: block;
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+td .cell-clip.open { white-space: normal; overflow: visible; }
+.hist-turn { margin: var(--s2) 0; padding-left: var(--s3); border-left: 2px solid var(--line-strong); }
+.hist-turn b { color: var(--blue); }
+
+/* ---------- Narrow screens (phones / small tablets) ----------
+   The layout above is desktop-first with no breakpoints; this block makes
+   it usable under ~640px. Main offenders were the multi-field filter row in
+   Browse Sections (cramped 2-up wrap, a 96px inline-styled Limit field, a
+   no-wrap submit button) and the data tables. Shared components - .field-row,
+   tables, .ask-form, .panel, the banner - are all touched here, so index,
+   admin and freshness all benefit. */
+@media (max-width: 640px) {
+  .wrap { padding: 0 14px; }
+
+  .banner .wrap { padding-top: var(--s6); padding-bottom: var(--s6); }
+  .banner.has-kpi .wrap { padding-bottom: 48px; }
+  .banner h1 { font-size: 23px; }
+  .banner h1 .icon { width: 22px; height: 22px; }
+  .banner h1.with-lock { flex-wrap: wrap; }
+  .banner .lock-btn { margin-left: 0; }
+  .subtitle { font-size: 14.5px; }
+
+  .kpi-strip { margin: -30px 0 var(--s5); gap: var(--s2); }
+  .kpi { min-height: 88px; padding: var(--s3) var(--s4); }
+  .kpi .stat-value { font-size: 23px; }
+
+  .panel { padding: var(--s4); }
+  .panel h2 { font-size: 18px; }
+  .ask-hero { padding: var(--s5); }
+  .ask-hero h2 { font-size: 20px; }
+  .ask-lead, .ask-hero .ask-form input { font-size: 15px; }
+  .scrollback { max-height: 52vh; }
+
+  /* Stack the assistant input + Send, and every filter form, into one column */
+  .ask-form { flex-direction: column; }
+  .ask-form button { width: 100%; justify-content: center; }
+
+  .field-row { flex-direction: column; align-items: stretch; gap: var(--s3); }
+  /* beats the inline `style="flex: 0 1 96px"` on the Limit field */
+  .field-row .field { flex: 1 1 auto !important; width: 100%; }
+  .field-row > button { width: 100%; justify-content: center; }
+
+  /* 16px keeps iOS Safari from zooming the viewport on focus */
+  input, select { font-size: 16px; padding: 11px 12px; }
+
+  /* Tables stay wide but scroll inside their wrapper instead of the page */
+  .results-wrap { -webkit-overflow-scrolling: touch; }
+  th, td { padding: 8px 9px; font-size: 12px; }
+  td .cell-clip { max-width: 60vw; }
+
+  /* admin.html specifics */
+  .outcome-dl { grid-template-columns: 1fr 1fr; }
+  .admin-gate { margin-top: 6vh; }
+  .admin-gate form { flex-direction: column; }
+  .chart svg { height: 150px; }
+}

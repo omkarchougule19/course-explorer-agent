@@ -14,9 +14,9 @@ import json
 import os
 import time
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 from app import db
 from app import sync_requests as sync_reqs
 from app import ask_log as ask_log_mod
+from app import feedback as feedback_mod
 from app.db import DB_PATH
 
 load_dotenv(Path(__file__).parent.parent / ".env")
@@ -109,6 +110,7 @@ def _ensure_app_tables():
     try:
         sync_reqs.init_table(conn)
         ask_log_mod.init_table(conn)
+        feedback_mod.init_table(conn)
     finally:
         conn.close()
 
@@ -322,6 +324,16 @@ class AskRequest(BaseModel):
     history: Optional[list] = Field(default=None, max_length=20)
 
 
+class FeedbackRequest(BaseModel):
+    vote: Literal["up", "down"]
+    question: str
+    answer: str
+    # Windowed {q,a} history snapshot from the browser. Stored (downvotes
+    # only) so a reviewer sees the whole exchange; re-trimmed server-side in
+    # app/feedback.py. Never trusted for anything but the review queue.
+    history: Optional[list] = Field(default=None, max_length=20)
+
+
 def _client_ip(request: Request) -> str:
     """Best-effort client IP for the per-IP guardrail. Behind Render's proxy
     the client is the first X-Forwarded-For hop. This is trivially spoofable,
@@ -470,6 +482,39 @@ async def ask_agent_stream(payload: AskRequest, request: Request):
     )
 
 
+@app.post("/ask/feedback")
+def post_ask_feedback(payload: FeedbackRequest, request: Request):
+    """Record a thumbs up/down on an assistant answer. Public and
+    best-effort: any storage failure returns {"ok": false} with HTTP 200
+    rather than an error, so a thumbs click never breaks the page. Downvotes
+    also snapshot the chat history for the biweekly quality review (see
+    app/feedback.py)."""
+    ip = _client_ip(request)
+    try:
+        with get_conn() as conn:
+            ok = feedback_mod.record(
+                conn, ip, payload.vote, payload.question, payload.answer,
+                payload.history,
+            )
+    except Exception as exc:  # noqa: BLE001 - a feedback click must never 5xx
+        print(f"[ask/feedback] write failed: {exc!r}", flush=True)
+        ok = False
+    return {"ok": bool(ok)}
+
+
+def _require_admin(request: Request, token: Optional[str]) -> None:
+    """Gate for every /admin/* route. Requires the ADMIN_TOKEN env var set on
+    the server AND supplied via ?token= or the X-Admin-Token header. Always
+    raises the same 403 on any failure (unset, missing, or wrong) so the
+    response never reveals whether the token is even configured."""
+    import hmac
+
+    expected = os.environ.get("ADMIN_TOKEN")
+    supplied = token or request.headers.get("x-admin-token")
+    if not expected or not supplied or not hmac.compare_digest(supplied, expected):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
 @app.get("/admin/ask-log")
 def admin_ask_log(
     request: Request,
@@ -479,18 +524,86 @@ def admin_ask_log(
     limit: int = Query(default=100, le=1000, ge=1),
 ):
     """Recent /ask activity - question text, outcome, client IP, latency.
-    Requires the ADMIN_TOKEN env var to be set on the server AND supplied via
-    ?token= or the X-Admin-Token header. Always answers 403 on any failure
-    (unset, missing, or wrong) so the response doesn't reveal whether the
-    token is configured."""
-    import hmac
-
-    expected = os.environ.get("ADMIN_TOKEN")
-    supplied = token or request.headers.get("x-admin-token")
-    if not expected or not supplied or not hmac.compare_digest(supplied, expected):
-        raise HTTPException(status_code=403, detail="Forbidden")
+    ADMIN_TOKEN-gated (see _require_admin)."""
+    _require_admin(request, token)
     with get_conn() as conn:
         return {"entries": ask_log_mod.recent(conn, limit=limit, ip=ip, outcome=outcome)}
+
+
+@app.get("/admin/ask-stats")
+def admin_ask_stats(request: Request, token: Optional[str] = None):
+    """Aggregate assistant-usage numbers for the dashboard stat tiles: unique
+    clients (24h / 7d / all-time), question volume, outcome breakdown, and the
+    feedback up/down tallies. All computed on demand from ask_log /
+    answer_feedback - no counter table."""
+    _require_admin(request, token)
+    with get_conn() as conn:
+        s = ask_log_mod.summary(conn)
+        try:
+            s["feedback"] = feedback_mod.counts(conn)
+        except Exception as exc:  # noqa: BLE001 - the feedback tile is optional
+            print(f"[admin/ask-stats] feedback counts failed: {exc!r}", flush=True)
+            s["feedback"] = {"up": 0, "down": 0, "down_unreviewed": 0}
+    return {"summary": s}
+
+
+@app.get("/admin/clients")
+def admin_clients(
+    request: Request,
+    token: Optional[str] = None,
+    limit: int = Query(default=100, le=1000, ge=1),
+):
+    """Per-client-IP rollup - the app's stand-in for a 'sessions' list, since
+    there are no accounts. Most recently active first."""
+    _require_admin(request, token)
+    with get_conn() as conn:
+        return {"clients": ask_log_mod.clients(conn, limit)}
+
+
+@app.get("/admin/activity")
+def admin_activity(
+    request: Request,
+    token: Optional[str] = None,
+    days: int = Query(default=30, le=90, ge=1),
+):
+    """Questions + distinct clients per UTC day over the trailing `days`, for
+    the dashboard's activity chart."""
+    _require_admin(request, token)
+    with get_conn() as conn:
+        return {"daily": ask_log_mod.daily_counts(conn, days)}
+
+
+@app.get("/admin/feedback")
+def admin_feedback(
+    request: Request,
+    token: Optional[str] = None,
+    vote: Optional[str] = None,
+    reviewed: Optional[int] = None,
+    limit: int = Query(default=100, le=1000, ge=1),
+):
+    """Thumbs up/down rows for the review panel. `vote=down&reviewed=0` is the
+    biweekly triage queue. `reviewed`: 0 = not yet reviewed, 1 = reviewed,
+    omitted = all."""
+    _require_admin(request, token)
+    reviewed_flag = None if reviewed is None else bool(reviewed)
+    with get_conn() as conn:
+        return {
+            "feedback": feedback_mod.recent(
+                conn, vote=vote, reviewed=reviewed_flag, limit=limit
+            )
+        }
+
+
+@app.post("/admin/feedback/{feedback_id}/reviewed")
+def admin_feedback_reviewed(
+    feedback_id: int, request: Request, token: Optional[str] = None
+):
+    """Mark one downvote row as handled (stamps reviewed_at). `already` is
+    true if it was already reviewed or the id doesn't exist."""
+    _require_admin(request, token)
+    with get_conn() as conn:
+        changed = feedback_mod.mark_reviewed(conn, feedback_id)
+    return {"ok": True, "id": feedback_id, "already": not changed}
 
 
 @app.get("/freshness")
@@ -528,6 +641,20 @@ def get_stats():
         "distinct_courses": courses,
         "terms_covered": [f"{r['semester']} {r['year']}" for r in terms],
     }
+
+
+@app.get("/ask/summary")
+def get_ask_summary():
+    """Public, non-sensitive: how many distinct clients have used the
+    assistant in the last 7 days - just an integer for the landing-page KPI
+    tile. No IPs, no question text. Fails soft to 0 so a cold Neon wake can't
+    break the page."""
+    try:
+        with get_conn() as conn:
+            return {"unique_7d": ask_log_mod.unique_clients(conn, timedelta(days=7))}
+    except Exception as exc:  # noqa: BLE001 - KPI tile must not 5xx the page
+        print(f"[ask/summary] failed: {exc!r}", flush=True)
+        return {"unique_7d": 0}
 
 
 class ConflictCheckRequest(BaseModel):
