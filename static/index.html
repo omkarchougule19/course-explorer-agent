@@ -6,94 +6,106 @@
 <title>UIUC Course Explorer</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700&family=Source+Sans+3:wght@400;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Crimson+Text:ital,wght@0,400;0,600;1,400&family=EB+Garamond:wght@400;600;700&family=Source+Sans+3:wght@400;600;700&display=swap">
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
+
+<header class="banner has-kpi">
+  <div class="wrap">
+    <h1>
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 10 12 5 2 10l10 5 10-5Z"/><path d="M6 12v5c0 1 2 3 6 3s6-2 6-3v-5"/><path d="M22 10v6"/></svg>
+      UIUC Course Explorer
+    </h1>
+    <p class="subtitle">A local catalogue scraped from the public Course Explorer API — browse sections, check department freshness, and ask a SQL-backed assistant. Not a live registrar connection.</p>
+  </div>
+</header>
+
 <div class="wrap">
 
-  <div class="banner">
-    <h1>UIUC Course Explorer</h1>
-    <p class="subtitle">Local database, scraped from the public Course Explorer API. Not a live registrar connection.</p>
+  <div class="kpi-strip" id="stats">
+    <div class="kpi"><span class="stat-label">Sections</span><span class="stat-value" id="stat-sections" data-count>—</span></div>
+    <div class="kpi"><span class="stat-label">Courses</span><span class="stat-value" id="stat-courses" data-count>—</span></div>
+    <div class="kpi"><span class="stat-label">Subjects</span><span class="stat-value" id="stat-subjects" data-count>—</span></div>
+    <div class="kpi"><span class="stat-label">Terms</span><span class="stat-value" id="stat-terms">—</span><span class="stat-sub" id="stat-terms-sub"></span></div>
+    <div class="kpi"><span class="stat-label">Last Updated</span><a class="stat-value" id="stat-updated" href="/freshness.html">—</a><span class="stat-sub" id="stat-updated-sub"></span></div>
   </div>
 
-  <hr class="rule">
-
-  <div class="stats" id="stats">
-    <div><span class="stat-label">Sections</span><span class="stat-value" id="stat-sections">—</span></div>
-    <div><span class="stat-label">Courses</span><span class="stat-value" id="stat-courses">—</span></div>
-    <div><span class="stat-label">Subjects</span><span class="stat-value" id="stat-subjects">—</span></div>
-    <div><span class="stat-label">Terms</span><span class="stat-value" id="stat-terms">—</span></div>
-    <div><span class="stat-label">Last Updated</span><a class="stat-value" id="stat-updated" href="/freshness.html">—</a></div>
-  </div>
   <div class="system-note" id="empty-note">
     No data yet. Run <code>python app/scraper.py --year 2026 --semester fall</code> from the project root, then reload this page.
   </div>
 
-  <div class="panel">
-    <h2>Browse Sections</h2>
-    <form id="browse-form">
-      <div class="field-row">
-        <div class="field">
-          <label for="f-term">Term</label>
-          <select id="f-term"><option value="">All terms</option></select>
-        </div>
-        <div class="field">
-          <label for="f-subject">Subject</label>
-          <select id="f-subject">
-            <option value="">All</option>
-          </select>
-        </div>
-        <div class="field">
-          <label for="f-level">Level</label>
-          <select id="f-level">
-            <option value="">All levels</option>
-            <option value="undergrad">Undergraduate (&lt;400)</option>
-            <option value="400level">400-level (UG + grad)</option>
-            <option value="grad">Graduate (500+)</option>
-          </select>
-        </div>
-        <div class="field">
-          <label for="f-course">Course #</label>
-          <input id="f-course" type="text" placeholder="e.g. 225">
-        </div>
-        <div class="field">
-          <label for="f-instructor">Instructor</label>
-          <input id="f-instructor" type="text" placeholder="e.g. Smith">
-        </div>
-        <div class="field" style="flex: 0 1 90px;">
-          <label for="f-limit">Limit</label>
-          <input id="f-limit" type="number" value="100" min="1" max="1000">
-        </div>
-        <button type="submit">Run Query</button>
-      </div>
-    </form>
-    <p class="hint">Data is a per-department snapshot from the last sync, not live registrar status. Each department's freshness and a refresh button are in <a href="#dept-panel">Department Data</a> below.</p>
-    <div class="results-wrap" id="results-wrap"></div>
-  </div>
+  <div class="layout">
 
-  <div class="panel">
-    <h2>Ask the Agent</h2>
-    <div class="scrollback" id="scrollback" aria-live="polite">
-      <div class="line line-sys">Ask about courses, sections, or instructors in the local database.</div>
-    </div>
-    <form id="ask-form" class="ask-form">
-      <input id="ask-input" type="text" placeholder="e.g. who teaches CS 225 this semester?" autocomplete="off">
-      <button type="submit">Send</button>
-    </form>
-    <p class="hint">Requires GROQ_API_KEY to be set on the server. Answers come from a SQL agent querying this database, not the live internet, and reflect each department's last sync — not live enrollment.</p>
-  </div>
+    <section class="panel area-browse">
+      <h2>Browse Sections</h2>
+      <form id="browse-form">
+        <div class="field-row">
+          <div class="field">
+            <label for="f-term">Term</label>
+            <select id="f-term"><option value="">All terms</option></select>
+          </div>
+          <div class="field">
+            <label for="f-subject">Subject</label>
+            <select id="f-subject"><option value="">All</option></select>
+          </div>
+          <div class="field">
+            <label for="f-level">Level</label>
+            <select id="f-level">
+              <option value="">All levels</option>
+              <option value="undergrad">Undergraduate (&lt;400)</option>
+              <option value="400level">400-level (UG + grad)</option>
+              <option value="grad">Graduate (500+)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="f-course">Course #</label>
+            <input id="f-course" type="text" placeholder="e.g. 225">
+          </div>
+          <div class="field">
+            <label for="f-instructor">Instructor</label>
+            <input id="f-instructor" type="text" placeholder="e.g. Smith">
+          </div>
+          <div class="field" style="flex: 0 1 96px;">
+            <label for="f-limit">Limit</label>
+            <input id="f-limit" type="number" value="100" min="1" max="1000">
+          </div>
+          <button type="submit">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+            Run Query
+          </button>
+        </div>
+      </form>
+      <p class="hint">A per-department snapshot from the last sync, not live registrar status. Freshness and a refresh button for each department are in <a href="#dept-panel">Department Data</a>.</p>
+      <div class="results-wrap" id="results-wrap"></div>
+    </section>
 
-  <div class="panel" id="dept-panel">
-    <h2>Department Data</h2>
-    <p class="hint">Each department is refreshed on demand. Hit <strong>Sync</strong> to request a refresh — it's picked up within 24 hours (departments synced in the last 7 days are already current). The number is how many refreshes have been requested since the last sync.</p>
-    <div class="field-row" style="margin-bottom:12px;">
-      <div class="field" style="flex:1 1 220px;">
-        <label for="dept-filter">Filter</label>
-        <input id="dept-filter" type="text" placeholder="type a subject code, e.g. PHYS">
+    <aside class="rail">
+      <section class="panel">
+        <h2>Ask the Agent</h2>
+        <div class="scrollback" id="scrollback" aria-live="polite">
+          <div class="line line-sys">Ask about courses, sections, or instructors in the local database — e.g. “which CS courses have the most sections this fall?”</div>
+        </div>
+        <form id="ask-form" class="ask-form">
+          <input id="ask-input" type="text" placeholder="Ask a question…" autocomplete="off">
+          <button type="submit">Send</button>
+        </form>
+        <p class="hint">Answers come from a SQL agent that queries this database directly — not the live internet — and reflect each department's last sync, so enrollment counts may be out of date.</p>
+      </section>
+    </aside>
+
+    <section class="panel area-dept" id="dept-panel">
+      <h2>Department Data</h2>
+      <p class="hint">Each department is refreshed on demand. Hit <strong>Sync</strong> to request a refresh — it's picked up within 24 hours (departments synced in the last 7 days are already current). The number is how many refreshes have been requested since the last sync. The list is ordered by pending requests, then by how stale the data is; use the filter or <strong>Show all</strong> for the rest.</p>
+      <div class="field-row" style="margin: var(--s4) 0 0;">
+        <div class="field" style="flex:1 1 220px;">
+          <label for="dept-filter">Filter</label>
+          <input id="dept-filter" type="text" placeholder="type a subject code, e.g. PHYS">
+        </div>
       </div>
-    </div>
-    <div class="results-wrap" id="dept-wrap"><p class="empty-state">loading…</p></div>
+      <div class="results-wrap" id="dept-wrap"><p class="empty-state">loading…</p></div>
+    </section>
+
   </div>
 
   <footer>
@@ -103,15 +115,26 @@
 </div>
 
 <script src="/time.js"></script>
+<script src="/md.js"></script>
 <script>
   const $ = (id) => document.getElementById(id);
+  const REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  // HTML-escape any value that goes into an innerHTML string. Section
-  // instructor / description and department codes are DB-sourced text and
-  // must never be interpolated raw.
+  // HTML-escape any DB-sourced value that goes into an innerHTML string.
+  // (md.js escapes agent answers itself.)
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
   ));
+
+  const REFRESH_ICON =
+    '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">' +
+    '<path d="M21 12a9 9 0 0 0-9-9 9 9 0 0 0-6.7 3L3 8"/><path d="M3 3v5h5"/>' +
+    '<path d="M3 12a9 9 0 0 0 9 9 9 9 0 0 0 6.7-3L21 16"/><path d="M21 21v-5h-5"/></svg>';
+
+  const SEARCH_EMPTY =
+    '<div class="empty-state">' +
+    '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>' +
+    'Choose a subject, term, or instructor above and run the query.</div>';
 
   async function getJSON(url) {
     const res = await fetch(url);
@@ -124,16 +147,38 @@
     return body;
   }
 
+  // Count a number up from 0 for a bit of life on load.
+  function countUp(el, target) {
+    if (REDUCED || !Number.isFinite(target)) { el.textContent = target; return; }
+    const dur = 650, t0 = performance.now();
+    const tick = (now) => {
+      const p = Math.min(1, (now - t0) / dur);
+      const eased = 1 - Math.pow(1 - p, 3);
+      el.textContent = Math.round(target * eased).toLocaleString();
+      if (p < 1) requestAnimationFrame(tick);
+      else el.textContent = target.toLocaleString();
+    };
+    requestAnimationFrame(tick);
+  }
+
+  function showSkeleton(wrap, rows = 6) {
+    wrap.setAttribute('aria-busy', 'true');
+    wrap.innerHTML = '<div class="skeleton">'
+      + Array.from({ length: rows }, () => '<div class="sk-line"></div>').join('')
+      + '</div>';
+  }
+
   async function loadStats() {
     try {
       const stats = await getJSON('/stats');
-      $('stat-sections').textContent = stats.total_sections;
-      $('stat-courses').textContent = stats.distinct_courses;
-      $('stat-subjects').textContent = stats.distinct_subjects;
-      $('stat-terms').textContent = stats.terms_covered.length ? stats.terms_covered.join(', ') : '—';
-      if (stats.total_sections === 0) {
-        $('empty-note').classList.add('show');
-      }
+      countUp($('stat-sections'), stats.total_sections);
+      countUp($('stat-courses'), stats.distinct_courses);
+      countUp($('stat-subjects'), stats.distinct_subjects);
+      const terms = stats.terms_covered || [];
+      $('stat-terms').textContent = terms.length;
+      $('stat-terms-sub').textContent = terms.join(' · ');
+      $('stat-terms-sub').title = terms.join(', ');
+      if (stats.total_sections === 0) $('empty-note').classList.add('show');
     } catch (e) {
       $('empty-note').textContent = e.message.includes('Database not found')
         ? 'No database yet. Run the scraper first, then reload this page.'
@@ -146,13 +191,10 @@
     try {
       const data = await getJSON('/freshness');
       const rows = data.freshness || [];
-      if (!rows.length) {
-        $('stat-updated').textContent = 'no data';
-        return;
-      }
+      if (!rows.length) { $('stat-updated').textContent = 'no data'; return; }
       const mostRecent = rows.reduce((a, b) => (a.last_updated > b.last_updated ? a : b));
       $('stat-updated').textContent = formatRelativeTime(mostRecent.last_updated);
-      $('stat-updated').title = `${mostRecent.subject} (${mostRecent.semester} ${mostRecent.year}) - see all subjects`;
+      $('stat-updated-sub').textContent = `${mostRecent.subject}, ${mostRecent.semester} ${mostRecent.year}`;
     } catch (e) {
       $('stat-updated').textContent = 'n/a';
     }
@@ -164,69 +206,73 @@
       const select = $('f-subject');
       for (const subj of data.subjects) {
         const opt = document.createElement('option');
-        opt.value = subj;
-        opt.textContent = subj;
+        opt.value = subj; opt.textContent = subj;
         select.appendChild(opt);
       }
-    } catch (e) {
-      // Handled by loadStats' empty-state note already; browsing just stays empty.
-    }
+    } catch (e) { /* empty-state note already covers this */ }
   }
 
   function renderResults(rows) {
     const wrap = $('results-wrap');
+    wrap.removeAttribute('aria-busy');
     if (!rows.length) {
       wrap.innerHTML = '<p class="empty-state">No sections match those filters. Try clearing the instructor field or choosing a different subject.</p>';
       return;
     }
-    const cols = ['subject', 'course_number', 'section_name', 'crn', 'instructor', 'enrollment_status', 'credit_hours'];
     const labels = ['Subj', 'Course', 'Section', 'CRN', 'Instructor', 'Status', 'Credit'];
     let html = '<table><thead><tr>' + labels.map(l => `<th>${l}</th>`).join('') + '</tr></thead><tbody>';
     for (const row of rows) {
       const titleAttr = row.description ? ` title="${esc(row.description)}"` : '';
-      html += `<tr${titleAttr}>` + cols.map(c => {
-        const raw = row[c] ?? '—';
-        const val = esc(raw);
-        if (c === 'enrollment_status') {
-          const cls = /open/i.test(raw) ? 'status-open' : /closed/i.test(raw) ? 'status-closed' : '';
-          return `<td class="${cls}">${val}</td>`;
-        }
-        return `<td>${val}</td>`;
-      }).join('') + '</tr>';
+      const statusRaw = row.enrollment_status ?? '';
+      let statusCell = '—';
+      if (statusRaw) {
+        const cls = /open/i.test(statusRaw) ? 'pill-open' : /closed/i.test(statusRaw) ? 'pill-closed' : '';
+        statusCell = cls ? `<span class="pill ${cls}">${esc(statusRaw)}</span>` : esc(statusRaw);
+      }
+      html += `<tr${titleAttr}>`
+        + `<td>${esc(row.subject ?? '—')}</td>`
+        + `<td class="num">${esc(row.course_number ?? '—')}</td>`
+        + `<td>${esc(row.section_name ?? '—')}</td>`
+        + `<td class="crn">${esc(row.crn ?? '—')}</td>`
+        + `<td>${esc(row.instructor ?? '—')}</td>`
+        + `<td>${statusCell}</td>`
+        + `<td>${esc(row.credit_hours ?? '—')}</td>`
+        + `</tr>`;
     }
     html += '</tbody></table>';
-    if (rows.some(r => r.description)) {
-      html += '<p class="hint" style="margin-top:8px;">Hover a row for its catalog description, or ask the agent below to summarize it.</p>';
-    }
     wrap.innerHTML = html;
+    if (rows.some(r => r.description)) {
+      const p = document.createElement('p');
+      p.className = 'hint';
+      p.style.margin = 'var(--s2) var(--s4) 0';
+      p.textContent = 'Hover a row for its catalog description, or ask the agent to summarize it.';
+      wrap.appendChild(p);
+    }
   }
 
   $('browse-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const params = new URLSearchParams();
-    const term = $('f-term').value.trim();        // "2026|fall" or ""
+    const term = $('f-term').value.trim();
     const subject = $('f-subject').value.trim();
     const level = $('f-level').value.trim();
     const course = $('f-course').value.trim();
     const instructor = $('f-instructor').value.trim();
     const limit = $('f-limit').value.trim();
-    if (term) {
-      const [y, s] = term.split('|');
-      params.set('year', y);
-      params.set('semester', s);
-    }
+    if (term) { const [y, s] = term.split('|'); params.set('year', y); params.set('semester', s); }
     if (subject) params.set('subject', subject);
     if (level) params.set('level', level);
     if (course) params.set('course_number', course);
     if (instructor) params.set('instructor', instructor);
     if (limit) params.set('limit', limit);
 
-    $('results-wrap').innerHTML = '<p class="empty-state">querying database...</p>';
+    showSkeleton($('results-wrap'));
     try {
       const rows = await getJSON('/sections?' + params.toString());
       renderResults(rows);
     } catch (err) {
-      $('results-wrap').innerHTML = `<p class="empty-state">Query failed: ${err.message}</p>`;
+      $('results-wrap').removeAttribute('aria-busy');
+      $('results-wrap').innerHTML = `<p class="empty-state">Query failed: ${esc(err.message)}</p>`;
     }
   });
 
@@ -240,6 +286,26 @@
     return div;
   }
 
+  // Parse complete SSE frames from `buffer`, fire onEvent(name, data) for
+  // each, return the unconsumed tail.
+  function drainSSE(buffer, onEvent) {
+    let sep;
+    while ((sep = buffer.indexOf('\n\n')) !== -1) {
+      const frame = buffer.slice(0, sep);
+      buffer = buffer.slice(sep + 2);
+      let name = 'message', data = '';
+      for (const raw of frame.split('\n')) {
+        if (raw.startsWith('event:')) name = raw.slice(6).trim();
+        else if (raw.startsWith('data:')) data += raw.slice(5).trim();
+      }
+      if (!data) continue;
+      let parsed;
+      try { parsed = JSON.parse(data); } catch { parsed = data; }
+      onEvent(name, parsed);
+    }
+    return buffer;
+  }
+
   $('ask-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const input = $('ask-input');
@@ -249,27 +315,83 @@
     input.disabled = true;
 
     addLine(question, 'line-q');
-    const thinking = addLine('Thinking', 'line-sys dots');
+    const answerLine = addLine('', 'line-a');
+    answerLine.setAttribute('aria-busy', 'true');
+    let status = addLine('Thinking', 'line-sys dots');
+
+    let raw = '', streaming = false, settled = false;
+    const scroll = () => { $('scrollback').scrollTop = $('scrollback').scrollHeight; };
+
+    const settle = (finalText, asError) => {
+      if (settled) return;
+      settled = true;
+      if (status) { status.remove(); status = null; }
+      answerLine.removeAttribute('aria-busy');
+      const text = (finalText != null && finalText !== '') ? finalText : raw;
+      if (asError && !text) {
+        answerLine.className = 'line line-sys';
+        answerLine.textContent = 'The assistant failed to answer. Try again shortly.';
+      } else {
+        answerLine.className = 'line line-a md';
+        answerLine.innerHTML = window.renderMarkdown(text || 'I couldn’t produce an answer for that.');
+      }
+      scroll();
+      input.disabled = false;
+      input.focus();
+    };
 
     try {
-      const res = await fetch('/ask', {
+      const res = await fetch('/ask/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question }),
       });
-      const body = await res.json().catch(() => ({}));
-      thinking.remove();
-      if (!res.ok) {
-        addLine(body.detail || `Request failed (${res.status})`, 'line-sys');
-      } else {
-        addLine(body.answer, 'line-a');
+
+      if (!res.ok || !res.body) {
+        const body = await res.json().catch(() => ({}));
+        if (status) { status.remove(); status = null; }
+        answerLine.removeAttribute('aria-busy');
+        answerLine.className = 'line line-sys';
+        answerLine.textContent = body.detail || `Request failed (${res.status})`;
+        settled = true;
+        input.disabled = false; input.focus();
+        return;
       }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        buf = drainSSE(buf, (name, data) => {
+          if (name === 'status') {
+            if (!streaming && status) status.textContent = data;
+          } else if (name === 'token') {
+            if (!streaming) { streaming = true; if (status) { status.remove(); status = null; } }
+            raw += data;
+            answerLine.textContent = raw;
+            scroll();
+          } else if (name === 'done') {
+            settle(data, false);
+          } else if (name === 'error') {
+            settle(data, true);
+          }
+        });
+      }
+      settle(raw, false);
     } catch (err) {
-      thinking.remove();
-      addLine('Connection lost — is the API server still running?', 'line-sys');
-    } finally {
-      input.disabled = false;
-      input.focus();
+      if (status) { status.remove(); status = null; }
+      answerLine.removeAttribute('aria-busy');
+      if (!raw) {
+        answerLine.className = 'line line-sys';
+        answerLine.textContent = 'Connection lost — is the API server still running?';
+        settled = true;
+      } else {
+        settle(raw, false);
+      }
+      input.disabled = false; input.focus();
     }
   });
 
@@ -293,35 +415,56 @@
         if (t === CURRENT_TERM) opt.selected = true;
         select.appendChild(opt);
       }
-    } catch (e) { /* term filter just stays "All terms" */ }
+    } catch (e) { /* stays "All terms" */ }
   }
 
   // ---- Department data panel ------------------------------------------------
   const SEVEN_DAYS = 7 * 86400000;
+  const DEPT_PAGE = 20;
   let deptRows = [];
+  let showAllDepts = false;
+
+  // Rank: most pending sync requests first, then stalest (oldest / never
+  // synced), then alphabetical - so the default page is the departments that
+  // actually need attention.
+  function deptRank(a, b) {
+    const pa = Number(a.pending_count) || 0, pb = Number(b.pending_count) || 0;
+    if (pa !== pb) return pb - pa;
+    const sa = a.last_synced_at ? parseUtc(a.last_synced_at).getTime() : 0;
+    const sb = b.last_synced_at ? parseUtc(b.last_synced_at).getTime() : 0;
+    if (sa !== sb) return sa - sb;
+    return a.subject.localeCompare(b.subject);
+  }
 
   function renderDepartments() {
     const wrap = $('dept-wrap');
     const q = $('dept-filter').value.trim().toUpperCase();
-    const rows = q ? deptRows.filter(r => r.subject.includes(q)) : deptRows;
-    if (!rows.length) {
+    const filtered = (q ? deptRows.filter(r => r.subject.includes(q)) : deptRows.slice()).sort(deptRank);
+    if (!filtered.length) {
       wrap.innerHTML = '<p class="empty-state">No departments match.</p>';
       return;
     }
+    const paged = (q || showAllDepts) ? filtered : filtered.slice(0, DEPT_PAGE);
     let html = '<table><thead><tr><th>Subject</th><th>Sections</th><th>Last Synced</th><th>Requests</th><th></th></tr></thead><tbody>';
-    for (const r of rows.slice(0, 300)) {
+    for (const r of paged) {
       const subj = esc(r.subject);
       const synced = r.last_synced_at;
       const fresh = synced && (Date.now() - parseUtc(synced).getTime()) < SEVEN_DAYS;
       const when = synced ? formatRelativeTime(synced) : 'never';
       const action = fresh
-        ? '<span class="status-open">current</span>'
-        : `<button type="button" class="sync-btn" data-subject="${subj}">Sync</button>`;
-      html += `<tr><td>${subj}</td><td>${Number(r.section_count) || 0}</td><td>${esc(when)}</td>`
-        + `<td>${Number(r.pending_count) || '—'}</td><td>${action}</td></tr>`;
+        ? '<span class="pill pill-open">current</span>'
+        : `<button type="button" class="sync-btn" data-subject="${subj}">${REFRESH_ICON}Sync</button>`;
+      html += `<tr><td>${subj}</td><td class="num">${Number(r.section_count) || 0}</td><td>${esc(when)}</td>`
+        + `<td class="num">${Number(r.pending_count) || '—'}</td><td>${action}</td></tr>`;
     }
     html += '</tbody></table>';
+    if (!q && filtered.length > DEPT_PAGE) {
+      html += `<div class="table-more">Showing ${paged.length} of ${filtered.length} departments`
+        + `<button type="button" id="dept-toggle" class="link-btn">${showAllDepts ? 'Show fewer' : 'Show all'}</button></div>`;
+    }
     wrap.innerHTML = html;
+    const toggle = $('dept-toggle');
+    if (toggle) toggle.addEventListener('click', () => { showAllDepts = !showAllDepts; renderDepartments(); });
   }
 
   async function loadDepartments() {
@@ -330,7 +473,7 @@
       deptRows = data.departments || [];
       renderDepartments();
     } catch (e) {
-      $('dept-wrap').innerHTML = `<p class="empty-state">Couldn't load department data: ${e.message}</p>`;
+      $('dept-wrap').innerHTML = `<p class="empty-state">Couldn't load department data: ${esc(e.message)}</p>`;
     }
   }
 
@@ -361,6 +504,7 @@
     }
   });
 
+  $('results-wrap').innerHTML = SEARCH_EMPTY;
   loadStats();
   loadTerms();
   loadSubjects();

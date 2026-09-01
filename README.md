@@ -101,7 +101,8 @@ API docs are at `http://127.0.0.1:8000/docs`. Key endpoints:
 - `GET /courses/{subject}` — courses under a subject with section counts
 - `GET /sections` — filterable section level query (subject, course_number, instructor, term)
 - `GET /stats` — row counts and terms covered, good sanity check after a scrape
-- `POST /ask` — plain English question -> SQL -> answer (needs `OPENAI_API_KEY`)
+- `POST /ask` — plain English question -> SQL -> answer (needs `GROQ_API_KEY`)
+- `POST /ask/stream` — same, streamed back as Server-Sent Events (what the web UI uses)
 
 ## 3. Ask it a question
 

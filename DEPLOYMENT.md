@@ -195,7 +195,14 @@ python -m app.load_tre
 
 ## 5. Guardrails & activity log
 
-### 5.1 What's enforced on `/ask`
+### 5.1 What's enforced on `/ask` (and `/ask/stream`)
+
+The browser UI calls `POST /ask/stream`, which streams the answer back as
+Server-Sent Events (live "Running SQL…" status, then the answer typed out
+token-by-token). `POST /ask` is unchanged and stays as the non-streaming
+JSON fallback / `curl` entry point. Both share the identical guardrails
+below - the stream route runs them synchronously before the stream opens,
+so a blocked call still returns a normal JSON error.
 
 Every call is checked **before** the LLM runs:
 
