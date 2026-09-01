@@ -664,3 +664,56 @@ td .cell-clip {
 td .cell-clip.open { white-space: normal; overflow: visible; }
 .hist-turn { margin: var(--s2) 0; padding-left: var(--s3); border-left: 2px solid var(--line-strong); }
 .hist-turn b { color: var(--blue); }
+
+/* ---------- Narrow screens (phones / small tablets) ----------
+   The layout above is desktop-first with no breakpoints; this block makes
+   it usable under ~640px. Main offenders were the multi-field filter row in
+   Browse Sections (cramped 2-up wrap, a 96px inline-styled Limit field, a
+   no-wrap submit button) and the data tables. Shared components - .field-row,
+   tables, .ask-form, .panel, the banner - are all touched here, so index,
+   admin and freshness all benefit. */
+@media (max-width: 640px) {
+  .wrap { padding: 0 14px; }
+
+  .banner .wrap { padding-top: var(--s6); padding-bottom: var(--s6); }
+  .banner.has-kpi .wrap { padding-bottom: 48px; }
+  .banner h1 { font-size: 23px; }
+  .banner h1 .icon { width: 22px; height: 22px; }
+  .banner h1.with-lock { flex-wrap: wrap; }
+  .banner .lock-btn { margin-left: 0; }
+  .subtitle { font-size: 14.5px; }
+
+  .kpi-strip { margin: -30px 0 var(--s5); gap: var(--s2); }
+  .kpi { min-height: 88px; padding: var(--s3) var(--s4); }
+  .kpi .stat-value { font-size: 23px; }
+
+  .panel { padding: var(--s4); }
+  .panel h2 { font-size: 18px; }
+  .ask-hero { padding: var(--s5); }
+  .ask-hero h2 { font-size: 20px; }
+  .ask-lead, .ask-hero .ask-form input { font-size: 15px; }
+  .scrollback { max-height: 52vh; }
+
+  /* Stack the assistant input + Send, and every filter form, into one column */
+  .ask-form { flex-direction: column; }
+  .ask-form button { width: 100%; justify-content: center; }
+
+  .field-row { flex-direction: column; align-items: stretch; gap: var(--s3); }
+  /* beats the inline `style="flex: 0 1 96px"` on the Limit field */
+  .field-row .field { flex: 1 1 auto !important; width: 100%; }
+  .field-row > button { width: 100%; justify-content: center; }
+
+  /* 16px keeps iOS Safari from zooming the viewport on focus */
+  input, select { font-size: 16px; padding: 11px 12px; }
+
+  /* Tables stay wide but scroll inside their wrapper instead of the page */
+  .results-wrap { -webkit-overflow-scrolling: touch; }
+  th, td { padding: 8px 9px; font-size: 12px; }
+  td .cell-clip { max-width: 60vw; }
+
+  /* admin.html specifics */
+  .outcome-dl { grid-template-columns: 1fr 1fr; }
+  .admin-gate { margin-top: 6vh; }
+  .admin-gate form { flex-direction: column; }
+  .chart svg { height: 150px; }
+}
