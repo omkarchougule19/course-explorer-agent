@@ -137,14 +137,12 @@ def save_course_embedding(conn: db.Connection, subject: str, course_number: str,
     return True
 
 
-def search_similar_courses(conn: db.Connection, query: str, k: int = 5) -> List[dict]:
-    """Cosine-nearest course descriptions to `query`. Empty list on SQLite (no
-    course_embeddings table there) or if the query has nothing to embed."""
-    if conn.backend != "postgres":
-        return []
-
-    vector = embed_text(query)
-    if vector is None:
+def search_similar_by_vector(conn: db.Connection, vector: Optional[List[float]], k: int = 5) -> List[dict]:
+    """Cosine-nearest course descriptions to an already-computed embedding.
+    Lets a multi-query search embed all of its sub-queries in one batch
+    (embed_texts) and reuse the vectors here instead of re-embedding per
+    query. Empty list on SQLite or if `vector` is missing."""
+    if conn.backend != "postgres" or not vector:
         return []
 
     from pgvector import Vector
@@ -161,3 +159,11 @@ def search_similar_courses(conn: db.Connection, query: str, k: int = 5) -> List[
         (Vector(vector), k),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def search_similar_courses(conn: db.Connection, query: str, k: int = 5) -> List[dict]:
+    """Cosine-nearest course descriptions to `query`. Empty list on SQLite (no
+    course_embeddings table there) or if the query has nothing to embed."""
+    if conn.backend != "postgres":
+        return []
+    return search_similar_by_vector(conn, embed_text(query), k)

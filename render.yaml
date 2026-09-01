@@ -63,3 +63,16 @@ services:
       # Off by default - it's an information-disclosure surface.
       - key: ENABLE_DOCS
         sync: false
+      # Optional. Multi-query expansion for the RAG tool (course_content_search):
+      # one extra LLM call rewrites the topic + adds RAG_SUBQUERIES facets,
+      # each searched and RRF-merged. Set RAG_MULTIQUERY=0 to disable and fall
+      # back to a single-query search. Defaults: on, 3 sub-queries, k=6 per
+      # query, 10 merged results. See app/agent.py and DECISIONS.md.
+      - key: RAG_MULTIQUERY
+        sync: false
+      - key: RAG_SUBQUERIES
+        sync: false
+      - key: RAG_K_PER
+        sync: false
+      - key: RAG_K_RETURN
+        sync: false

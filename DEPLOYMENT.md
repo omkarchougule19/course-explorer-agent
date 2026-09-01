@@ -94,6 +94,7 @@ python -m app.sync_requests --list        # should list ~187 departments with a 
 | `ASK_GLOBAL_PER_DAY` | no (default 250) | **shared** cap across all clients / day — the real protection for the Groq budget |
 | `ASK_MAX_CHARS` | no (default 500) | reject questions longer than this |
 | `ENABLE_DOCS` | no | set to any value to expose `/docs`, `/redoc`, `/openapi.json` (off by default) |
+| `RAG_MULTIQUERY` | no (default on) | multi-query expansion for `course_content_search`: one extra LLM call rewrites the topic and adds `RAG_SUBQUERIES` (3) facet queries, each searched `RAG_K_PER` (6) deep and Reciprocal-Rank-Fusion-merged to `RAG_K_RETURN` (10). Set to `0` to fall back to a single-query search. Only the semantic path pays the extra call. |
 
 ### 3.4 Post-deploy checks
 

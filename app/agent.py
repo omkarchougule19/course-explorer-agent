@@ -17,6 +17,7 @@ Usage:
 Or import ask() directly, e.g. from a FastAPI route.
 """
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -93,7 +94,10 @@ Tables:
 - course_content_search tool (Postgres/production only): semantic search
   over course descriptions. Use for open-ended "what courses cover X"
   questions, not a named course (query sections.description directly for
-  those instead - more precise).
+  those instead - more precise). It already expands the topic into several
+  related facets and returns one merged, de-duplicated set, so a single
+  call is enough - then group the results into a short thematic overview
+  rather than a flat dump.
 
 Rules:
 - semester/term lowercase ('fall'/'spring'/'summer'/'winter'); subject codes
@@ -173,11 +177,77 @@ def _build_llm(streaming: bool = False):
     )
 
 
-def _make_course_content_search_tool():
-    """The RAG half of the hybrid agent: semantic search over course
-    descriptions via pgvector. Only meaningful on Postgres (see
+# --- multi-query expansion for course_content_search ---------------------------
+# Before the vector search, one cheap LLM call rewrites the topic and adds a
+# few related facets ("machine learning" -> also "deep learning / neural nets",
+# "statistical ML", "ML applications: NLP, vision"). Each facet is embedded
+# locally (no API cost) and searched; the result lists are fused with
+# Reciprocal Rank Fusion. This widens recall for vague/short questions and
+# gives the synthesis step enough material for a thematic overview. Only the
+# vector path pays for this - structured SQL questions never call the tool.
+_RAG_MULTIQUERY = os.environ.get("RAG_MULTIQUERY", "1").lower() not in ("0", "false", "no", "")
+_RAG_SUBQUERIES = int(os.environ.get("RAG_SUBQUERIES", "3"))
+_RAG_K_PER = int(os.environ.get("RAG_K_PER", "6"))
+_RAG_K_RETURN = int(os.environ.get("RAG_K_RETURN", "10"))
+
+_EXPANSION_PROMPT = (
+    "You expand a search over a university course-catalog vector index.\n"
+    "Given a topic, return ONLY a JSON array of {n} short search phrases "
+    "(3-8 words each), no prose, no numbering, no markdown:\n"
+    "- phrase 1: the original topic, cleaned up and de-jargoned\n"
+    "- the rest: distinct sub-topics / facets a thorough answer should also cover\n"
+    "Topic: {q}"
+)
+
+
+def _expand_query(tool_llm, query: str, n: int) -> list[str]:
+    """Return [cleaned_query, facet_1, ... facet_n]. Falls back to [query] on
+    any failure so retrieval still runs. tool_llm must be a non-streaming
+    client - this call happens inside the agent run and its tokens must not
+    leak into the streamed answer."""
+    q = (query or "").strip()
+    if not q or n < 1 or not _RAG_MULTIQUERY:
+        return [q] if q else []
+    try:
+        resp = tool_llm.invoke(_EXPANSION_PROMPT.format(n=n + 1, q=q))
+        text = getattr(resp, "content", resp)
+        if isinstance(text, list):
+            text = "".join(p.get("text", "") for p in text if isinstance(p, dict))
+        lo, hi = text.find("["), text.rfind("]")
+        phrases = json.loads(text[lo:hi + 1]) if 0 <= lo < hi else []
+    except Exception:
+        return [q]
+    out, seen = [], set()
+    for p in [q, *phrases]:
+        p = str(p).strip()[:120]
+        if p and p.lower() not in seen:
+            seen.add(p.lower())
+            out.append(p)
+    return out[: n + 1] or [q]
+
+
+def _rrf_merge(result_lists: list, k: int = 60, top_n: int = 10) -> list:
+    """Reciprocal Rank Fusion. Combine per-query result lists into one ranking
+    keyed on (subject, course_number): score += 1 / (k + rank). Keeps the
+    row with the smallest cosine distance seen for each course, for display."""
+    scored: dict = {}
+    for results in result_lists:
+        for rank, row in enumerate(results):
+            key = (row.get("subject"), row.get("course_number"))
+            entry = scored.setdefault(key, {"row": row, "score": 0.0})
+            entry["score"] += 1.0 / (k + rank)
+            if row.get("distance", 9e99) < entry["row"].get("distance", 9e99):
+                entry["row"] = row
+    ranked = sorted(scored.values(), key=lambda e: e["score"], reverse=True)
+    return [e["row"] for e in ranked[:top_n]]
+
+
+def _make_course_content_search_tool(tool_llm):
+    """The RAG half of the hybrid agent: multi-query semantic search over
+    course descriptions via pgvector. Only meaningful on Postgres (see
     embeddings.py - course_embeddings is a Postgres-only table), so this is
-    only ever registered when db.is_postgres() is true."""
+    only ever registered when db.is_postgres() is true. `tool_llm` is a
+    non-streaming LLM used for query expansion."""
     from langchain_core.tools import tool
     from app import embeddings as emb
 
@@ -185,10 +255,17 @@ def _make_course_content_search_tool():
     def course_content_search(query: str) -> str:
         """Semantic search over course catalog descriptions - use this for
         open-ended 'what courses cover X' / 'find courses about Y' questions,
-        not for looking up a specific already-named course."""
+        not for looking up a specific already-named course. The query is
+        automatically expanded into related facets and the results merged."""
         conn = db.get_connection()
         try:
-            matches = emb.search_similar_courses(conn, query, k=5)
+            phrases = _expand_query(tool_llm, query, _RAG_SUBQUERIES)
+            vectors = emb.embed_texts(phrases) if phrases else []
+            result_lists = [
+                emb.search_similar_by_vector(conn, v, _RAG_K_PER)
+                for v in vectors if v is not None
+            ]
+            matches = _rrf_merge(result_lists, top_n=_RAG_K_RETURN)
         finally:
             conn.close()
         if not matches:
@@ -216,7 +293,13 @@ def build_agent(verbose: bool = False, streaming: bool = False):
     except Exception as exc:
         raise RuntimeError(f"Couldn't open the database: {exc}") from exc
 
-    extra_tools = [_make_course_content_search_tool()] if db.is_postgres() else []
+    if db.is_postgres():
+        # Query expansion must not stream into the answer, so give the tool a
+        # dedicated non-streaming client when the agent itself is streaming.
+        tool_llm = llm if not streaming else _build_llm(streaming=False)[0]
+        extra_tools = [_make_course_content_search_tool(tool_llm)]
+    else:
+        extra_tools = []
 
     try:
         agent = create_sql_agent(
@@ -336,14 +419,21 @@ async def astream_answer(question: str):
 
     streamed: list[str] = []
     final: str | None = None
+    tool_depth = 0
     try:
         async for ev in agent.astream_events({"input": q}, version="v2"):
             kind = ev.get("event")
             if kind == "on_tool_start":
+                tool_depth += 1
                 yield "status", _TOOL_LABELS.get(ev.get("name", ""), "Working…")
             elif kind == "on_tool_end":
+                tool_depth = max(0, tool_depth - 1)
                 yield "status", "Reading the results…"
             elif kind == "on_chat_model_stream":
+                # An LLM call made *inside* a tool (e.g. RAG query expansion)
+                # is not answer text - never stream it to the client.
+                if tool_depth > 0:
+                    continue
                 chunk = ev.get("data", {}).get("chunk")
                 text = getattr(chunk, "content", "") or ""
                 # Some providers hand back content as a list of parts.
