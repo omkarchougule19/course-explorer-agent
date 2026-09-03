@@ -29,6 +29,7 @@ from app import db
 from app import sync_requests as sync_reqs
 from app import ask_log as ask_log_mod
 from app import feedback as feedback_mod
+from app import site_feedback as site_feedback_mod
 from app.db import DB_PATH
 
 load_dotenv(Path(__file__).parent.parent / ".env")
@@ -112,6 +113,7 @@ def _ensure_app_tables():
         sync_reqs.init_table(conn)
         ask_log_mod.init_table(conn)
         feedback_mod.init_table(conn)
+        site_feedback_mod.init_table(conn)
     finally:
         conn.close()
 
@@ -335,6 +337,14 @@ class FeedbackRequest(BaseModel):
     history: Optional[list] = Field(default=None, max_length=20)
 
 
+class SiteFeedbackRequest(BaseModel):
+    # Free-text feedback from the footer box. Not tied to an answer - no
+    # question/answer/vote. `message` is length-checked again in
+    # app/site_feedback.py; `page` is the path it was sent from.
+    message: str = Field(min_length=1, max_length=4000)
+    page: Optional[str] = Field(default=None, max_length=300)
+
+
 def _client_ip(request: Request) -> str:
     """Best-effort client IP for the per-IP guardrail. Behind Render's proxy
     the client is the first X-Forwarded-For hop. This is trivially spoofable,
@@ -503,6 +513,23 @@ def post_ask_feedback(payload: FeedbackRequest, request: Request):
     return {"ok": bool(ok)}
 
 
+@app.post("/feedback")
+def post_site_feedback(payload: SiteFeedbackRequest, request: Request):
+    """Record free-text feedback from the footer box. Public and best-effort:
+    a storage failure returns {"ok": false} with HTTP 200 rather than an
+    error, so the box never breaks the page. `reason` tells the browser why a
+    write was skipped ('too_long', 'rate_limited', 'empty', or 'error') so it
+    can show a useful note instead of a generic failure."""
+    ip = _client_ip(request)
+    try:
+        with get_conn() as conn:
+            status = site_feedback_mod.record(conn, ip, payload.message, payload.page)
+    except Exception as exc:  # noqa: BLE001 - a feedback submit must never 5xx
+        print(f"[feedback] write failed: {exc!r}", flush=True)
+        return {"ok": False, "reason": "error"}
+    return {"ok": status == "ok", "reason": status}
+
+
 def require_admin(request: Request, token: Optional[str] = None) -> None:
     """FastAPI dependency gating every /admin/* route. Needs ADMIN_TOKEN set on
     the server AND supplied via ?token= or the X-Admin-Token header. Always
@@ -536,6 +563,7 @@ def admin_ask_stats():
     with get_conn() as conn:
         s = ask_log_mod.summary(conn)
         s["feedback"] = feedback_mod.counts(conn)
+        s["site_feedback"] = site_feedback_mod.counts(conn)
     return {"summary": s}
 
 
@@ -576,6 +604,28 @@ def admin_feedback_reviewed(feedback_id: int):
     true if it was already reviewed or the id doesn't exist."""
     with get_conn() as conn:
         changed = feedback_mod.mark_reviewed(conn, feedback_id)
+    return {"ok": True, "id": feedback_id, "already": not changed}
+
+
+@app.get("/admin/site-feedback", dependencies=_admin)
+def admin_site_feedback(
+    reviewed: Optional[int] = None,
+    limit: int = Query(default=100, le=1000, ge=1),
+):
+    """Free-text footer feedback for the review panel. `reviewed`: 0 = not yet
+    reviewed, 1 = reviewed, omitted = all."""
+    reviewed_flag = None if reviewed is None else bool(reviewed)
+    with get_conn() as conn:
+        return {"feedback": site_feedback_mod.recent(
+            conn, reviewed=reviewed_flag, limit=limit)}
+
+
+@app.post("/admin/site-feedback/{feedback_id}/reviewed", dependencies=_admin)
+def admin_site_feedback_reviewed(feedback_id: int):
+    """Mark one free-text feedback row as handled (stamps reviewed_at).
+    `already` is true if it was already reviewed or the id doesn't exist."""
+    with get_conn() as conn:
+        changed = site_feedback_mod.mark_reviewed(conn, feedback_id)
     return {"ok": True, "id": feedback_id, "already": not changed}
 
 

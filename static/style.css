@@ -608,6 +608,34 @@ footer {
 .feedback button.voted.down { background: var(--closed); border-color: var(--closed); }
 .feedback .fb-note { font-family: var(--serif); font-size: 13px; color: var(--closed); }
 
+/* ---------- Site feedback box (index.html footer) ---------- */
+.feedback-box textarea {
+  width: 100%;
+  padding: 9px 11px;
+  font-family: var(--sans);
+  font-size: 14px;
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid var(--field-line);
+  border-radius: var(--radius);
+  resize: vertical;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.feedback-box textarea:hover { border-color: var(--line-strong); }
+.feedback-box textarea:focus {
+  outline: none;
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(29, 88, 167, 0.18);
+}
+.feedback-box-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin-top: var(--s3);
+}
+.feedback-box .fb-note { font-family: var(--serif); font-size: 13px; color: var(--closed); }
+.feedback-box .fb-note.ok { color: var(--blue); }
+
 /* ---------- Admin dashboard (admin.html) ---------- */
 .pill-warn { color: #8a5a00; background: rgba(255, 149, 0, 0.10); }
 .pill-err  { color: var(--closed); background: rgba(138, 28, 92, 0.10); }
