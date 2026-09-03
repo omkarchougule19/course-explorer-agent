@@ -17,7 +17,7 @@
       <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 10 12 5 2 10l10 5 10-5Z"/><path d="M6 12v5c0 1 2 3 6 3s6-2 6-3v-5"/><path d="M22 10v6"/></svg>
       UIUC Course Explorer
     </h1>
-    <p class="subtitle">A local catalogue scraped from the public Course Explorer API — browse sections, check department freshness, and ask a SQL-backed assistant. Not a live registrar connection.</p>
+    <p class="subtitle">Browse UIUC course sections and ask about them in plain English. The data is a periodic snapshot, not a live registrar feed.</p>
   </div>
 </header>
 
@@ -38,7 +38,7 @@
 
   <section class="panel ask-hero">
     <h2>Ask the Course Assistant <button type="button" class="link-btn" id="new-chat" hidden>New chat</button></h2>
-    <p class="ask-lead">Ask anything about UIUC courses, sections, instructors, or gen-eds — the assistant writes and runs the SQL for you. It remembers the last few turns, so you can ask follow-ups. Answers come from this local database, not the live internet, and reflect each department's last sync.</p>
+    <p class="ask-lead">Ask about courses, sections, instructors, or gen-eds. Follow-ups work — it remembers the last few turns. Answers come from the latest snapshot of each department, not a live feed.</p>
     <form id="ask-form" class="ask-form">
       <input id="ask-input" type="text" placeholder="e.g. Which CS courses have the most sections this fall?" autocomplete="off">
       <button type="submit">
@@ -100,13 +100,13 @@
           </button>
         </div>
       </form>
-      <p class="hint">A per-department snapshot from the last sync, not live registrar status. Freshness and a refresh button for each department are in <a href="#dept-panel">Department Data</a>.</p>
+      <p class="hint">Each department's data is from its last sync. Check freshness or request a refresh under <a href="#dept-panel">Department Data</a>.</p>
       <div class="results-wrap" id="results-wrap"></div>
     </section>
 
     <section class="panel" id="dept-panel">
       <h2>Department Data</h2>
-      <p class="hint">Each department is refreshed on demand. Hit <strong>Sync</strong> to request a refresh — it's picked up within 24 hours (departments synced in the last 7 days are already current). The number is how many refreshes have been requested since the last sync. The list is ordered by pending requests, then by how stale the data is; use the filter or <strong>Show all</strong> for the rest.</p>
+      <p class="hint">Hit <strong>Sync</strong> to request fresh data for a department — it's picked up within 24 hours. The count is how many refreshes have been requested since the last sync. Use the filter or <strong>Show all</strong> to see every department.</p>
       <div class="field-row" style="margin: var(--s4) 0 0;">
         <div class="field" style="flex:1 1 220px;">
           <label for="dept-filter">Filter</label>
@@ -120,9 +120,9 @@
 
   <section class="panel" id="feedback-panel">
     <h2>Send feedback</h2>
-    <p class="hint">Found a bug, missing data, or something confusing? Leave a note — it goes straight to the maintainer. No account, no email needed. This isn't the course assistant; for questions about courses use <a href="#ask-form">Ask the Course Assistant</a> above.</p>
+    <p class="hint">Spot a bug, missing data, or a rough edge? Tell me — no account needed. (For course questions, use the assistant above.)</p>
     <form id="feedback-form" class="feedback-box">
-      <textarea id="feedback-message" rows="3" maxlength="2000" placeholder="What's on your mind?" aria-label="Your feedback"></textarea>
+      <textarea id="feedback-message" rows="3" maxlength="2000" placeholder="What's working, what isn't, what's missing…" aria-label="Your feedback"></textarea>
       <div class="feedback-box-row">
         <button type="submit" id="feedback-send">
           <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
@@ -134,7 +134,7 @@
   </section>
 
   <footer>
-    course-explorer-agent &middot; <a href="/api">API info</a> &middot; <a href="/freshness.html">Data freshness</a>
+    <button type="button" class="link-btn" id="footer-feedback">Send feedback</button> &middot; <a href="/api">API info</a> &middot; <a href="/freshness.html">Data freshness</a>
   </footer>
 
 </div>
@@ -669,6 +669,17 @@
     note.hidden = false;
     if (reason === 'ok') box.value = '';
     btn.disabled = false;
+  });
+
+  // Footer "Send feedback" jumps to the box and focuses it, with a brief
+  // highlight so it's obvious where you landed.
+  $('footer-feedback').addEventListener('click', () => {
+    const panel = $('feedback-panel');
+    panel.scrollIntoView({ behavior: REDUCED ? 'auto' : 'smooth', block: 'center' });
+    panel.classList.remove('flash');
+    void panel.offsetWidth;  // restart the animation
+    panel.classList.add('flash');
+    $('feedback-message').focus({ preventScroll: true });
   });
 
   $('results-wrap').innerHTML = SEARCH_EMPTY;

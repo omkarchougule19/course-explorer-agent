@@ -636,6 +636,14 @@ footer {
 .feedback-box .fb-note { font-family: var(--serif); font-size: 13px; color: var(--closed); }
 .feedback-box .fb-note.ok { color: var(--blue); }
 
+/* Brief highlight when the footer link jumps you to the feedback box. */
+@keyframes feedback-flash {
+  from { box-shadow: 0 0 0 3px var(--orange); }
+  to   { box-shadow: 0 0 0 3px transparent; }
+}
+#feedback-panel.flash { animation: feedback-flash 1.2s ease-out; }
+@media (prefers-reduced-motion: reduce) { #feedback-panel.flash { animation: none; } }
+
 /* ---------- Admin dashboard (admin.html) ---------- */
 .pill-warn { color: #8a5a00; background: rgba(255, 149, 0, 0.10); }
 .pill-err  { color: var(--closed); background: rgba(138, 28, 92, 0.10); }
