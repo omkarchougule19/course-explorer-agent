@@ -93,6 +93,8 @@ python -m app.sync_requests --list        # should list ~187 departments with a 
 | `ASK_RATE_PER_DAY` | no (default 60) | per-IP assistant question cap / day |
 | `ASK_GLOBAL_PER_DAY` | no (default 250) | **shared** cap across all clients / day — the real protection for the Groq budget |
 | `ASK_MAX_CHARS` | no (default 500) | reject questions longer than this |
+| `SITE_FEEDBACK_MAX_CHARS` | no (default 2000) | reject footer-box feedback longer than this |
+| `SITE_FEEDBACK_PER_IP_DAY` | no (default 5) | per-IP footer-box submissions / day (friction only — spoofable IP) |
 | `ENABLE_DOCS` | no | set to any value to expose `/docs`, `/redoc`, `/openapi.json` (off by default) |
 | `RAG_MULTIQUERY` | no (default on) | multi-query expansion for `course_content_search`: one extra LLM call rewrites the topic and adds `RAG_SUBQUERIES` (3) facet queries, each searched `RAG_K_PER` (6) deep and Reciprocal-Rank-Fusion-merged to `RAG_K_RETURN` (10). Set to `0` to fall back to a single-query search. Only the semantic path pays the extra call. |
 
@@ -270,6 +272,29 @@ render.
 transcript, fix the cause (`SYSTEM_CONTEXT`, schema, embeddings), then
 **Mark reviewed**.
 
+### 5.2c The `site_feedback` table
+
+The free-text box in the explorer page footer writes here
+(`app/site_feedback.py`). One row per submission — no de-dupe, no vote, no
+transcript.
+
+| column | note |
+|---|---|
+| `ts` | UTC ISO timestamp |
+| `client_ip` | first hop of X-Forwarded-For |
+| `message` | browser-supplied, capped at `SITE_FEEDBACK_MAX_CHARS` (2000) |
+| `page` | path the box was submitted from (e.g. `/`), clipped to 300 chars |
+| `reviewed_at` | `NULL` until an operator marks the row handled |
+
+`POST /feedback` is public and best-effort: it returns `{"ok": <bool>,
+"reason": <str>}` and never 5xx. `reason` is `ok` / `empty` / `too_long` /
+`rate_limited` / `error`, and the box shows a matching note. Abuse is bounded
+by the length cap plus `SITE_FEEDBACK_PER_IP_DAY` (5) rows per client IP per
+24 h — friction only, since the IP is spoofable. Both are env-tunable.
+
+**As needed:** open `/admin.html` → *Site feedback*, read each note, act on
+it, then **Mark reviewed**.
+
 ### 5.3 Reading the log — dashboard + endpoints
 
 The dashboard lives at `https://<your-app>.onrender.com/admin.html`. The HTML
@@ -278,9 +303,10 @@ token once and it is held in that browser tab's `sessionStorage` and sent as
 the `X-Admin-Token` header. "Lock" clears it.
 
 Panels: usage stat tiles (unique clients 24h / 7d / all-time, question
-volume, downvotes-to-review), outcome breakdown, a 30-day activity chart, a
-per-client-IP rollup (the app's stand-in for a "sessions" list), the query
-history table with filters, and the downvote review queue.
+volume, downvotes-to-review, site-feedback-to-review), outcome breakdown, a
+30-day activity chart, a per-client-IP rollup (the app's stand-in for a
+"sessions" list), the query history table with filters, the downvote review
+queue, and the site-feedback review queue.
 
 All admin routes are `ADMIN_TOKEN`-gated and always answer `403` on any
 failure (unset / missing / wrong token) so the response never reveals whether
@@ -294,6 +320,8 @@ the token is configured:
 | `GET /admin/activity?days=` | questions + unique clients per UTC day |
 | `GET /admin/feedback?vote=&reviewed=&limit=` | feedback rows; `vote=down&reviewed=0` is the triage queue |
 | `POST /admin/feedback/{id}/reviewed` | stamp `reviewed_at` on one downvote |
+| `GET /admin/site-feedback?reviewed=&limit=` | free-text site feedback; `reviewed=0` is the triage queue |
+| `POST /admin/site-feedback/{id}/reviewed` | stamp `reviewed_at` on one site-feedback row |
 
 ```bash
 curl "https://<your-app>.onrender.com/admin/ask-log?token=$ADMIN_TOKEN&limit=100"
@@ -301,6 +329,7 @@ curl "https://<your-app>.onrender.com/admin/ask-log?token=$ADMIN_TOKEN&outcome=r
 curl "https://<your-app>.onrender.com/admin/ask-log?token=$ADMIN_TOKEN&ip=1.2.3.4"
 curl "https://<your-app>.onrender.com/admin/ask-stats?token=$ADMIN_TOKEN"
 curl "https://<your-app>.onrender.com/admin/feedback?token=$ADMIN_TOKEN&vote=down&reviewed=0"
+curl "https://<your-app>.onrender.com/admin/site-feedback?token=$ADMIN_TOKEN&reviewed=0"
 ```
 
 Or straight from Neon:

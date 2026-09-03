@@ -19,7 +19,7 @@
       Assistant Admin
       <button type="button" class="lock-btn" id="lock" hidden>Lock</button>
     </h1>
-    <p class="subtitle">Usage, query history and answer-quality feedback for the Ask assistant. Data is read live from <code>ask_log</code> / <code>answer_feedback</code>.</p>
+    <p class="subtitle">Usage, query history and answer-quality feedback for the Ask assistant, plus free-text site feedback. Data is read live from <code>ask_log</code> / <code>answer_feedback</code> / <code>site_feedback</code>.</p>
   </div>
 </header>
 
@@ -46,6 +46,7 @@
       <div class="kpi"><span class="stat-label">Unique · all time</span><span class="stat-value" id="t-uall">—</span></div>
       <div class="kpi"><span class="stat-label">Questions · 24h</span><span class="stat-value" id="t-q24">—</span></div>
       <div class="kpi"><span class="stat-label">Downvotes to review</span><span class="stat-value" id="t-dvr">—</span><span class="stat-sub" id="t-fb">—</span></div>
+      <div class="kpi"><span class="stat-label">Site feedback to review</span><span class="stat-value" id="t-sfr">—</span><span class="stat-sub" id="t-sf">—</span></div>
     </div>
 
     <section class="panel" id="p-outcomes">
@@ -100,6 +101,19 @@
         </label>
       </p>
       <div class="results-wrap" id="review-wrap"><p class="empty-state">loading…</p></div>
+    </section>
+
+    <section class="panel" id="p-site-feedback">
+      <h2>Site feedback</h2>
+      <p class="hint">
+        Free-text notes from the footer box on the explorer page — bug reports,
+        missing data, confusion. Read each one, act on it, then
+        <strong>Mark reviewed</strong>.
+        <label style="margin-left:var(--s3); text-transform:none; letter-spacing:0; font-weight:400;">
+          <input type="checkbox" id="sf-show-reviewed" style="width:auto;"> show reviewed too
+        </label>
+      </p>
+      <div class="results-wrap" id="site-feedback-wrap"><p class="empty-state">loading…</p></div>
     </section>
 
   </div>
@@ -189,6 +203,10 @@
       const fb = s.feedback || { up: 0, down: 0, down_unreviewed: 0 };
       $('t-dvr').textContent = fb.down_unreviewed;
       $('t-fb').textContent = `${fb.up} up · ${fb.down} down total`;
+
+      const sf = s.site_feedback || { total: 0, unreviewed: 0 };
+      $('t-sfr').textContent = sf.unreviewed;
+      $('t-sf').textContent = `${sf.total} total`;
 
       const order = ['answered', 'refused', 'rate_limited', 'global_limited', 'too_long', 'error'];
       const a = s.outcomes_24h || {}, b = s.outcomes_all || {};
@@ -328,12 +346,57 @@
     });
   }
 
+  function loadSiteFeedback() {
+    return panel('site-feedback-wrap', async (wrap) => {
+      const showRev = $('sf-show-reviewed').checked;
+      const q = showRev ? '/admin/site-feedback' : '/admin/site-feedback?reviewed=0';
+      const { feedback } = await adminFetch(q);
+      if (!feedback || !feedback.length) {
+        wrap.innerHTML = `<p class="empty-state">${showRev ? 'No site feedback yet.' : 'Nothing to review. 🎉'}</p>`;
+        return;
+      }
+      let h = '<table><thead><tr><th>Time</th><th>IP</th><th>Page</th><th>Message</th><th></th></tr></thead><tbody>';
+      for (const f of feedback) {
+        const reviewed = !!f.reviewed_at;
+        h += `<tr class="${reviewed ? 'reviewed' : ''}" data-id="${f.id}">`
+          + `<td title="${fmtTs(f.ts)}">${relTime(f.ts)}</td>`
+          + `<td class="crn">${esc(f.client_ip ?? '—')}</td>`
+          + `<td>${esc(f.page ?? '—')}</td>`
+          + `<td><span class="cell-clip">${esc(f.message)}</span></td>`
+          + `<td>${reviewed ? '<span class="pill pill-open">reviewed</span>'
+            : `<button type="button" class="mark-btn">Mark reviewed</button>`}</td></tr>`;
+      }
+      wrap.innerHTML = h + '</tbody></table>';
+      wrap.querySelectorAll('.cell-clip').forEach((el) =>
+        el.addEventListener('click', () => el.classList.toggle('open')));
+      wrap.querySelectorAll('.mark-btn').forEach((btn) => btn.addEventListener('click', async () => {
+        const tr = btn.closest('tr');
+        btn.disabled = true; btn.textContent = '…';
+        try {
+          await adminPost(`/admin/site-feedback/${tr.dataset.id}/reviewed`);
+          if ($('sf-show-reviewed').checked) {
+            tr.classList.add('reviewed');
+            btn.replaceWith(Object.assign(document.createElement('span'), { className: 'pill pill-open', textContent: 'reviewed' }));
+          } else {
+            tr.remove();
+            if (!$('site-feedback-wrap').querySelector('tbody tr')) loadSiteFeedback();
+          }
+          loadTiles();
+        } catch (e) {
+          if (e instanceof AuthError) { clearToken(); showGate(true); return; }
+          btn.disabled = false; btn.textContent = 'Retry';
+        }
+      }));
+    });
+  }
+
   function loadAll() {
     loadTiles();
     loadActivity();
     loadClients();
     loadHistory();
     loadReview();
+    loadSiteFeedback();
   }
 
   $('gate-form').addEventListener('submit', (e) => {
@@ -348,6 +411,7 @@
   $('f-run').addEventListener('click', loadHistory);
   $('f-outcome').addEventListener('change', loadHistory);
   $('show-reviewed').addEventListener('change', loadReview);
+  $('sf-show-reviewed').addEventListener('change', loadSiteFeedback);
 
   if (getToken()) showDash(); else showGate(false);
 </script>

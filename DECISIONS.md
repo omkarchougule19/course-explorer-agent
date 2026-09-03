@@ -1372,3 +1372,50 @@ page.
 Docs synced: `DEPLOYMENT.md` §5.2b (`answer_feedback` table), §5.3 (dashboard
 + endpoint table), and the troubleshooting rows for `/admin/*` and
 `/admin.html`.
+
+---
+
+## Site-wide free-text feedback box (2026-09-03)
+
+There was still no way for a visitor to say "this is confusing" or "you're
+missing grade data for LAS" — the 👍/👎 control only captures a verdict on one
+assistant answer. Added a plain textarea in the explorer page footer, a public
+`POST /feedback`, a `site_feedback` table (`app/site_feedback.py`), and a
+"Site feedback" review panel + stat tile on the admin dashboard with a
+`POST /admin/site-feedback/{id}/reviewed` action.
+
+**A new table, not a `kind` column on `answer_feedback`.** The mentor-review
+checklist that preceded this weighed reusing `answer_feedback` with nullable
+`question`/`answer`/`vote`. Rejected: every read path in `app/feedback.py`
+groups or filters on `vote`, `record()` hard-rejects an empty question/answer,
+and the dashboard's up/down-ratio logic would need `vote IS NULL` special-cases
+throughout. `site_feedback` (`id, ts, client_ip, message, page, reviewed_at`)
+mirrors the existing module almost line-for-line and keeps each concern in its
+own file.
+
+**Abuse control is a per-IP daily cap, not the DELETE-then-INSERT de-dupe that
+`answer_feedback` uses.** Free text has no natural key — `(client_ip, question,
+answer)` doesn't exist here — so re-submitting can't "replace a prior row". The
+bounds are instead a length cap (`SITE_FEEDBACK_MAX_CHARS`, default 2000) and
+`SITE_FEEDBACK_PER_IP_DAY` (default 5) rows per client IP in the trailing 24 h,
+both enforced in `record()`. The IP is the spoofable first `X-Forwarded-For`
+hop, so this is friction to stop an idle tab filling the table, not a control —
+same stance as the `/ask` per-IP limit. No global cap: a feedback row costs
+nothing (no LLM call), unlike `/ask`, so the `ASK_GLOBAL_PER_DAY` backstop has
+no analogue here.
+
+**Path is `/feedback`, distinct from `/ask/feedback`.** It isn't answer-scoped.
+Admin reads are at `/admin/site-feedback` because `/admin/feedback` is already
+the 👍/👎 route.
+
+**`record()` returns a status string, not a bool.** `"ok" | "empty" |
+"too_long" | "rate_limited"`, surfaced to the browser as `{"ok", "reason"}` so
+the box can show "you've sent a few already today" instead of a generic
+failure. `POST /feedback` still never 5xx — any exception returns
+`{"ok": false, "reason": "error"}` with HTTP 200, matching `/ask/feedback`.
+
+**`page` (the submitting path) is stored** so the operator can tell explorer
+feedback from anything later added elsewhere; it's clipped, never rejected.
+
+Docs synced: `DEPLOYMENT.md` §5.2c (`site_feedback` table), §5.3 (dashboard
+panel list + endpoint table).

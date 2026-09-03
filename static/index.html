@@ -118,6 +118,21 @@
 
   </div>
 
+  <section class="panel" id="feedback-panel">
+    <h2>Send feedback</h2>
+    <p class="hint">Found a bug, missing data, or something confusing? Leave a note — it goes straight to the maintainer. No account, no email needed. This isn't the course assistant; for questions about courses use <a href="#ask-form">Ask the Course Assistant</a> above.</p>
+    <form id="feedback-form" class="feedback-box">
+      <textarea id="feedback-message" rows="3" maxlength="2000" placeholder="What's on your mind?" aria-label="Your feedback"></textarea>
+      <div class="feedback-box-row">
+        <button type="submit" id="feedback-send">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+          Send
+        </button>
+        <span class="fb-note" id="feedback-note" hidden></span>
+      </div>
+    </form>
+  </section>
+
   <footer>
     course-explorer-agent &middot; <a href="/api">API info</a> &middot; <a href="/freshness.html">Data freshness</a>
   </footer>
@@ -609,6 +624,51 @@
       btn.disabled = false;
       btn.textContent = 'Retry';
     }
+  });
+
+  // ---- Site feedback box -------------------------------------------------
+  // Free-text feedback, unrelated to the assistant. POSTs to /feedback, which
+  // is public and best-effort: it returns {ok, reason} and never 5xx, so a
+  // failed save just shows a note. `reason` distinguishes "too long" and
+  // "daily limit" from a generic error.
+  const FEEDBACK_NOTES = {
+    ok: 'Thanks — got it.',
+    too_long: 'That’s a bit long — trim it under 2000 characters.',
+    rate_limited: 'You’ve sent a few already today. Try again tomorrow.',
+    empty: 'Write something first.',
+    error: 'Couldn’t save that — try again in a moment.',
+  };
+
+  $('feedback-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const box = $('feedback-message');
+    const btn = $('feedback-send');
+    const note = $('feedback-note');
+    const message = box.value.trim();
+    if (!message) {
+      note.textContent = FEEDBACK_NOTES.empty;
+      note.hidden = false;
+      return;
+    }
+    btn.disabled = true;
+    note.hidden = true;
+    let reason = 'error';
+    try {
+      const res = await fetch('/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message, page: location.pathname }),
+      });
+      const body = await res.json().catch(() => ({}));
+      reason = body.reason || (body.ok ? 'ok' : 'error');
+    } catch (err) {
+      reason = 'error';
+    }
+    note.textContent = FEEDBACK_NOTES[reason] || FEEDBACK_NOTES.error;
+    note.classList.toggle('ok', reason === 'ok');
+    note.hidden = false;
+    if (reason === 'ok') box.value = '';
+    btn.disabled = false;
   });
 
   $('results-wrap').innerHTML = SEARCH_EMPTY;
