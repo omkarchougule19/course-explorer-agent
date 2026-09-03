@@ -14,7 +14,7 @@
 <header class="banner">
   <div class="wrap">
     <h1><a href="/">UIUC Course Explorer</a></h1>
-    <p class="subtitle">Data freshness by subject and term. Nothing here is live — see DECISIONS.md for why.</p>
+    <p class="subtitle">How current each subject and term's data is. Nothing here is live.</p>
   </div>
 </header>
 
@@ -23,11 +23,9 @@
   <div class="panel" style="margin-top: var(--s6);">
     <h2>Last Updated, Per Subject / Term</h2>
     <p class="hint">
-      Each row is the last time that subject's data for that term was written locally
-      (scraped live, or backfilled from an archived catalog snapshot) and pushed to the
-      database. <span class="fresh">Green</span> = updated within the last 35 days (roughly
-      one scrape cycle). <span class="stale">Red</span> = over 70 days old, likely missed a
-      cycle.
+      Each row shows when that subject and term was last updated.
+      <span class="fresh">Green</span> = within 35 days.
+      <span class="stale">Red</span> = over 70 days old.
     </p>
     <div class="results-wrap" id="freshness-wrap">
       <p class="empty-state">loading...</p>
