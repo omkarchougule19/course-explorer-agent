@@ -20,6 +20,7 @@ Or import ask() directly, e.g. from a FastAPI route.
 import json
 import os
 import sys
+from functools import lru_cache
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -301,6 +302,38 @@ def _make_course_content_search_tool(tool_llm):
     return course_content_search
 
 
+@lru_cache(maxsize=1)
+def _available_terms_note() -> str:
+    """A one-line list of the (semester, year) pairs actually present in the
+    data, appended to the agent's prompt. Without it, a model asked about
+    "this fall" guesses a year - usually its training-cutoff year - and then
+    silently returns nothing against what is really a single-year snapshot.
+
+    Process-cached: the term coverage only changes on a manual re-scrape, and
+    the app restarts on deploy. Fails soft to "" so a DB hiccup at build time
+    just falls back to the bare SYSTEM_CONTEXT."""
+    try:
+        conn = db.get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT DISTINCT year, semester FROM sections "
+                "WHERE year IS NOT NULL AND semester IS NOT NULL "
+                "ORDER BY year DESC, semester"
+            ).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        return ""
+    terms = ", ".join(f"{r['semester']} {r['year']}" for r in rows)
+    if not terms:
+        return ""
+    return (
+        f"\n\nThe data currently covers only these terms: {terms}. Read "
+        "'this'/'current'/'next'/'upcoming' semester as the most recent of "
+        "them, and never filter on a year that isn't in that list."
+    )
+
+
 def build_agent(verbose: bool = False, streaming: bool = False):
     if not db.is_postgres() and not DB_PATH.exists():
         raise FileNotFoundError(f"No database at {DB_PATH}. Run scraper.py first.")
@@ -331,7 +364,7 @@ def build_agent(verbose: bool = False, streaming: bool = False):
             db=sql_db,
             agent_type="tool-calling",
             verbose=verbose,
-            prefix=SYSTEM_CONTEXT,
+            prefix=SYSTEM_CONTEXT + _available_terms_note(),
             extra_tools=extra_tools,
             # Default is 15. Each iteration re-sends the full SYSTEM_CONTEXT and
             # resends the growing scratchpad, so a runaway/looping question can
@@ -436,9 +469,26 @@ def _sections_empty() -> bool:
         return False
 
 
+# Opt-in alternative answer path: the explicit Generator -> Critic -> Repair
+# pipeline in app/sql_pipeline/ instead of create_sql_agent. Off by default -
+# the live site is unaffected until this is deliberately set. "critic" runs
+# the full loop, "baseline" runs the same generator with the loop disabled
+# (the control arm the evals compare against). See DECISIONS.md and evals/.
+_SQL_PIPELINE_MODE = os.environ.get("SQL_PIPELINE", "").strip().lower()
+
+
 def ask(question: str, verbose: bool = False, history=None) -> str:
     if not question or not question.strip():
         return "Ask me something about the course data, e.g. \"Who teaches CS 225?\""
+
+    if _SQL_PIPELINE_MODE in ("critic", "baseline"):
+        try:
+            from app.sql_pipeline import run_pipeline
+            return run_pipeline(question, mode=_SQL_PIPELINE_MODE, history=history).answer
+        except (FileNotFoundError, EnvironmentError, RuntimeError) as exc:
+            return f"Can't answer that right now: {exc}"
+        except Exception as exc:  # noqa: BLE001 - mirror the fallback path below
+            return friendly_error(exc)
 
     try:
         agent = build_agent(verbose=verbose)

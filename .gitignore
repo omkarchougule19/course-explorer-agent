@@ -43,3 +43,8 @@ htmlcov/
 
 # Ruff cache
 .ruff_cache/
+
+# Eval harness run artifacts (regenerable; committed numbers live in
+# evals/RESULTS.md and the README "Evals" section)
+evals/results/*
+!evals/results/.gitkeep

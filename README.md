@@ -170,18 +170,60 @@ raw catalog text - which tends to be long and full of registrar boilerplate
   fix in `DESCRIPTION_TAGS` near the top of `fetch_course_description()` in
   `scraper.py`.
 
+## Evals
+
+There's a second answer path in `app/sql_pipeline/` — an explicit
+**Generator → Critic → Repair** loop (LangGraph) that validates each
+generated query against the real schema before running it, and repairs it
+(twice, then gives an explicit failure rather than a wrong answer) when the
+Critic objects. It's off by default; set `SQL_PIPELINE=critic` (or
+`baseline`) to route `ask()` through it. Full rationale in `DECISIONS.md`.
+
+`evals/` measures whether that loop actually helps, on 24 questions with
+known-correct SQL (`evals/eval_set.jsonl`), scoring four metrics with the
+loop **off vs. on** — same generator, same model, only the loop differs.
+
+**First run** ([`evals/RESULTS.md`](evals/RESULTS.md)): the loop only helped
+when the generator was handicapped. With the full column list + a capable
+model it hallucinates references 0% of the time, so the deterministic schema
+check had nothing to catch — and the *LLM* intent-check, used as a first-pass
+gate, made accuracy **worse** by manufacturing objections to correct
+queries. Full analysis: **[`evals/FINDINGS.md`](evals/FINDINGS.md)**.
+
+| baseline → critic (first run) | full schema, `gpt-oss-120b` | terse schema, `gpt-4o-mini` |
+|---|---|---|
+| Hallucinated-reference rate | 0.0% → 0.0% | **31.2% → 6.2%** |
+| Execution success rate | 100% → 100% | **69.2% → 100%** |
+| Result-match accuracy (loose) | 92.3% → 84.6% ⬇ | 53.8% → 61.5% |
+
+**Fix (A+B+C, in `FINDINGS.md`):** the LLM intent-check is now a *repair
+verifier* — it only reviews a query a repair already touched, never vetoes
+the generator's first query (`SQL_PIPELINE_INTENT_CHECK=off|repair|always`,
+default `repair`); plus a cycle-breaker and "keep the first query that ran".
+The loop now costs the same as baseline on a clean query and, per the
+traces, becomes a win where the generator hallucinates and a no-op where it
+doesn't. A fresh eval run to confirm is pending (Groq token budget).
+
+```bash
+.venv/Scripts/python -m evals.run --provider openai -y   # full run (needs a key)
+.venv/Scripts/python -m evals.test_static_check          # offline
+.venv/Scripts/python -m evals.test_graph_routing         # offline
+```
+
 ## Repo layout
 
 ```
 course-explorer-agent/
 ├── app/
-│   ├── scraper.py     # CISAPI scraper -> SQLite
-│   ├── api.py          # FastAPI backend
-│   └── agent.py        # LangChain NL -> SQL agent
+│   ├── scraper.py         # CISAPI scraper -> SQLite
+│   ├── api.py             # FastAPI backend
+│   ├── agent.py           # LangChain NL -> SQL agent (production path)
+│   └── sql_pipeline/      # opt-in Generator -> Critic -> Repair loop (LangGraph)
+├── evals/                 # eval set + harness for the Critic/Repair loop
 ├── static/
-│   └── index.html      # web UI, served at / by api.py
+│   └── index.html         # web UI, served at / by api.py
 ├── data/
-│   └── courses.db      # created after first scrape
+│   └── courses.db         # created after first scrape
 ├── docs/
 │   ├── PROJECT_BIBLE.html # single orientation doc: what/why/how, start here
 │   └── architecture.html  # storage model, request flow, and RAG loop, illustrated
