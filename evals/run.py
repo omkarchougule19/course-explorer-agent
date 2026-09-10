@@ -1,36 +1,20 @@
 """
-run.py - the eval harness.
+run.py - the eval harness. Runs evals/eval_set.jsonl through one or more
+"arms" and reports the four metrics (execution success, result-match
+accuracy, hallucinated-reference rate, repair success rate). Full method and
+metric definitions: evals/README.md and evals/RESULTS.md.
 
-Runs evals/eval_set.jsonl through one or more "arms" of the agent and
-reports the four metrics the Critic/Repair project is judged on:
+Arms: `baseline` (Generator -> execute -> synthesize, the control), `critic`
+(the full Generator -> Critic -> Repair loop), `prod` (the live
+create_sql_agent, SQL captured via a callback - a reference column, not the
+headline; baseline vs. critic is).
 
-  1. execution success rate   - final SQL runs without a database error
-  2. result-match accuracy     - final SQL's rows match the gold query's rows
-  3. hallucinated-reference     - final SQL names a table/column that doesn't
-     rate                         exist (measured with the same static checker
-                                   the Critic uses)
-  4. repair success rate        - of the queries the Critic flagged, how many
-                                   a repair actually fixed (critic arm only)
+    python -m evals.run --provider openai -y          # baseline + critic
+    python -m evals.run --arms critic --limit 6
+    python -m evals.run --rescore 20260910T133659Z    # re-score, no LLM calls
 
-Arms:
-  baseline - the sql_pipeline Generator, then execute, then synthesize. No
-             Critic, no Repair. This is the control.
-  critic   - the full sql_pipeline Generator -> Critic -> Repair loop.
-  prod     - the live create_sql_agent path (app.agent). Optional reference
-             column; its SQL is captured via a callback. Confounds the
-             architecture change with the Critic, so it is NOT the headline
-             comparison - baseline vs. critic is.
-
-Usage:
-    .venv/Scripts/python -m evals.run                       # baseline + critic, local SQLite
-    .venv/Scripts/python -m evals.run --arms critic --limit 6
-    .venv/Scripts/python -m evals.run --arms baseline,critic,prod --provider openai
-
-Every question is one LLM conversation per arm; a full 24-question
-baseline+critic run is roughly 150-200 model calls. Use --limit while
-iterating, and --provider to spend a specific key (the harness clears the
-other provider keys so app.agent picks the one you asked for). Pass -y to
-skip the pre-run confirmation.
+--provider clears the other provider keys so app.agent picks the one asked
+for; --limit and --sleep help with rate limits.
 """
 
 import argparse
@@ -109,22 +93,23 @@ def _with_retry(fn, tries: int = 5, base: float = 2.0):
             time.sleep(wait)
 
 
+def _record(arm: str, answer: str, t0: float, **over) -> dict:
+    """One raw per-question record. `over` fills in the fields an arm knows;
+    the rest default to the 'nothing happened' values score() expects."""
+    rec = {"arm": arm, "answer": answer, "outcome": "answered", "final_sql": None,
+           "first_sql": None, "attempts": 0, "exec_error": None, "rows": None,
+           "trace": [], "latency_ms": int((time.monotonic() - t0) * 1000)}
+    rec.update(over)
+    return rec
+
+
 def run_pipeline_arm(item: dict, mode: str) -> dict:
     from app.sql_pipeline import run_pipeline
     t0 = time.monotonic()
-    res = run_pipeline(item["question"], mode=mode)
-    return {
-        "arm": mode,
-        "answer": res.answer,
-        "outcome": res.outcome,
-        "final_sql": res.sql,
-        "first_sql": res.first_sql,
-        "attempts": res.attempts,
-        "exec_error": res.exec_error,
-        "rows": res.rows,
-        "trace": res.trace,
-        "latency_ms": int((time.monotonic() - t0) * 1000),
-    }
+    r = run_pipeline(item["question"], mode=mode)
+    return _record(mode, r.answer, t0, outcome=r.outcome, final_sql=r.sql,
+                   first_sql=r.first_sql, attempts=r.attempts,
+                   exec_error=r.exec_error, rows=r.rows, trace=r.trace)
 
 
 class _SQLCapture:
@@ -168,19 +153,12 @@ def run_prod_arm(item: dict) -> dict:
         answer = out.get("output", str(out)) if isinstance(out, dict) else str(out)
     except Exception as exc:  # noqa: BLE001
         answer = friendly_error(exc)
-    final_sql = cap.queries[-1] if cap.queries else None
-    return {
-        "arm": "prod",
-        "answer": answer,
-        "outcome": "answered",  # refined in score()
-        "final_sql": final_sql,
-        "first_sql": cap.queries[0] if cap.queries else None,
-        "attempts": 0,
-        "exec_error": None,
-        "rows": None,
-        "trace": [{"step": "sql_db_query", "sql": q} for q in cap.queries],
-        "latency_ms": int((time.monotonic() - t0) * 1000),
-    }
+    return _record(
+        "prod", answer, t0,
+        final_sql=cap.queries[-1] if cap.queries else None,
+        first_sql=cap.queries[0] if cap.queries else None,
+        trace=[{"step": "sql_db_query", "sql": q} for q in cap.queries],
+    )
 
 
 # --------------------------------------------------------------------------
@@ -489,16 +467,9 @@ def main() -> int:
                 s = score(item, rec)
             except Exception as exc:  # noqa: BLE001 - one bad question shouldn't kill the run
                 print(f"    {arm}: ERRORED {exc!r}")
-                s = {**{"id": item["id"], "question": item["question"], "arm": arm,
-                        "category": item.get("category"), "expect": item.get("expect", "answer"),
-                        "answer": f"[harness error] {exc}", "outcome": "failed",
-                        "final_sql": None, "first_sql": None, "attempts": 0,
-                        "exec_error": str(exc), "rows": None, "trace": [], "latency_ms": 0,
-                        "produced_sql": False, "executed_ok": None, "match_loose": None,
-                        "match_strict": None, "hallucinated_first": False,
-                        "hallucinated_final": False, "refused": False, "answer_ok": False,
-                        "repair_triggered": False, "repair_fixed": False,
-                        "first_static_issue": ""}}
+                s = score(item, {"arm": arm, "answer": f"[harness error] {exc}",
+                                 "outcome": "failed", "exec_error": str(exc),
+                                 "trace": [], "latency_ms": 0})
             scored[arm].append(s)
             flag = "ok " if s["answer_ok"] else "MISS"
             extra = f" repair={s['attempts']}" if s.get("attempts") else ""

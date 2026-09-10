@@ -17,26 +17,23 @@ from app import db
 from app.agent import INCLUDED_TABLES
 
 
-def _columns_for(conn: db.Connection, table: str) -> set[str]:
-    """Column names on `table`, lowercased. Reuses db.existing_columns, which
-    already abstracts PRAGMA table_info (SQLite) vs information_schema
-    (Postgres)."""
-    return {c.lower() for c in db.existing_columns(conn, table)}
-
-
-def load_catalog() -> dict[str, set[str]]:
+@lru_cache(maxsize=1)
+def get_catalog() -> dict[str, frozenset[str]]:
     """{table_name: {column, ...}} for every INCLUDED_TABLES entry that
-    actually exists in the live database. A table missing entirely (e.g. a
-    load script hasn't run) is simply left out - the Critic then flags any
-    query that references it, which is the correct outcome."""
+    actually exists in the live database (columns lowercased; via
+    db.existing_columns, which abstracts PRAGMA table_info vs
+    information_schema). A missing table is left out - the Critic then flags
+    any query referencing it, which is the correct outcome. Process-cached:
+    the schema doesn't change within a run and re-reading it per question
+    adds a round-trip to Neon. Frozensets so a caller can't mutate the cache."""
     conn = db.get_connection()
     try:
-        catalog: dict[str, set[str]] = {}
+        out: dict[str, frozenset[str]] = {}
         for table in INCLUDED_TABLES:
-            cols = _columns_for(conn, table)
+            cols = frozenset(c.lower() for c in db.existing_columns(conn, table))
             if cols:
-                catalog[table.lower()] = cols
-        return catalog
+                out[table.lower()] = cols
+        return out
     finally:
         conn.close()
 
@@ -70,14 +67,6 @@ def terms_note() -> str:
         + ", ".join(terms)
         + ". Interpret 'this'/'current'/'upcoming' semester as the most recent of these."
     )
-
-
-@lru_cache(maxsize=1)
-def get_catalog() -> dict[str, frozenset[str]]:
-    """Process-cached catalog. The schema doesn't change within a run, and
-    re-reading it per question would add a round-trip to Neon each time.
-    Returns frozensets so the cached value can't be mutated by a caller."""
-    return {t: frozenset(cols) for t, cols in load_catalog().items()}
 
 
 def catalog_signature(catalog: dict[str, "frozenset[str] | set[str]"]) -> str:

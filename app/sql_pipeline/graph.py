@@ -31,9 +31,7 @@ from app import agent as agent_mod
 from app import db
 from app.sql_pipeline import catalog as catalog_mod
 from app.sql_pipeline.critique import Critique, critique, static_schema_check
-from app.sql_pipeline.generate import generate
-from app.sql_pipeline.repair import repair
-from app.sql_pipeline.synthesize import synthesize
+from app.sql_pipeline.steps import generate, repair, synthesize
 
 MAX_REPAIRS = 2
 
@@ -78,10 +76,6 @@ class PipelineResult:
     attempts: int = 0
     exec_error: Optional[str] = None
     trace: list[dict] = field(default_factory=list)
-
-    @property
-    def repaired(self) -> bool:
-        return self.attempts > 0
 
 
 # --------------------------------------------------------------------------
@@ -143,14 +137,14 @@ def _build_graph(llm, catalog: dict, dialect: str):
         feedback = crit.feedback if crit else (state.get("exec_error") or "unknown error")
         if state.get("exec_error"):
             feedback = f"The query failed to execute: {state['exec_error']}. " + feedback
-        rep = repair(llm, state["question"], state["sql"], feedback, catalog_text, terms_note)
+        new_sql = repair(llm, state["question"], state["sql"], feedback,
+                         catalog_text, terms_note)
+        n = state.get("attempts", 0) + 1
         return {
-            "sql": rep.sql,
-            "attempts": state.get("attempts", 0) + 1,
+            "sql": new_sql,
+            "attempts": n,
             "exec_error": None,
-            "trace": state["trace"] + [
-                {"step": "repair", "attempt": state.get("attempts", 0) + 1, "sql": rep.sql}
-            ],
+            "trace": state["trace"] + [{"step": "repair", "attempt": n, "sql": new_sql}],
         }
 
     def n_execute(state: _State) -> _State:
@@ -184,9 +178,8 @@ def _build_graph(llm, catalog: dict, dialect: str):
     # -- routing --
 
     def after_generate(state: _State) -> str:
-        return END if state.get("outcome") == "refused" else "route_after_gen"
-
-    def route_after_gen(state: _State) -> str:
+        if state.get("outcome") == "refused":
+            return END
         return "execute" if state.get("mode") == "baseline" else "critic"
 
     def after_critic(state: _State) -> str:
@@ -212,7 +205,6 @@ def _build_graph(llm, catalog: dict, dialect: str):
 
     g = StateGraph(_State)
     g.add_node("generate", n_generate)
-    g.add_node("route_after_gen", lambda s: {})  # pure routing hop
     g.add_node("critic", n_critic)
     g.add_node("repair", n_repair)
     g.add_node("execute", n_execute)
@@ -221,9 +213,7 @@ def _build_graph(llm, catalog: dict, dialect: str):
 
     g.set_entry_point("generate")
     g.add_conditional_edges("generate", after_generate,
-                            {END: END, "route_after_gen": "route_after_gen"})
-    g.add_conditional_edges("route_after_gen", route_after_gen,
-                            {"critic": "critic", "execute": "execute"})
+                            {END: END, "critic": "critic", "execute": "execute"})
     g.add_conditional_edges("critic", after_critic,
                             {"execute": "execute", "repair": "repair", "fail": "fail"})
     g.add_edge("repair", "critic")
@@ -241,12 +231,17 @@ def _build_graph(llm, catalog: dict, dialect: str):
 _COMPILED: dict[tuple, Any] = {}
 
 
+def _catalog_and_dialect() -> tuple[dict, str]:
+    """The live catalog as plain sets + the sqlglot dialect for this backend."""
+    catalog = {t: set(c) for t, c in catalog_mod.get_catalog().items()}
+    return catalog, ("postgres" if db.is_postgres() else "sqlite")
+
+
 def _get_graph(streaming: bool = False):
     """Build (and process-cache) a compiled graph. Keyed on the live schema
     signature and dialect so a schema change in the same process rebuilds."""
     llm, _ = agent_mod._build_llm(streaming=streaming)
-    catalog = {t: set(c) for t, c in catalog_mod.get_catalog().items()}
-    dialect = "postgres" if db.is_postgres() else "sqlite"
+    catalog, dialect = _catalog_and_dialect()
     key = (dialect, tuple(sorted((t, tuple(sorted(c))) for t, c in catalog.items())))
     if key not in _COMPILED:
         _COMPILED[key] = _build_graph(llm, catalog, dialect)
@@ -287,7 +282,6 @@ def hallucinated_reference(sql: Optional[str]) -> bool:
     Mode-independent - the eval harness runs this on both arms' final SQL."""
     if not sql:
         return False
-    catalog = {t: set(c) for t, c in catalog_mod.get_catalog().items()}
-    dialect = "postgres" if db.is_postgres() else "sqlite"
+    catalog, dialect = _catalog_and_dialect()
     res = static_schema_check(sql, catalog, dialect)
     return bool(res.unknown_tables or res.unknown_columns)

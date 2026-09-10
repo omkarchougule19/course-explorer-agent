@@ -20,12 +20,12 @@ The Critic. Two independent checks on a generated SQL query:
 Repair step can act on.
 """
 
-import json
 from dataclasses import dataclass, field
 
 import sqlglot
 from sqlglot import exp
 
+from app.sql_pipeline._llm import ask_text, loads_lenient
 from app.sql_pipeline.catalog import catalog_signature
 
 
@@ -167,31 +167,21 @@ SQL:
 Respond with ONLY a JSON object: {{"verdict": "ok" | "flawed", "issue": "<one sentence, empty if ok>"}}"""
 
 
-def _parse_verdict(text: str) -> tuple[str, str]:
-    """(verdict, issue). Fail-open to ('ok', '') on any parse trouble - the
-    Critic must never block every query because the reviewer's JSON was
-    malformed."""
-    try:
-        lo, hi = text.find("{"), text.rfind("}")
-        obj = json.loads(text[lo:hi + 1]) if 0 <= lo < hi else {}
-        verdict = str(obj.get("verdict", "ok")).strip().lower()
-        if verdict not in ("ok", "flawed"):
-            verdict = "ok"
-        return verdict, str(obj.get("issue", "")).strip()
-    except Exception:
-        return "ok", ""
-
-
 def intent_check(llm, schema: str, question: str, sql: str) -> tuple[str, str]:
-    """('ok'|'flawed', issue_text). Any LLM error fails open to ('ok', '')."""
+    """('ok'|'flawed', issue_text). Fails open to ('ok', '') on any LLM error
+    or malformed reply - the Critic must never block every query because the
+    reviewer's JSON didn't parse."""
     try:
-        resp = llm.invoke(_INTENT_PROMPT.format(schema=schema, question=question, sql=sql))
-        text = getattr(resp, "content", resp)
-        if isinstance(text, list):
-            text = "".join(p.get("text", "") for p in text if isinstance(p, dict))
-        return _parse_verdict(str(text))
+        obj = loads_lenient(ask_text(
+            llm, _INTENT_PROMPT.format(schema=schema, question=question, sql=sql)))
     except Exception:
         return "ok", ""
+    if not isinstance(obj, dict):
+        return "ok", ""
+    verdict = str(obj.get("verdict", "ok")).strip().lower()
+    if verdict not in ("ok", "flawed"):
+        verdict = "ok"
+    return verdict, str(obj.get("issue", "")).strip()
 
 
 # --------------------------------------------------------------------------
