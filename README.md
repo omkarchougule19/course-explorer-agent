@@ -19,61 +19,66 @@ production from the same code.
 
 ## Highlights
 
-**Hybrid text-to-SQL + RAG agent** — one LangChain tool-calling agent with
-two tools: direct SQL against the catalog, and semantic search over course
-descriptions. It picks the right one per question. The full schema is baked
-into the prompt so it answers in ~2 model calls instead of round-tripping to
-introspect the database.
+### The agent
 
-**Multi-query retrieval with Reciprocal Rank Fusion** — vague questions
-("what covers distributed systems?") get expanded by a cheap LLM call into
-several distinct facets, each embedded and searched separately in pgvector,
-then the ranked lists are fused with RRF (`score += 1/(k + rank)`) into one
-de-duplicated result set. Wider recall than a single embedding, and enough
-material for a thematic summary instead of a flat dump.
+- **Hybrid retrieval in one agent.** A LangChain tool-calling agent with two
+  tools — direct SQL and semantic search over course descriptions — that
+  chooses per question. The whole schema (and the term coverage, and the
+  house rules) lives in the prompt, so a typical answer is **~2 model calls,
+  not a round-trip to introspect the database first**.
+- **Multi-query retrieval + Reciprocal Rank Fusion.** A vague question is
+  expanded by a cheap LLM call into several distinct facets; each is
+  embedded and searched separately in pgvector; the ranked lists are fused —
+  `score(course) += 1 / (k + rank)` — into one de-duplicated set. Wider
+  recall than a single embedding, and enough material for a real thematic
+  summary instead of a flat dump. Every knob is an env var.
+- **Streams, with memory.** Answers arrive over Server-Sent Events with live
+  `Running SQL…` / `Searching course descriptions…` status labels, then type
+  themselves out; a ~2 KB client-side Markdown renderer formats them. The
+  server is stateless — it re-trims the last few turns to resolve "it" /
+  "that course" / "the second one".
 
-**Self-hosted embeddings, zero API dependency** — `BAAI/bge-small-en-v1.5`
-(384-dim, ~130 MB) via `fastembed`'s ONNX runtime. No key, no rate limit, no
-external service, and the vectors are always comparable because the exact
-same model runs everywhere. Baked into the container at build time so the
-first RAG question doesn't eat a cold model download.
+### Measured, not assumed
 
-**Streaming answers over Server-Sent Events** — the browser shows a live
-"Running SQL…" / "Searching course descriptions…" status while the agent
-works, then the answer types itself out. A ~2 KB hand-rolled Markdown
-renderer formats it client-side.
+- **An eval harness for the agent itself.** 24 questions with known-correct
+  SQL; four metrics (execution success, result-match accuracy, hallucinated-
+  reference rate, repair success rate); an opt-in **Generator → Critic →
+  Repair** loop (LangGraph) scored with the loop off vs. on. The Critic pairs
+  a deterministic `sqlglot` schema check with an LLM intent check; a bad
+  query is repaired twice, then fails explicitly rather than answering wrong.
+  The first run's result was *not* the expected one — and it's written up
+  that way. [`evals/FINDINGS.md`](evals/FINDINGS.md)
+- **Guardrails that hold under abuse.** A length cap, per-IP hourly/daily
+  limits, and a **global daily cap that keys on nothing the client
+  controls** — the actual budget backstop. Every attempt logged with outcome
+  and latency; only calls that spent a model call count against the limit.
+- **Feedback that closes.** 👍/👎 per answer (downvotes snapshot the whole
+  exchange into a review queue), a site-wide free-text box, and an
+  `ADMIN_TOKEN`-gated dashboard with unique-client counts, a per-day activity
+  chart, a client rollup, and the raw question log.
+- **Security-reviewed.** CSP + the standard header set on every response, an
+  optional `SELECT`-only DB role for the agent's SQL tool (a jailbreak still
+  can't run DDL/DML), prompt-injection resistance in the system prompt,
+  docs/OpenAPI off by default, and a documented red-team pass
+  ([`security_findings.md`](security_findings.md)).
 
-**Provider-agnostic LLM** — auto-detects Groq → Gemini → OpenAI from
-whichever key is set, or `LLM_PROVIDER=groq|gemini|openai` to pin one.
-Swapping providers is an env var, not a code change.
+### The plumbing
 
-**Real guardrails on the `/ask` budget** — a length cap, a per-IP hourly and
-daily rate limit, and a global shared daily cap that keys on nothing
-client-controlled (the real backstop). Every attempt is logged with its
-outcome and latency.
-
-**Feedback loops that close** — 👍/👎 on every answer, with downvotes
-snapshotting the full conversation into a biweekly review queue; a
-site-wide free-text feedback box; and an admin dashboard with usage stats, a
-per-day activity chart, a client rollup, and the raw question log.
-
-**A measured Critic/Repair loop** — an opt-in second answer path
-(`app/sql_pipeline/`, wired with LangGraph) that validates every generated
-query against the live schema before running it and repairs it when it's
-wrong. It ships with a 24-question eval harness scoring four metrics with
-the loop off vs. on — and an honest write-up of what the numbers actually
-showed. See [Evals](#evals).
-
-**Dual backend from one query text** — `app/db.py` is a thin wrapper that
-makes the same `?`-placeholder SQL run on SQLite and Postgres: it translates
-placeholders, provides one `upsert()` for both `INSERT OR REPLACE` and
-`ON CONFLICT`, and abstracts the schema-introspection differences. Nobody
-needs Postgres running to develop.
-
-**Security hardening** — CSP and the standard header set on every response,
-an optional read-only DB role for the agent's SQL tool, prompt-injection
-resistance in the system prompt, docs/OpenAPI off by default, and a
-documented red-team pass ([`security_findings.md`](security_findings.md)).
+- **One query text, two databases.** `app/db.py` makes the same
+  `?`-placeholder SQL run on SQLite (local) and Postgres (prod): placeholder
+  translation, a single `upsert()` covering both `INSERT OR REPLACE` and
+  `ON CONFLICT`, unified schema introspection. Nobody needs Postgres to
+  develop.
+- **Self-hosted embeddings, zero API dependency.** `BAAI/bge-small-en-v1.5`
+  (384-dim, ~130 MB) via `fastembed`'s ONNX runtime — no key, no rate limit,
+  baked into the container at build time. The vectors are always comparable
+  because the exact same model runs everywhere.
+- **Provider-agnostic LLM.** Auto-detects Groq → Gemini → OpenAI from
+  whichever key is set, or pin one with `LLM_PROVIDER`. Swapping providers is
+  an env var, not a code change.
+- **Resumable, concurrent scraper.** A full-catalog scrape fetches courses in
+  parallel; rows upsert on their natural key; `Ctrl+C` is safe and the run
+  picks up where it left off.
 
 ---
 
