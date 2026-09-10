@@ -7,11 +7,23 @@ LangGraph wiring of the Generator -> Critic -> Repair pipeline.
     generate --> critic
     critic   --ok--> execute
     critic   --flaw, repairs left--> repair --> critic
-    critic   --flaw, repairs exhausted--> fail
+    critic   --flaw, repairs exhausted--> finalize
     execute  --rows--> synthesize --> END
     execute  --db error, repairs left--> repair --> critic
-    execute  --db error, repairs exhausted--> fail
-    fail --> END   (explicit failure string, never a silently-wrong answer)
+    execute  --db error, repairs exhausted--> finalize
+    repair   --same SQL as a prior attempt--> finalize   (cycle-breaker)
+    finalize --> END
+
+`finalize` ships the first repair candidate that executed cleanly if there
+is one, and only returns an explicit failure string when nothing ever ran.
+
+The Critic runs two checks (critique.py). The deterministic schema check
+runs on every pass. The LLM intent-check is, by default, a *repair verifier*
+only - it never vetoes the generator's first query, just judges whether a
+repair improved things (SQL_PIPELINE_INTENT_CHECK = off | repair | always).
+See evals/FINDINGS.md for why: as a first-pass gate the intent-check
+manufactured objections to correct queries more often than it caught real
+errors.
 
 `mode`:
     "critic"   - full loop above
@@ -54,10 +66,14 @@ class _State(TypedDict, total=False):
     sql: str
     first_sql: str
     attempts: int              # repairs performed so far
+    sql_seen: list[str]        # normalised text of every SQL tried (cycle-breaker)
+    stalled: bool              # a repair reproduced an earlier query
 
     last_critique: Optional[Critique]
     rows: Optional[list[dict]]
     exec_error: Optional[str]
+    best_sql: Optional[str]    # first candidate that executed cleanly
+    best_rows: Optional[list[dict]]
 
     outcome: str               # answered | refused | failed
     answer: str
@@ -81,6 +97,22 @@ class PipelineResult:
 # --------------------------------------------------------------------------
 # SQL execution (read-only, SELECT-only)
 # --------------------------------------------------------------------------
+
+def _norm(sql: str) -> str:
+    """Whitespace/case-insensitive form of a query, for the cycle-breaker's
+    'have we already tried this exact query' check."""
+    return " ".join((sql or "").lower().split())
+
+
+def _intent_mode() -> str:
+    """off | repair | always. Default 'repair': the LLM intent-check only
+    reviews a *repaired* query, it never vetoes the generator's first one.
+    See evals/FINDINGS.md. '0'/'false' -> off, '1'/'true' -> repair, for
+    backwards compatibility with the old boolean flag."""
+    raw = os.environ.get("SQL_PIPELINE_INTENT_CHECK", "repair").strip().lower()
+    return {"0": "off", "false": "off", "no": "off", "": "off",
+            "1": "repair", "true": "repair", "yes": "repair"}.get(raw, raw)
+
 
 def _run_sql(sql: str, limit: int = 200) -> tuple[Optional[list[dict]], Optional[str]]:
     """(rows, error). Only a single SELECT is allowed through - the Generator
@@ -118,10 +150,16 @@ def _build_graph(llm, catalog: dict, dialect: str):
         if not gen.in_scope:
             return {"outcome": "refused", "answer": _REFUSAL, "trace": trace,
                     "sql": "", "first_sql": "", "attempts": 0}
-        return {"sql": gen.sql, "first_sql": gen.sql, "attempts": 0, "trace": trace}
+        return {"sql": gen.sql, "first_sql": gen.sql, "attempts": 0,
+                "sql_seen": [_norm(gen.sql)], "trace": trace}
 
     def n_critic(state: _State) -> _State:
-        run_intent = os.environ.get("SQL_PIPELINE_INTENT_CHECK", "1") not in ("0", "false", "")
+        # Change A: the LLM intent-check is a repair verifier by default - it
+        # only runs once a repair has happened (attempts > 0), so it can never
+        # veto the generator's first query. The deterministic schema check
+        # always runs.
+        mode = _intent_mode()
+        run_intent = mode == "always" or (mode == "repair" and state.get("attempts", 0) > 0)
         crit = critique(state["sql"], state["question"], llm, catalog, dialect,
                         run_intent=run_intent, terms_note=terms_note)
         rec = {
@@ -140,10 +178,19 @@ def _build_graph(llm, catalog: dict, dialect: str):
         new_sql = repair(llm, state["question"], state["sql"], feedback,
                          catalog_text, terms_note)
         n = state.get("attempts", 0) + 1
+        seen = state.get("sql_seen", [])
+        # Change B: if the repair just reproduced a query we already tried,
+        # more looping won't help - stop and let finalize ship the best
+        # candidate so far.
+        if _norm(new_sql) in seen:
+            return {"attempts": n, "stalled": True,
+                    "trace": state["trace"] + [
+                        {"step": "repair", "attempt": n, "sql": new_sql, "stalled": True}]}
         return {
             "sql": new_sql,
             "attempts": n,
             "exec_error": None,
+            "sql_seen": seen + [_norm(new_sql)],
             "trace": state["trace"] + [{"step": "repair", "attempt": n, "sql": new_sql}],
         }
 
@@ -151,16 +198,45 @@ def _build_graph(llm, catalog: dict, dialect: str):
         rows, err = _run_sql(state["sql"])
         rec = {"step": "execute", "attempt": state.get("attempts", 0),
                "error": err, "row_count": None if rows is None else len(rows)}
+        out = {"trace": state["trace"] + [rec]}
         if err:
-            return {"exec_error": err, "rows": None, "trace": state["trace"] + [rec]}
-        return {"rows": rows, "exec_error": None, "trace": state["trace"] + [rec]}
+            out["exec_error"] = err
+            out["rows"] = None
+        else:
+            out["rows"] = rows
+            out["exec_error"] = None
+            # Change C: remember the first query that ran clean, so an
+            # exhausted or stalled repair loop can fall back to it instead of
+            # shipping a later, worse attempt.
+            if not state.get("best_sql"):
+                out["best_sql"] = state["sql"]
+                out["best_rows"] = rows
+        return out
 
     def n_synthesize(state: _State) -> _State:
-        answer = synthesize(llm, state["question"], state["sql"], state.get("rows") or [])
-        return {"outcome": "answered", "answer": answer,
+        # Change C: ship the first query that executed cleanly. In the common
+        # no-repair path best_sql == sql; when the intent check drove extra
+        # repairs, best_sql is the earlier, verified-runnable candidate.
+        if state.get("best_sql"):
+            sql, rows = state["best_sql"], state.get("best_rows")
+        else:
+            sql, rows = state["sql"], state.get("rows")
+        answer = synthesize(llm, state["question"], sql, rows or [])
+        return {"outcome": "answered", "answer": answer, "sql": sql, "rows": rows,
                 "trace": state["trace"] + [{"step": "synthesize"}]}
 
-    def n_fail(state: _State) -> _State:
+    def n_finalize(state: _State) -> _State:
+        # Reached when repairs are exhausted, a repair stalled, or execution
+        # kept failing. Prefer the best query that actually ran; only return
+        # an explicit failure when nothing ever executed cleanly.
+        sql = state.get("best_sql") or state.get("sql")
+        rows = state.get("best_rows")
+        if rows is None and sql:
+            rows, _ = _run_sql(sql)
+        if sql and rows is not None:
+            answer = synthesize(llm, state["question"], sql, rows)
+            return {"outcome": "answered", "answer": answer, "sql": sql, "rows": rows,
+                    "trace": state["trace"] + [{"step": "finalize", "used": "best_candidate"}]}
         why = state.get("exec_error")
         crit = state.get("last_critique")
         if not why and crit:
@@ -173,7 +249,7 @@ def _build_graph(llm, catalog: dict, dialect: str):
         if why:
             msg += f"The last problem was: {why}"
         return {"outcome": "failed", "answer": msg.strip(),
-                "trace": state["trace"] + [{"step": "fail", "why": why}]}
+                "trace": state["trace"] + [{"step": "finalize", "used": "failure", "why": why}]}
 
     # -- routing --
 
@@ -184,24 +260,33 @@ def _build_graph(llm, catalog: dict, dialect: str):
 
     def after_critic(state: _State) -> str:
         crit = state["last_critique"]
-        if crit.ok:
+        # Any query that passes the deterministic schema check gets executed -
+        # its result is banked as best_sql before any intent-driven repair, so
+        # a later worse attempt can't overwrite it. A surviving static defect
+        # (bad table/column) is repaired if attempts remain, else finalized.
+        if crit.static.ok:
             return "execute"
         if state.get("attempts", 0) < MAX_REPAIRS:
             return "repair"
-        # Repairs exhausted. Hard-fail only on a real defect - a bad
-        # table/column reference or a query that won't parse. If the static
-        # check passes and the only remaining objection is the conservative
-        # intent check, run it and answer rather than refuse a query that is
-        # probably fine (the alternative over-refuses correct queries the
-        # intent reviewer merely nitpicked).
-        return "execute" if crit.static.ok else "fail"
+        return "finalize"
+
+    def after_repair(state: _State) -> str:
+        return "finalize" if state.get("stalled") else "critic"
 
     def after_execute(state: _State) -> str:
-        if not state.get("exec_error"):
-            return "synthesize"
-        if state.get("mode") != "baseline" and state.get("attempts", 0) < MAX_REPAIRS:
+        if state.get("exec_error"):
+            if state.get("mode") != "baseline" and state.get("attempts", 0) < MAX_REPAIRS:
+                return "repair"
+            return "finalize"
+        # Clean run. If the intent check (repair verifier) still flagged this
+        # query and a repair budget remains, try once more - but best_sql is
+        # already banked, so this can only help, not regress.
+        crit = state.get("last_critique")
+        if (state.get("mode") != "baseline" and crit is not None
+                and crit.intent_verdict == "flawed"
+                and state.get("attempts", 0) < MAX_REPAIRS):
             return "repair"
-        return "fail"
+        return "synthesize"
 
     g = StateGraph(_State)
     g.add_node("generate", n_generate)
@@ -209,18 +294,19 @@ def _build_graph(llm, catalog: dict, dialect: str):
     g.add_node("repair", n_repair)
     g.add_node("execute", n_execute)
     g.add_node("synthesize", n_synthesize)
-    g.add_node("fail", n_fail)
+    g.add_node("finalize", n_finalize)
 
     g.set_entry_point("generate")
     g.add_conditional_edges("generate", after_generate,
                             {END: END, "critic": "critic", "execute": "execute"})
     g.add_conditional_edges("critic", after_critic,
-                            {"execute": "execute", "repair": "repair", "fail": "fail"})
-    g.add_edge("repair", "critic")
+                            {"execute": "execute", "repair": "repair", "finalize": "finalize"})
+    g.add_conditional_edges("repair", after_repair,
+                            {"critic": "critic", "finalize": "finalize"})
     g.add_conditional_edges("execute", after_execute,
-                            {"synthesize": "synthesize", "repair": "repair", "fail": "fail"})
+                            {"synthesize": "synthesize", "repair": "repair", "finalize": "finalize"})
     g.add_edge("synthesize", END)
-    g.add_edge("fail", END)
+    g.add_edge("finalize", END)
     return g.compile()
 
 

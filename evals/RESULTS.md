@@ -1,5 +1,11 @@
 # Eval results: the Critic/Repair loop
 
+> **These tables are the first run — pre-A+B+C.** They showed the LLM
+> intent-check *hurting* accuracy on the full-schema config. The analysis of
+> why, and the three routing fixes that followed, are in
+> [`FINDINGS.md`](FINDINGS.md). Numbers below are the "before"; a fresh run
+> is pending (Groq token budget).
+
 **Question:** does adding a Validator/Critic + Repair loop in front of query
 execution reduce hallucinated SQL and improve answers, on this app's
 text-to-SQL agent?

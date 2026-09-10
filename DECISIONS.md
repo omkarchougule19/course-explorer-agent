@@ -1554,3 +1554,53 @@ repair budget only hard-fails on a *static* defect (bad ref / unparseable);
 if the sole remaining objection is the conservative intent check, the query
 is executed best-effort rather than refused - this stops the intent check
 from over-refusing correct queries.
+
+
+## Critic/Repair: the LLM intent-check demoted to a repair verifier (2026-09-10)
+
+The first eval run of the Critic/Repair loop found it *lowered* accuracy on
+the production configuration (full schema + `gpt-oss-120b`): result-match
+92.3% -> 84.6%, answer-OK 95.8% -> 91.7%, with the deterministic schema
+check firing zero times. Reading every divergent trace (`evals/FINDINGS.md`)
+showed the cause is entirely the **LLM intent-check**: asked "is this query
+flawed?", it almost always manufactures an objection - inventing a
+requirement the question never stated (q04: "should also count subjects in
+other tables"), contradicting its own previous verdict (q20/q14/q19
+ping-pong fall<->spring every pass), or misreading the schema (`w` as
+"waitlist"). Each false "flawed" triggered a repair that degraded an
+already-correct query. The deterministic schema check, by contrast, is the
+part that works - in the terse-schema ablation it drove 5 of 7 repairs, all
+net-neutral-or-better.
+
+**Change A+B+C** (routing only, in `app/sql_pipeline/graph.py`; pinned by
+`evals/test_graph_routing.py`):
+
+- **A.** `SQL_PIPELINE_INTENT_CHECK` becomes `off | repair | always`, default
+  `repair`. The LLM intent-check now runs *only on a query a repair has
+  already touched* (`attempts > 0`) - it is a repair verifier, never a
+  first-pass gate, and can't veto the generator's original query. The
+  deterministic schema check still runs every pass. Consequence: a
+  static-clean generator query goes straight generate -> execute ->
+  synthesize, identical to baseline and one LLM call cheaper than the old
+  loop. (`0`/`false` still map to `off`, `1`/`true` to `repair`, for the old
+  boolean flag.)
+- **B.** Cycle-breaker: a repair that reproduces an earlier query (normalised
+  for whitespace/case) stops the loop instead of ping-ponging to the cap.
+- **C.** The first repair candidate that executes cleanly is banked as
+  `best_sql`; it - not a later, worse intent-driven repair - is what gets
+  synthesised. The old `fail` node became `finalize`, which prefers the best
+  runnable candidate and only returns an explicit failure when nothing ever
+  executed.
+
+Predicted from the saved traces (a fresh Groq run is pending - the token
+budget was spent during the investigation): full-schema critic returns to
+parity with baseline (nothing to catch, nothing to break); the
+terse-schema win (hallucinated-ref 31% -> ~6%, execution 69% -> 100%) is
+preserved because it was schema-check-driven. Net: a win where the generator
+hallucinates, a no-op where it doesn't.
+
+Rejected for now: hardening the intent-check prompt with few-shot "this query
+is fine" examples and a concrete-evidence requirement (kept as a possible
+follow-up to bring it back as an asset rather than just neutralising it);
+running two intent checks for self-consistency (doubles the cost of a step
+that currently subtracts value).

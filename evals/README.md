@@ -13,7 +13,10 @@ in the project [README](../README.md#evals).
 | `eval_set.jsonl` | 24 questions, four buckets (see below), each with a `gold_sql` where one exists |
 | `run.py` | the harness — runs the set through each arm, scores it, writes `results/` |
 | `metrics.py` | scoring helpers (result matching, refusal/no-data detection) |
-| `test_static_check.py` | standalone checks that the static schema checker has no false positives on valid SQL |
+| `RESULTS.md` | the first run's numbers and interpretation (pre-A+B+C) |
+| `FINDINGS.md` | why the loop didn't help at first, and the three routing fixes (A+B+C) |
+| `test_static_check.py` | offline: the static schema checker has no false positives on valid SQL |
+| `test_graph_routing.py` | offline: the Generator→Critic→Repair routing, via a scripted fake model |
 | `results/` | per-run JSON + `latest_summary.md` + `*__catches.md` (gitignored) |
 
 ## The question set
