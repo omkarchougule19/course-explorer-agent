@@ -152,34 +152,48 @@ def _db_uri() -> str:
 
 
 def _build_llm(streaming: bool = False):
-    """Pick the LLM provider from whichever API key is set: GROQ_API_KEY
-    (preferred - free; ~80-100 real questions/day in practice, bound by a
-    200K tokens/day cap more than the 1,000 requests/day figure - see
-    DECISIONS.md), then GEMINI_API_KEY, then OPENAI_API_KEY as a last resort.
+    """Pick the LLM provider. By default it's whichever API key is set, in
+    order: GROQ_API_KEY (preferred - free; ~80-100 real questions/day in
+    practice, bound by a 200K tokens/day cap more than the 1,000 requests/day
+    figure - see DECISIONS.md), then GEMINI_API_KEY, then OPENAI_API_KEY.
+
+    Set LLM_PROVIDER (groq | gemini | openai) to force one regardless of which
+    other keys are present - e.g. LLM_PROVIDER=openai to fall back to OpenAI
+    while Groq's daily token budget is exhausted. Its own key must still be
+    set. Unset -> the auto-detect order above.
+
     Imports are local to each branch so a Groq-only setup never needs the
     Gemini/OpenAI SDKs installed to run, and vice versa.
 
     streaming=True asks the provider to emit token deltas, which the
     /ask/stream route turns into a live typewriter response. It's harmless
     for the non-streaming ask() path - the deltas just get reassembled."""
+    forced = os.environ.get("LLM_PROVIDER", "").strip().lower()
+
     groq_key = os.environ.get("GROQ_API_KEY")
-    if groq_key:
+    if groq_key and forced in ("", "groq"):
         from langchain_groq import ChatGroq
         return ChatGroq(model="openai/gpt-oss-120b", temperature=0, api_key=groq_key,
                         streaming=streaming), "Groq"
 
     gemini_key = os.environ.get("GEMINI_API_KEY")
-    if gemini_key:
+    if gemini_key and forced in ("", "gemini"):
         from langchain_google_genai import ChatGoogleGenerativeAI
         return ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0, google_api_key=gemini_key,
                                       streaming=streaming), "Gemini"
 
     openai_key = os.environ.get("OPENAI_API_KEY")
-    if openai_key:
+    if openai_key and forced in ("", "openai"):
         from langchain_openai import ChatOpenAI
         return ChatOpenAI(model="gpt-4o-mini", temperature=0, api_key=openai_key,
                           streaming=streaming), "OpenAI"
 
+    if forced:
+        raise EnvironmentError(
+            f"LLM_PROVIDER={forced!r} but its API key isn't set (or the name is "
+            f"not groq/gemini/openai). Set {forced.upper()}_API_KEY, or unset "
+            f"LLM_PROVIDER to auto-detect from whichever key is present."
+        )
     raise EnvironmentError(
         "No LLM API key found. Set GROQ_API_KEY (recommended - free, get one at "
         "console.groq.com) in a .env file in the project root, or GEMINI_API_KEY / "
