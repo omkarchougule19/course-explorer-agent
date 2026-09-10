@@ -232,6 +232,9 @@ def _build_graph(llm, catalog: dict, dialect: str):
         sql = state.get("best_sql") or state.get("sql")
         rows = state.get("best_rows")
         if rows is None and sql:
+            # No candidate ran cleanly earlier (the loop was all critic/repair
+            # with no execute). Try the current query once - it errors back to
+            # the failure branch below if it's still broken.
             rows, _ = _run_sql(sql)
         if sql and rows is not None:
             answer = synthesize(llm, state["question"], sql, rows)
@@ -324,11 +327,14 @@ def _catalog_and_dialect() -> tuple[dict, str]:
 
 
 def _get_graph(streaming: bool = False):
-    """Build (and process-cache) a compiled graph. Keyed on the live schema
-    signature and dialect so a schema change in the same process rebuilds."""
+    """Build (and process-cache) a compiled graph. Keyed on `streaming` (the
+    LLM is captured in the graph's closures, so a streaming and a
+    non-streaming graph must not share a cache slot), the live schema
+    signature, and the dialect - so a schema change in the same process
+    rebuilds."""
     llm, _ = agent_mod._build_llm(streaming=streaming)
     catalog, dialect = _catalog_and_dialect()
-    key = (dialect, tuple(sorted((t, tuple(sorted(c))) for t, c in catalog.items())))
+    key = (streaming, dialect, tuple(sorted((t, tuple(sorted(c))) for t, c in catalog.items())))
     if key not in _COMPILED:
         _COMPILED[key] = _build_graph(llm, catalog, dialect)
     return _COMPILED[key], catalog, dialect

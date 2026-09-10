@@ -23,7 +23,15 @@ def ask_text(llm, prompt: str) -> str:
     resp = llm.invoke(prompt)
     text = getattr(resp, "content", resp)
     if isinstance(text, list):
-        text = "".join(p.get("text", "") for p in text if isinstance(p, dict))
+        # List-of-parts content: dict parts carry {"text": ...}; some providers
+        # mix in bare strings. Keep both so nothing is silently dropped.
+        parts = []
+        for p in text:
+            if isinstance(p, str):
+                parts.append(p)
+            elif isinstance(p, dict):
+                parts.append(str(p.get("text", "")))
+        text = "".join(parts)
     return str(text)
 
 
