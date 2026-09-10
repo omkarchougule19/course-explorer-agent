@@ -1419,3 +1419,138 @@ feedback from anything later added elsewhere; it's clipped, never rejected.
 
 Docs synced: `DEPLOYMENT.md` §5.2c (`site_feedback` table), §5.3 (dashboard
 panel list + endpoint table).
+
+
+## Critic/Repair loop for the text-to-SQL agent + a real eval harness (2026-09-10)
+
+The production assistant is a single `create_sql_agent` (ReAct/tool-calling):
+one LLM loop that writes SQL, runs it, and narrates the result. It works, but
+there was no measurement of how often it writes a *wrong* query - especially
+one that references a column or table that doesn't exist - and no mechanism to
+catch that before the answer goes out. Added a second, explicit pipeline that
+can be measured against the first: **Generator -> Critic -> Repair**, wired
+with LangGraph, in `app/sql_pipeline/`, plus an eval harness in `evals/`.
+
+### Why a separate pipeline, not a wrapper around `create_sql_agent`
+
+`create_sql_agent` never exposes "the SQL" as a discrete artifact - generation,
+execution and synthesis all happen inside one opaque loop. A Critic that runs
+*before execution* and a Repair step that takes "the failed SQL + feedback"
+both need that artifact. So the new path makes each stage its own node:
+
+- **generate.py** - one LLM call: question -> `{in_scope, sql}`. The scope
+  decision (refuse general knowledge, other schools, role-change attempts) is
+  folded into the same call so an out-of-scope question costs one call, not
+  two. Reuses `app.agent.SYSTEM_CONTEXT` verbatim for the schema and house
+  rules, so the two paths never drift on what the schema is.
+- **critique.py** - two independent checks:
+  1. *Static schema check* (no LLM, deterministic): parse the SQL with
+     `sqlglot` and confirm every table and every qualified column exists in
+     the live catalog (`catalog.py`, read from the same backend the agent
+     queries). This is the check that catches `sections.professor` or
+     `FROM course_reviews`. Built to have **zero false positives on valid
+     SQL** - aliases, CTEs, output aliases (`... AS n ... ORDER BY n`) and
+     subqueries are all resolved or deliberately skipped; the price is that a
+     hallucinated *unqualified* column inside a heavily-nested query can slip
+     through. `evals/test_static_check.py` pins this behaviour.
+  2. *Intent check* (one cheap LLM call): does the query's structure answer
+     the question - right entity, right term/semester/subject filter,
+     aggregate vs. list? Deliberately conservative (only "flawed" when
+     confident) because a false "flawed" costs a wasted repair. Can be
+     disabled with `SQL_PIPELINE_INTENT_CHECK=0` to isolate the static
+     check's contribution.
+- **repair.py** - one LLM call: question + rejected SQL + the Critic's
+  feedback + the real column list -> corrected SQL. The 2-attempt cap and the
+  explicit-failure fallback live in `graph.py`, not here.
+- **graph.py** - the LangGraph state machine. `generate -> critic -> (execute
+  | repair -> critic | fail)`; an execution error re-enters `repair` too;
+  after `MAX_REPAIRS = 2` the pipeline returns an explicit "I couldn't
+  produce a query I'm confident in" string rather than a possibly-wrong
+  answer. A `baseline` mode runs the same generator with the Critic and
+  Repair disabled - that is the control arm for the evals.
+
+### Why LangGraph
+
+The project already uses LangChain, and the loop (a bounded cycle with
+conditional edges and shared state) is exactly what LangGraph models cleanly.
+`langgraph` was already an installed transitive dependency; it's now explicit
+in `requirements.txt` alongside `sqlglot`.
+
+### How it's wired in (and how it's kept out of the way)
+
+`app/agent.py`'s `ask()` gains one branch: if `SQL_PIPELINE` is `critic` or
+`baseline` it delegates to `run_pipeline`, otherwise nothing changes. The env
+var is unset in production, so the live site and the `/ask/stream` path are
+completely unaffected until the numbers justify a switch. Streaming support
+for the pipeline is deliberately out of scope for this pass - it's reachable
+via `ask()` and the harness, which is all the evals need.
+
+### Eval harness design (`evals/`)
+
+- **`eval_set.jsonl`** - 24 questions in four buckets: `in_scope` (13, with a
+  known-correct `gold_sql`), `hallucination_bait` (5, phrased to tempt a
+  nonexistent column - "average professor rating", "waitlist count",
+  "prerequisites as a list"), `empty_data` (2, for the empty
+  `grade_distributions` / `teachers_ranked_excellent` tables), `out_of_scope`
+  (4, incl. a prompt-injection attempt).
+- **Gold answers are `gold_sql` executed live at eval time**, against the same
+  connection the agent used - not frozen rows. The dataset is a per-sync
+  snapshot that changes between refreshes and differs between the local SQLite
+  copy and Neon; executing the gold query in the same run keeps the
+  comparison valid. The harness defaults to `--db sqlite` (ignore
+  `DATABASE_URL`) so a run is reproducible against the committed snapshot.
+- **Four metrics**, `baseline` vs `critic`: execution success rate,
+  result-match accuracy (a two-tier match - "loose" forgives extra columns
+  and `COUNT(DISTINCT x)` vs `COUNT(*)`, "strict" is exact row-tuple
+  equality), hallucinated-reference rate (the static checker run on the final
+  SQL, mode-independent), and repair success rate.
+- **Known confounds, stated so the numbers aren't oversold**: (1) the
+  optional `prod` arm (the real `create_sql_agent`, SQL captured via a
+  callback) also changes the architecture, not just the Critic - so the
+  headline comparison is `baseline` vs `critic`, same generator, loop off vs
+  on. (2) "repair success rate" is "of the queries the Critic flagged, the
+  fraction that ended up executing cleanly" - the conservative intent check
+  still occasionally flags a query that would have worked, so this is not
+  "fraction of truly-broken queries fixed".
+- **`evals/results/`** is gitignored; the committed numbers live in
+  `evals/RESULTS.md` and the README "Evals" section. The harness also writes
+  a `*__catches.md` with before/after SQL for every hallucination the Critic
+  actually caught, for interview stories.
+
+### Rejected / deferred
+
+- *Frozen gold row sets* - rejected, see above (snapshot drift).
+- *A separate scope-classifier node* - folded into the generator call to save
+  one LLM round-trip per question.
+- *Regex-based schema checking* instead of `sqlglot` - rejected; too many
+  false positives on joins/aliases would make the hallucination metric
+  meaningless.
+- *Shipping the pipeline to `/ask/stream`* - deferred; needs a streaming
+  adapter and isn't needed to measure the loop.
+
+### What the first eval run actually found (2026-09-10)
+
+Full numbers and tables in `evals/RESULTS.md`. The result is more
+interesting than "the loop helps":
+
+- **As shipped** (full schema in the prompt, Groq `gpt-oss-120b`): the base
+  generator hallucinates table/column references **0%** of the time, so the
+  deterministic schema check never fires. The LLM intent-check, meanwhile,
+  *slightly hurts* - it talked a correct `COUNT(DISTINCT subject) FROM
+  sections` into a wrong `UNION` across tables. Result-match accuracy 92% ->
+  85%, at +0.9 s/question. Net negative in this config.
+- **Ablation** (terse schema - table names, no columns - on `gpt-4o-mini`):
+  now the generator hallucinates references **31%** of the time, and the
+  loop drops that to **6%**, takes execution success 69% -> 100%, and lifts
+  result-match 54% -> 62%. Repair success 83% (5 of 6 flagged queries
+  fixed).
+
+So the loop is real insurance against a failure mode the current
+strong-model + full-schema setup simply doesn't have. It becomes worth
+turning on if the schema prompt is trimmed for token cost, a cheaper model
+is adopted, or the schema grows past what fits comfortably in the prompt.
+The `after_critic` routing was changed after this run so that an exhausted
+repair budget only hard-fails on a *static* defect (bad ref / unparseable);
+if the sole remaining objection is the conservative intent check, the query
+is executed best-effort rather than refused - this stops the intent check
+from over-refusing correct queries.

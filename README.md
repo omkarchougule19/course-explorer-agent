@@ -170,18 +170,59 @@ raw catalog text - which tends to be long and full of registrar boilerplate
   fix in `DESCRIPTION_TAGS` near the top of `fetch_course_description()` in
   `scraper.py`.
 
+## Evals
+
+There's a second answer path in `app/sql_pipeline/` — an explicit
+**Generator → Critic → Repair** loop (LangGraph) that validates each
+generated query against the real schema before running it, and repairs it
+(twice, then gives an explicit failure rather than a wrong answer) when the
+Critic objects. It's off by default; set `SQL_PIPELINE=critic` (or
+`baseline`) to route `ask()` through it. Full rationale in `DECISIONS.md`.
+
+`evals/` measures whether that loop actually helps, on 24 questions with
+known-correct SQL (`evals/eval_set.jsonl`), scoring four metrics with the
+loop **off vs. on** — same generator, same model, only the loop differs.
+Method and full tables: **[`evals/RESULTS.md`](evals/RESULTS.md)**.
+
+Headline numbers (baseline → critic):
+
+| | full schema, `gpt-oss-120b` *(as shipped)* | terse schema, `gpt-4o-mini` *(ablation)* |
+|---|---|---|
+| Hallucinated-reference rate (final SQL) | 0.0% → 0.0% | **31.2% → 6.2%** |
+| Execution success rate | 100% → 100% | **69.2% → 100%** |
+| Result-match accuracy (loose) | 92.3% → 84.6% | 53.8% → 61.5% |
+| Repair success rate | 50% (2 flagged) | 83.3% (6 flagged) |
+
+**Takeaway:** with the full column list and a capable model, the base agent
+already hallucinates references 0% of the time — the loop has nothing to
+catch and the LLM intent-check slightly over-triggers, nudging accuracy
+down. Handicap the generator (no column list, weaker model) and the loop
+does what it's built for: hallucinated references drop ~80%, execution
+success goes to 100%. It's insurance against a failure mode the current
+config doesn't exhibit, worth enabling if the schema prompt is trimmed for
+cost or a cheaper model is adopted.
+
+```bash
+# run it (force a provider so it doesn't drain the shared Groq budget):
+.venv/Scripts/python -m evals.run --provider openai -y
+# static schema-checker unit checks, no LLM:
+.venv/Scripts/python -m evals.test_static_check
+```
+
 ## Repo layout
 
 ```
 course-explorer-agent/
 ├── app/
-│   ├── scraper.py     # CISAPI scraper -> SQLite
-│   ├── api.py          # FastAPI backend
-│   └── agent.py        # LangChain NL -> SQL agent
+│   ├── scraper.py         # CISAPI scraper -> SQLite
+│   ├── api.py             # FastAPI backend
+│   ├── agent.py           # LangChain NL -> SQL agent (production path)
+│   └── sql_pipeline/      # opt-in Generator -> Critic -> Repair loop (LangGraph)
+├── evals/                 # eval set + harness for the Critic/Repair loop
 ├── static/
-│   └── index.html      # web UI, served at / by api.py
+│   └── index.html         # web UI, served at / by api.py
 ├── data/
-│   └── courses.db      # created after first scrape
+│   └── courses.db         # created after first scrape
 ├── docs/
 │   ├── PROJECT_BIBLE.html # single orientation doc: what/why/how, start here
 │   └── architecture.html  # storage model, request flow, and RAG loop, illustrated

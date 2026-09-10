@@ -422,9 +422,26 @@ def _sections_empty() -> bool:
         return False
 
 
+# Opt-in alternative answer path: the explicit Generator -> Critic -> Repair
+# pipeline in app/sql_pipeline/ instead of create_sql_agent. Off by default -
+# the live site is unaffected until this is deliberately set. "critic" runs
+# the full loop, "baseline" runs the same generator with the loop disabled
+# (the control arm the evals compare against). See DECISIONS.md and evals/.
+_SQL_PIPELINE_MODE = os.environ.get("SQL_PIPELINE", "").strip().lower()
+
+
 def ask(question: str, verbose: bool = False, history=None) -> str:
     if not question or not question.strip():
         return "Ask me something about the course data, e.g. \"Who teaches CS 225?\""
+
+    if _SQL_PIPELINE_MODE in ("critic", "baseline"):
+        try:
+            from app.sql_pipeline import run_pipeline
+            return run_pipeline(question, mode=_SQL_PIPELINE_MODE, history=history).answer
+        except (FileNotFoundError, EnvironmentError, RuntimeError) as exc:
+            return f"Can't answer that right now: {exc}"
+        except Exception as exc:  # noqa: BLE001 - mirror the fallback path below
+            return friendly_error(exc)
 
     try:
         agent = build_agent(verbose=verbose)
