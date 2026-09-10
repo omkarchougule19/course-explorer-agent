@@ -60,6 +60,8 @@ def _prepare_env(provider: str | None, use_sqlite: bool) -> None:
                 _disable(key)
     # The agent path must not recurse into the pipeline for the prod arm.
     os.environ.pop("SQL_PIPELINE", None)
+    # Score SQL/answer quality, not the provenance footer.
+    os.environ["ANSWER_CITATIONS"] = "0"
     os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 
 
@@ -112,39 +114,10 @@ def run_pipeline_arm(item: dict, mode: str) -> dict:
                    exec_error=r.exec_error, rows=r.rows, trace=r.trace)
 
 
-class _SQLCapture:
-    """LangChain callback that records every sql_db_query tool input."""
-
-    def __init__(self):
-        self.queries: list[str] = []
-
-    # BaseCallbackHandler interface (duck-typed; avoids a hard import)
-    def on_tool_start(self, serialized, input_str, **kwargs):
-        name = (serialized or {}).get("name", "") if isinstance(serialized, dict) else ""
-        raw = input_str
-        if not isinstance(raw, str):
-            raw = str(raw)
-        if "sql_db_query" in name or "SELECT" in raw.upper():
-            q = raw.strip()
-            # tool-calling agents pass {"query": "..."} stringified
-            if q.startswith("{"):
-                try:
-                    q = json.loads(q).get("query", q)
-                except Exception:
-                    try:
-                        import ast
-                        q = ast.literal_eval(q).get("query", q)
-                    except Exception:
-                        pass
-            self.queries.append(q)
-
-    def __getattr__(self, _):  # ignore all other callback hooks
-        return lambda *a, **k: None
-
-
 def run_prod_arm(item: dict) -> dict:
     from app.agent import build_agent, build_agent_input, friendly_error
-    cap = _SQLCapture()
+    from app.citations import SQLCapture
+    cap = SQLCapture()
     t0 = time.monotonic()
     try:
         agent = build_agent()

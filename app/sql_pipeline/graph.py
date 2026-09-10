@@ -355,11 +355,15 @@ def run_pipeline(question: str, mode: str = "critic", history=None) -> PipelineR
     init: _State = {"question": q, "mode": mode, "history_block": history_block,
                     "trace": [], "attempts": 0}
     final: _State = graph.invoke(init)
+    answer = final.get("answer", "I couldn't produce an answer for that.")
+    if final.get("outcome") == "answered" and final.get("sql"):
+        from app.citations import sources_footer
+        answer += sources_footer([final["sql"]], rag_used=False, question=q)
     return PipelineResult(
         question=q,
         mode=mode,
         outcome=final.get("outcome", "failed"),
-        answer=final.get("answer", "I couldn't produce an answer for that."),
+        answer=answer,
         sql=final.get("sql") or None,
         first_sql=final.get("first_sql") or None,
         rows=final.get("rows"),
