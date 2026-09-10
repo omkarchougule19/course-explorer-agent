@@ -20,6 +20,7 @@ Or import ask() directly, e.g. from a FastAPI route.
 import json
 import os
 import sys
+from functools import lru_cache
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -301,6 +302,38 @@ def _make_course_content_search_tool(tool_llm):
     return course_content_search
 
 
+@lru_cache(maxsize=1)
+def _available_terms_note() -> str:
+    """A one-line list of the (semester, year) pairs actually present in the
+    data, appended to the agent's prompt. Without it, a model asked about
+    "this fall" guesses a year - usually its training-cutoff year - and then
+    silently returns nothing against what is really a single-year snapshot.
+
+    Process-cached: the term coverage only changes on a manual re-scrape, and
+    the app restarts on deploy. Fails soft to "" so a DB hiccup at build time
+    just falls back to the bare SYSTEM_CONTEXT."""
+    try:
+        conn = db.get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT DISTINCT year, semester FROM sections "
+                "WHERE year IS NOT NULL AND semester IS NOT NULL "
+                "ORDER BY year DESC, semester"
+            ).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        return ""
+    terms = ", ".join(f"{r['semester']} {r['year']}" for r in rows)
+    if not terms:
+        return ""
+    return (
+        f"\n\nThe data currently covers only these terms: {terms}. Read "
+        "'this'/'current'/'next'/'upcoming' semester as the most recent of "
+        "them, and never filter on a year that isn't in that list."
+    )
+
+
 def build_agent(verbose: bool = False, streaming: bool = False):
     if not db.is_postgres() and not DB_PATH.exists():
         raise FileNotFoundError(f"No database at {DB_PATH}. Run scraper.py first.")
@@ -331,7 +364,7 @@ def build_agent(verbose: bool = False, streaming: bool = False):
             db=sql_db,
             agent_type="tool-calling",
             verbose=verbose,
-            prefix=SYSTEM_CONTEXT,
+            prefix=SYSTEM_CONTEXT + _available_terms_note(),
             extra_tools=extra_tools,
             # Default is 15. Each iteration re-sends the full SYSTEM_CONTEXT and
             # resends the growing scratchpad, so a runaway/looping question can
