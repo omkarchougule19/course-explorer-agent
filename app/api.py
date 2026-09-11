@@ -666,6 +666,40 @@ def get_stats():
     }
 
 
+@app.get("/calendar")
+def get_calendar(
+    year: Optional[int] = None,
+    semester: Optional[str] = None,
+    category: Optional[str] = None,
+):
+    """UIUC registrar academic-calendar events (instruction dates, add/drop/
+    withdraw deadlines, breaks, holidays, finals, grade deadlines), loaded
+    per term by app/load_calendar.py. Returns an empty list when nothing is
+    loaded for the requested term rather than 404, so a client can show
+    "not available yet"."""
+    query = ("SELECT year, semester, event_date, event_end_date, title, "
+             "category, raw_date FROM academic_calendar WHERE 1=1")
+    params: list = []
+    if year:
+        query += " AND year = ?"
+        params.append(year)
+    if semester:
+        query += " AND semester = ?"
+        params.append(semester.lower())
+    if category:
+        query += " AND category = ?"
+        params.append(category.lower())
+    query += " ORDER BY event_date, title"
+
+    with get_conn() as conn:
+        try:
+            rows = conn.execute(query, params).fetchall()
+        except Exception as exc:  # table not created yet
+            print(f"[calendar] {exc!r}", flush=True)
+            return {"events": []}
+    return {"events": [dict(r) for r in rows]}
+
+
 @app.get("/ask/summary")
 def get_ask_summary():
     """Public, non-sensitive: how many distinct clients have used the
@@ -797,6 +831,56 @@ def get_grade_trend(subject: str, course_number: str, instructor: Optional[str] 
         trend.append(row)
 
     return {"subject": subject.strip().upper(), "course_number": course_number.strip(), "trend": trend}
+
+
+@app.get("/courses/{subject}/{course_number}/prereqs")
+def get_prereqs(subject: str, course_number: str):
+    """Structured prerequisites for a course, parsed from its catalog
+    description (see app/prereqs.py - best-effort), plus what taking it
+    unlocks. `prerequisites` groups are AND-ed; the `options` within a group
+    are alternatives. `raw` is the original sentence, always present."""
+    subj, num = subject.strip().upper(), course_number.strip()
+    with get_conn() as conn:
+        try:
+            rows = conn.execute(
+                "SELECT group_index, req_subject, req_course_number, relation, "
+                "condition_text, raw_text FROM prerequisites "
+                "WHERE subject = ? AND course_number = ? ORDER BY group_index",
+                [subj, num],
+            ).fetchall()
+            unlocks = conn.execute(
+                "SELECT DISTINCT subject, course_number FROM prerequisites "
+                "WHERE req_subject = ? AND req_course_number = ? "
+                "ORDER BY subject, course_number",
+                [subj, num],
+            ).fetchall()
+        except Exception as exc:  # table not loaded yet
+            print(f"[prereqs] {exc!r}", flush=True)
+            raise HTTPException(status_code=404, detail="Prerequisite data not available")
+        if not rows:
+            raise HTTPException(
+                status_code=404, detail=f"No parsed prerequisites for {subj} {num}")
+
+    groups: dict[int, dict] = {}
+    raw = None
+    for r in rows:
+        raw = raw or r["raw_text"]
+        g = groups.setdefault(r["group_index"], {"group_index": r["group_index"],
+                                                 "relation": r["relation"],
+                                                 "options": [], "conditions": []})
+        if r["req_subject"]:
+            g["options"].append({"subject": r["req_subject"],
+                                 "course_number": r["req_course_number"]})
+        elif r["condition_text"]:
+            g["conditions"].append(r["condition_text"])
+
+    return {
+        "subject": subj,
+        "course_number": num,
+        "raw": raw,
+        "prerequisites": [groups[k] for k in sorted(groups)],
+        "unlocks": [dict(u) for u in unlocks],
+    }
 
 
 # Serves static/index.html at "/" (the web UI) and any other files under static/.

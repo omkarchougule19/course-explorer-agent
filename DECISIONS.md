@@ -1604,3 +1604,86 @@ is fine" examples and a concrete-evidence requirement (kept as a possible
 follow-up to bring it back as an asset rather than just neutralising it);
 running two intent checks for self-consistency (doubles the cost of a step
 that currently subtracts value).
+
+
+## Structured prerequisites, an academic calendar, and answer citations (2026-09-10)
+
+Three additions to make answers less thin and more trustworthy.
+
+### Structured prerequisites (`app/prereqs.py`, `app/load_prereqs.py`)
+
+Prereqs previously lived only inside the free-text `sections.description`.
+"What do I need before CS 411?" worked loosely; "what does CS 225 unlock?"
+and "show the full chain" not at all. ~2,900 of 4,717 courses carry a
+`Prerequisite:` clause in a fairly regular shape - `One of A, B; C.` reads as
+`(A OR B) AND C`.
+
+**No new external source, and no LLM.** `prereqs.parse_prerequisites()` is a
+regex parser: pull the clause after `Prerequisite:`, split on `;` and the
+word "and" into AND-ed groups, treat "one of" / "or" / commas inside a group
+as alternatives, keep any non-course phrase as a `condition_text`. It is
+deliberately conservative - a clause too tangled to split confidently falls
+back to "every course token found, as one OR-group" - and `raw_text` is
+stored on every row so a caller can always quote the original sentence. An
+LLM extractor would be more robust but costs one call per distinct course
+(thousands, against a 200K-tokens/day budget) and isn't reproducible;
+rejected for v1, left open as a later hardening pass.
+
+`load_prereqs.py` reads one description per course (the longest, when
+sections disagree) and upserts into `prerequisites(subject, course_number,
+group_index, req_subject, req_course_number, relation, condition_text,
+raw_text)`. `GET /courses/{subject}/{course_number}/prereqs` returns the
+grouped requirements plus an `unlocks` list
+(`WHERE req_subject=? AND req_course_number=?`).
+
+### Academic calendar (`app/load_calendar.py`)
+
+New source: the UIUC registrar's per-term academic calendar (instruction
+dates, add/drop/withdraw deadlines, breaks, holidays, finals, grade
+deadlines). **The per-term URL is not uniformly derivable**
+(`/fall-2026-academic-calendar/` vs. archived faculty-staff paths), so the
+loader takes `--url` or `--file` explicitly rather than guessing.
+
+Parsing is **text-oriented, not tag-bound**, and uses stdlib
+`html.parser` (no `bs4` / `lxml` dependency): flatten the page to
+newline-separated fragments, a fragment that reads like a date ("August 24",
+"Nov 21-29") becomes the current date, following fragments are its events.
+Each event is categorised by keyword into instruction / add / drop /
+withdraw / break / holiday / finals / grades / registration / commencement /
+other; `raw_date` and `title` are always kept so an un-categorised event is
+still queryable. A trimmed real Fall 2026 page is committed at
+`evals/fixtures/calendar_fall2026.html` and drives `evals/test_calendar.py`.
+`GET /calendar?year=&semester=&category=` reads the table; both it and the
+agent degrade to "not loaded yet" when the term is absent.
+
+### Answer citations (`app/citations.py`)
+
+Answers stated facts with no provenance. Now every *answered* response ends
+with a deterministic footer:
+
+```
+---
+*Sources: UIUC Course Explorer (CS synced 2026-08-25); prerequisites parsed from UIUC catalog descriptions.*
+```
+
+**No extra LLM call.** A `SQLCapture` LangChain callback (a real
+`BaseCallbackHandler` subclass - the earlier duck-typed version had a
+`__getattr__` catch-all that made `ignore_*` truthy and silently swallowed
+every event) records the SQL the agent actually ran and whether
+`course_content_search` fired. `sources_footer()` parses table names out of
+that SQL with `sqlglot` (already a dependency), maps them to source labels,
+and for Course Explorer tables appends the per-subject `MAX(scraped_at)`
+freshness (cached). Refusals and errors get no footer
+(`ask_log.classify_answer` gate). Wired into `ask()`, `astream_answer()`
+(streamed live and in the final frame), and the `sql_pipeline` path.
+Env-gated: `ANSWER_CITATIONS=0` disables it; the eval harness sets that so it
+scores SQL quality, not the footer.
+
+### Wiring
+
+`prerequisites` and `academic_calendar` join `INCLUDED_TABLES` and the
+`SYSTEM_CONTEXT` schema block (~10 prompt lines). All three tables are
+created by their own loaders and every read path degrades gracefully when a
+table is absent - same contract as `grade_distributions` - so this is safe
+to deploy before the data is loaded in prod. Offline tests:
+`evals/test_prereqs.py`, `evals/test_calendar.py`, `evals/test_citations.py`.

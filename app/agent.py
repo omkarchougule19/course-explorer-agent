@@ -46,6 +46,8 @@ INCLUDED_TABLES = [
     "grade_distributions",
     "teachers_ranked_excellent",
     "gen_ed_categories",
+    "prerequisites",
+    "academic_calendar",
 ]
 
 SYSTEM_CONTEXT = """
@@ -92,6 +94,22 @@ Tables:
   course_title, acp, cs, hum, nat, qr, sbs) - each category column holds a
   short code (e.g. "QR1") or NULL. One point-in-time snapshot, not
   term-scoped. Join to sections by (subject, course_number).
+- prerequisites(subject, course_number, group_index, req_subject,
+  req_course_number, relation, condition_text, raw_text) - parsed from the
+  course description, best-effort. group_index buckets AND-ed requirement
+  groups; rows sharing a (subject, course_number, group_index) are
+  alternatives (satisfy any one). req_subject/req_course_number name a
+  required course; when both are NULL, condition_text holds a non-course
+  requirement ("Consent of instructor"). relation is 'prereq' or
+  'concurrent'. For "what does X unlock", filter req_subject/req_course_number.
+  If the structure looks off, quote raw_text instead.
+- academic_calendar(year, semester, event_date, event_end_date, title,
+  category, raw_date) - UIUC registrar dates per term. category is one of
+  instruction/add/drop/withdraw/break/holiday/finals/grades/registration/
+  commencement/other. event_date/event_end_date are ISO 'YYYY-MM-DD'. For
+  "last day to drop" use category IN ('drop','withdraw'); for "when do
+  finals start" use category='finals' ORDER BY event_date. May be empty for
+  a term not loaded yet - say so plainly.
 - course_content_search tool (Postgres/production only): semantic search
   over course descriptions. Use for open-ended "what courses cover X"
   questions, not a named course (query sections.description directly for
@@ -500,12 +518,22 @@ def ask(question: str, verbose: bool = False, history=None) -> str:
     if _sections_empty():
         return "The database exists but has no rows yet. Run scraper.py first, then ask again."
 
+    from app.ask_log import classify_answer
+    from app.citations import SQLCapture, sources_footer
+
+    cap = SQLCapture()
     try:
-        result = agent.invoke({"input": build_agent_input(question, history)})
+        result = agent.invoke(
+            {"input": build_agent_input(question, history)},
+            config={"callbacks": [cap]},
+        )
     except Exception as exc:  # noqa: BLE001 - provider/network/agent errors all land here
         return friendly_error(exc)
 
-    return result.get("output", str(result))
+    answer = result.get("output", str(result))
+    if classify_answer(answer) == "answered":
+        answer += sources_footer(cap.queries, cap.rag_used, question)
+    return answer
 
 
 async def astream_answer(question: str, history=None):
@@ -533,17 +561,27 @@ async def astream_answer(question: str, history=None):
         yield "done", "The database exists but has no rows yet. Run scraper.py first, then ask again."
         return
 
+    from app.ask_log import classify_answer
+    from app.citations import SQLCapture, sources_footer
+
+    cap = SQLCapture()
+    rag_used = False
     streamed: list[str] = []
     final: str | None = None
     tool_depth = 0
     try:
         async for ev in agent.astream_events(
-            {"input": build_agent_input(q, history)}, version="v2"
+            {"input": build_agent_input(q, history)},
+            version="v2",
+            config={"callbacks": [cap]},
         ):
             kind = ev.get("event")
             if kind == "on_tool_start":
                 tool_depth += 1
-                yield "status", _TOOL_LABELS.get(ev.get("name", ""), "Working…")
+                name = ev.get("name", "")
+                if name == "course_content_search":
+                    rag_used = True
+                yield "status", _TOOL_LABELS.get(name, "Working…")
             elif kind == "on_tool_end":
                 tool_depth = max(0, tool_depth - 1)
                 yield "status", "Reading the results…"
@@ -572,7 +610,13 @@ async def astream_answer(question: str, history=None):
         yield "done", friendly_error(exc)
         return
 
-    yield "done", final or "".join(streamed) or "I couldn't produce an answer for that."
+    answer = final or "".join(streamed) or "I couldn't produce an answer for that."
+    if classify_answer(answer) == "answered":
+        footer = sources_footer(cap.queries, cap.rag_used or rag_used, q)
+        if footer:
+            yield "token", footer          # show it live in the UI
+            answer += footer
+    yield "done", answer
 
 
 if __name__ == "__main__":

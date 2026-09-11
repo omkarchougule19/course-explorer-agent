@@ -97,6 +97,8 @@ python -m app.sync_requests --list        # should list ~187 departments with a 
 | `SITE_FEEDBACK_PER_IP_DAY` | no (default 5) | per-IP footer-box submissions / day (friction only — spoofable IP) |
 | `ENABLE_DOCS` | no | set to any value to expose `/docs`, `/redoc`, `/openapi.json` (off by default) |
 | `RAG_MULTIQUERY` | no (default on) | multi-query expansion for `course_content_search`: one extra LLM call rewrites the topic and adds `RAG_SUBQUERIES` (3) facet queries, each searched `RAG_K_PER` (6) deep and Reciprocal-Rank-Fusion-merged to `RAG_K_RETURN` (10). Set to `0` to fall back to a single-query search. Only the semantic path pays the extra call. |
+| `LLM_PROVIDER` | no | force the LLM provider (`groq` \| `gemini` \| `openai`) regardless of which keys are set. Unset = auto-detect in that order. Its own key must still be present. |
+| `ANSWER_CITATIONS` | no (default on) | append a deterministic "Sources: …" footer to every answered response (which datasets, how fresh). No extra LLM call. Set to `0` to disable. |
 
 ### 3.4 Post-deploy checks
 
@@ -193,6 +195,31 @@ upstream sources publish for the term. Refill them locally when they do:
 python -m app.load_grades
 python -m app.load_tre
 ```
+
+### 4.6 Prerequisites and the academic calendar
+
+`prerequisites` is re-derived from `sections.description` — re-run it after
+any scrape or `load_catalog_snapshot` that changes descriptions:
+
+```bash
+python -m app.load_prereqs
+```
+
+`academic_calendar` is a per-term registrar scrape. The per-term URL is not
+uniformly derivable, so pass it (find the term's page from
+`https://registrar.illinois.edu/academic-calendars/`):
+
+```bash
+python -m app.load_calendar --term 2026-fall \
+    --url https://registrar.illinois.edu/fall-2026-academic-calendar/
+# or, if the page won't fetch from your network:
+python -m app.load_calendar --term 2026-fall --file saved_page.html
+```
+
+Both loaders create their own table and are safe to re-run. Every read path
+(the `/ask` agent, `GET /calendar`, `GET /courses/{s}/{n}/prereqs`) degrades
+to "not available yet" when a table is absent, so there is no ordering
+dependency with a deploy.
 
 ---
 

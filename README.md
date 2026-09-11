@@ -37,6 +37,16 @@ production from the same code.
   themselves out; a ~2 KB client-side Markdown renderer formats them. The
   server is stateless — it re-trims the last few turns to resolve "it" /
   "that course" / "the second one".
+- **Every answer is sourced.** A deterministic footer names the datasets a
+  fact came from and how fresh they are — *"Sources: UIUC Course Explorer
+  (CS synced 2026-08-25); grade distributions (wadefagen/datasets)."* — built
+  by parsing the SQL the agent actually ran, no extra model call. Refusals
+  get none.
+- **Prerequisites and the academic calendar are queryable.** Prereqs are
+  parsed out of the free-text description into AND-ed groups of alternatives
+  (`GET …/prereqs` also returns what a course *unlocks*); the registrar's
+  per-term calendar — add/drop/withdraw deadlines, breaks, finals — is a
+  table the agent can answer "last day to drop this fall" from.
 
 ### Measured, not assumed
 
@@ -149,6 +159,18 @@ what's scraped is committed, and the run resumes.
 | `--concurrency N` | courses fetched in parallel per subject (default 10) |
 | `--skip-recent HOURS` | skip courses already scraped within the window |
 | `--section-delay SECONDS` | pause between per-section requests (detailed mode, default 0.1) |
+
+Then the derived / external tables (each is a no-op if its input is missing,
+and re-runnable):
+
+```bash
+python -m app.load_grades          # wadefagen grade distributions
+python -m app.load_geneds          # wadefagen gen-ed categories
+python -m app.load_tre             # wadefagen "ranked excellent" instructors
+python -m app.load_prereqs         # parse Prerequisite: clauses out of descriptions
+python -m app.load_calendar --term 2026-fall \
+    --url https://registrar.illinois.edu/fall-2026-academic-calendar/
+```
 
 ### 2. Serve
 
@@ -271,6 +293,9 @@ ablation: hallucinated-reference rate 31 % → 6 %, execution success
 python -m evals.run --provider openai -y      # full run (needs a key)
 python -m evals.test_static_check             # offline, no LLM
 python -m evals.test_graph_routing            # offline, no LLM
+python -m evals.test_prereqs                  # offline — prereq parser
+python -m evals.test_calendar                 # offline — calendar parser
+python -m evals.test_citations                # offline — source footer
 ```
 
 Full tables and methodology: [`evals/RESULTS.md`](evals/RESULTS.md),
@@ -289,7 +314,7 @@ red-team pass and the hardening that followed.
 
 ## Data model
 
-Five relational tables (plus a Postgres-only `course_embeddings` vector
+Seven relational tables (plus a Postgres-only `course_embeddings` vector
 table). One row per **section** in `sections`; a **course** is
 `(subject, course_number)` — aggregate across its sections unless a specific
 CRN is asked about.
@@ -301,9 +326,15 @@ CRN is asked about.
 | `grade_distributions` | one per (term, sched type, instructor) | letter-grade counts + withdrawals; a rolling window of terms, not full history |
 | `teachers_ranked_excellent` | one per ranked instructor | "ranked as excellent by their students"; `unit` is a department name, not a subject code |
 | `gen_ed_categories` | one per course | which gen-ed categories a course satisfies (point-in-time snapshot) |
+| `prerequisites` | one per (course, requirement-group, option) | parsed from the description, best-effort: `group_index` buckets AND-ed groups, rows in a group are alternatives, `raw_text` is always kept |
+| `academic_calendar` | one per (term, event) | registrar dates — instruction / add / drop / withdraw / break / holiday / finals / grades / registration / commencement, loaded per term |
 
-`scraped_at` on `sections` records when each row was last written; `/freshness`
-reports staleness per `(subject, year, semester)`.
+Sources: the live UIUC Course Explorer XML (`sections`, `meetings`,
+descriptions, gen-ed attributes), `wadefagen/datasets` CSVs
+(`grade_distributions`, `gen_ed_categories`, `teachers_ranked_excellent`),
+the UIUC registrar (`academic_calendar`), and the description text itself
+(`prerequisites`). `scraped_at` on `sections` records when each row was last
+written; `/freshness` reports staleness per `(subject, year, semester)`.
 
 ---
 
@@ -313,7 +344,7 @@ reports staleness per `(subject, year, semester)`.
 |---|---|
 | **Browse** | `GET /subjects` · `GET /courses/{subject}` · `GET /sections` (filter by subject, course, instructor, term, level) · `GET /stats` · `GET /freshness` |
 | **Assistant** | `POST /ask` · `POST /ask/stream` (SSE — what the UI uses) · `POST /ask/feedback` · `GET /ask/summary` |
-| **Tools** | `POST /schedule/conflicts` (day/time overlap over a set of CRNs) · `GET /courses/{subject}/{course_number}/grade-trend` (per-term distribution + computed average GPA) |
+| **Tools** | `POST /schedule/conflicts` (day/time overlap over a set of CRNs) · `GET /courses/{subject}/{course_number}/grade-trend` (per-term distribution + computed average GPA) · `GET /courses/{subject}/{course_number}/prereqs` (parsed requirement groups + what the course unlocks) · `GET /calendar` (registrar dates, filter by `year`/`semester`/`category`) |
 | **Demand** | `GET /sync/status` · `POST /sync/request` (register interest in refreshing a department) |
 | **Feedback** | `POST /feedback` (free text) |
 | **Admin** (`ADMIN_TOKEN`) | `GET /admin/ask-log` · `/admin/ask-stats` · `/admin/clients` · `/admin/activity` · `/admin/feedback` · `/admin/site-feedback` (+ `…/{id}/reviewed`) |
@@ -362,7 +393,9 @@ course-explorer-agent/
 │   ├── feedback.py       # 👍/👎 + downvote review queue
 │   ├── site_feedback.py  # free-text feedback box
 │   ├── sql_pipeline/     # opt-in Generator → Critic → Repair loop (LangGraph)
-│   └── load_*.py         # grade / gen-ed / TRE / catalog-snapshot loaders
+│   ├── prereqs.py        # parse Prerequisite: clauses from description text
+│   ├── citations.py      # deterministic "Sources: …" answer footer
+│   └── load_*.py         # grade / gen-ed / TRE / catalog / prereq / calendar loaders
 ├── evals/                # 24-question eval set + harness + findings
 ├── static/index.html     # web UI (served at /)
 ├── docs/                 # PROJECT_BIBLE.html + illustrated architecture.html
