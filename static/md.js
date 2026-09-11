@@ -97,25 +97,43 @@
         continue;
       }
 
-      // unordered list
+      // unordered list. A single blank line between items doesn't end the
+      // list - only stop when the blank isn't immediately followed by
+      // another item (otherwise a longer, prose-per-bullet answer gets
+      // split into several one-item lists).
       if (/^\s*[-*]\s+/.test(line)) {
         flushPara();
         var ul = [];
-        while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
-          ul.push('<li>' + inline(escapeHtml(lines[i].replace(/^\s*[-*]\s+/, ''))) + '</li>');
-          i++;
+        while (i < lines.length) {
+          if (/^\s*[-*]\s+/.test(lines[i])) {
+            ul.push('<li>' + inline(escapeHtml(lines[i].replace(/^\s*[-*]\s+/, ''))) + '</li>');
+            i++;
+          } else if (!lines[i].trim() && i + 1 < lines.length && /^\s*[-*]\s+/.test(lines[i + 1])) {
+            i++;
+          } else {
+            break;
+          }
         }
         out.push('<ul>' + ul.join('') + '</ul>');
         continue;
       }
 
-      // ordered list
+      // ordered list - same blank-line tolerance as above. Rendered as a
+      // real <ol>, so the browser numbers items 1, 2, 3, ... regardless of
+      // what digit the source text used for each line (models often write
+      // "1." for every item and rely on the renderer to number them).
       if (/^\s*\d+[.)]\s+/.test(line)) {
         flushPara();
         var ol = [];
-        while (i < lines.length && /^\s*\d+[.)]\s+/.test(lines[i])) {
-          ol.push('<li>' + inline(escapeHtml(lines[i].replace(/^\s*\d+[.)]\s+/, ''))) + '</li>');
-          i++;
+        while (i < lines.length) {
+          if (/^\s*\d+[.)]\s+/.test(lines[i])) {
+            ol.push('<li>' + inline(escapeHtml(lines[i].replace(/^\s*\d+[.)]\s+/, ''))) + '</li>');
+            i++;
+          } else if (!lines[i].trim() && i + 1 < lines.length && /^\s*\d+[.)]\s+/.test(lines[i + 1])) {
+            i++;
+          } else {
+            break;
+          }
         }
         out.push('<ol>' + ol.join('') + '</ol>');
         continue;
