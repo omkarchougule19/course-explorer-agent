@@ -253,6 +253,16 @@ provider outage never locks users out. Every attempt lands in `ask_log`
 with outcome (`answered` / `refused` / `error` / …) and latency, all
 surfaced on the admin dashboard.
 
+**Verified against the live deployment**, not just locally: a pass of
+in-scope, hallucination-bait, RAG, gen-ed, calendar, and refusal questions
+against production turned up one real bug — a Markdown renderer bug where
+a numbered/bulleted list restarted at "1." on every item once an answer put
+a blank line between entries (common in longer RAG answers) — found, fixed,
+redeployed, and re-verified live the same session. The per-IP hourly limit
+was also confirmed to survive a brand-new browser tab (no cookies, no
+history): it's keyed server-side on IP, not on anything a fresh session
+resets.
+
 ### Feedback loops
 
 - **👍/👎 per answer** — downvotes snapshot the whole exchange into a
