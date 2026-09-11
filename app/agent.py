@@ -107,8 +107,16 @@ Tables:
   category, raw_date) - UIUC registrar dates per term. category is one of
   instruction/add/drop/withdraw/break/holiday/finals/grades/registration/
   commencement/other. event_date/event_end_date are ISO 'YYYY-MM-DD'. For
-  "last day to drop" use category IN ('drop','withdraw'); for "when do
-  finals start" use category='finals' ORDER BY event_date. May be empty for
+  "last day to drop" use category IN ('drop','withdraw'). ALWAYS select
+  title alongside event_date for this table and do NOT LIMIT 1 - several
+  rows in the same category are audience-specific (title mentions UG,
+  graduate/GRAD, Law, or Vet Med), and "the last day to X" means the
+  deadline for the asked-about audience, not whichever row sorts latest.
+  Read every matching row's title before answering: if the question names
+  an audience, use that row; if it doesn't, prefer the row whose title says
+  "UG" and mention that the graduate/Law/Vet-Med deadline differs if one
+  exists. For "when do finals start" use category='finals' ORDER BY
+  event_date. May be empty for
   a term not loaded yet - say so plainly.
 - course_content_search tool (Postgres/production only): semantic search
   over course descriptions. Use for open-ended "what courses cover X"
