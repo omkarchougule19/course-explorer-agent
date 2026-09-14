@@ -1,4 +1,4 @@
-/* UIUC Course Explorer — shared styles for index.html and freshness.html.
+/* Illini Course Copilot — shared styles for index.html and freshness.html.
 
    Layout: a CSS grid-areas dashboard. The left column stacks the two data
    panels (Browse, Departments) and drives page height; the assistant sits in
@@ -548,6 +548,12 @@ footer {
   font-size: 14px;
   color: var(--muted);
   text-align: center;
+}
+
+footer .disclaimer {
+  margin-top: var(--s2);
+  font-size: 12px;
+  opacity: 0.7;
 }
 
 /* ---------- Freshness page ---------- */

@@ -39,8 +39,8 @@ STATIC_DIR = Path(__file__).parent.parent / "static"
 _DOCS_ON = bool(os.environ.get("ENABLE_DOCS"))
 
 app = FastAPI(
-    title="UIUC Course Explorer Data Agent",
-    description="Catalog of UIUC course, section, and enrollment data scraped from the public Course Explorer API.",
+    title="Illini Course Copilot",
+    description="Catalog of UIUC course, section, and enrollment data, with a natural-language assistant over it.",
     version="1.0.0",
     # Interactive docs and the raw OpenAPI schema are off unless ENABLE_DOCS
     # is set - they're an information-disclosure surface not needed in prod.
@@ -165,7 +165,7 @@ class SectionOut(BaseModel):
 @app.get("/api")
 def api_info():
     return {
-        "service": "UIUC Course Explorer Data Agent",
+        "service": "Illini Course Copilot",
         "ui": "/",
         "endpoints": ["/subjects", "/courses/{subject}", "/sections", "/stats", "/ask"],
     }

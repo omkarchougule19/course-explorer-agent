@@ -1,4 +1,4 @@
-# Render Blueprint for the UIUC Course Explorer Data Agent.
+# Render Blueprint for Illini Course Copilot.
 #
 # Database is external Neon Postgres, not a Render-managed database - see
 # DECISIONS.md for why (Render's own free Postgres expires after 30 days;
@@ -14,7 +14,7 @@
 
 services:
   - type: web
-    name: uiuc-course-explorer-agent
+    name: illini-course-copilot
     runtime: python
     plan: free
     buildCommand: >-

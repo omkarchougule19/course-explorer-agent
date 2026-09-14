@@ -1687,3 +1687,57 @@ created by their own loaders and every read path degrades gracefully when a
 table is absent - same contract as `grade_distributions` - so this is safe
 to deploy before the data is loaded in prod. Offline tests:
 `evals/test_prereqs.py`, `evals/test_calendar.py`, `evals/test_citations.py`.
+
+## Rebrand to "Illini Course Copilot" + an in-app "How it works" page (2026-09-14)
+
+**Why.** Plan to post the project to Reddit for UIUC students to use.
+Two separate problems surfaced during an anonymity/risk pass:
+
+1. The app's name, "UIUC Course Explorer," is a near-exact match for the
+   university's own official tool at courses.illinois.edu, literally named
+   "Course Explorer." That's a brand-confusion/trademark risk independent of
+   anything about anonymity - a reasonable visitor could mistake this for an
+   official UIUC product.
+2. The site footer (`static/index.html`) linked "How this app works" straight
+   to `github.com/<real-username>/course-explorer-agent#readme`. That's a
+   direct, Google-indexable backlink from the live site to a GitHub account
+   under the operator's real name - the single biggest deanonymization leak
+   found in the review, worse than anything in the repo's code itself.
+
+**Decision.** Renamed the product to **Illini Course Copilot** everywhere a
+visitor sees it: `static/index.html`, `static/freshness.html`,
+`static/admin.html`, `app/api.py` (FastAPI `title`/`description`, the
+`/api` `service` field), `render.yaml` (service name, which is also the
+`onrender.com` subdomain), and the README title/intro. `docs/PROJECT_BIBLE.html`
+and `docs/architecture.html` were left alone - `app/api.py` only mounts
+`static/` publicly (`StaticFiles(directory=STATIC_DIR, ...)`), so `docs/` is
+never served and isn't part of the app's public brand surface.
+
+"Illini" (not "UIUC" or "Illinois") was picked deliberately: it's the actual
+UIUC-specific nickname (Fighting Illini) and doesn't collide with UIC
+("Flames") or UIS ("Prairie Stars") the way the system-wide name "University
+of Illinois" would. Readers still immediately recognize it as UIUC-related;
+it just isn't the school's own formal branding or its tool's exact name.
+Data-source attribution strings in `app/citations.py` ("UIUC Course
+Explorer" as a cited source name) were deliberately left unchanged - that's
+factual attribution of where the data came from, not the app's own
+self-branding, and changing it would make the citations less accurate.
+
+Added a visible disclaimer - "Not affiliated with, endorsed by, or sponsored
+by the University of Illinois" - to the site footer, the new about page, and
+the README, per standard practice for unofficial university-adjacent tools.
+
+**Replaced the GitHub link with `static/about.html`.** Instead of linking
+off-site at all, the footer now points to a new in-app "How it works" page
+that explains the architecture (SQL + semantic-search hybrid, data sources,
+freshness, sourced answers) in plain terms, with no repository link and no
+personal/author information. This satisfies the actual goal - a curious
+visitor can understand how the app works - without the site ever pointing
+back to a real-name-bearing GitHub account. `static/freshness.html`'s footer
+already links back to `/`, so no change needed there beyond the name swap.
+
+**Left open, not decided here:** every git commit in this repo's history is
+authored under the operator's real full name (GitHub's private noreply
+email is already in use, so only the name is exposed). Fixing that requires
+rewriting commit history and force-pushing, which is destructive and breaks
+any existing clones/forks - deferred pending an explicit decision to do it.

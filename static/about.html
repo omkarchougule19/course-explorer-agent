@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>How It Works — Illini Course Copilot</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Crimson+Text:ital,wght@0,400;0,600;1,400&family=EB+Garamond:wght@400;600;700&family=Source+Sans+3:wght@400;600;700&display=swap">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header class="banner">
+  <div class="wrap">
+    <h1><a href="/">Illini Course Copilot</a></h1>
+    <p class="subtitle">How it works, what data it uses, and what it isn't.</p>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="panel" style="margin-top: var(--s6);">
+    <h2>What this is</h2>
+    <p class="hint">
+      A course catalog browser for UIUC plus a natural-language assistant on top of it. Ask a
+      question in plain English — "which CS 225 sections have seats left," "what's the
+      prerequisite for MATH 415," "when's the last day to drop a class this fall" — and the
+      assistant answers from real data, not a guess.
+    </p>
+  </div>
+
+  <div class="panel">
+    <h2>How answers are generated</h2>
+    <p class="hint">
+      Every question goes through one of two tools, picked by the assistant itself:
+    </p>
+    <ul class="hint">
+      <li><b>Structured SQL.</b> Questions about sections, seats, meeting times, grade
+        distributions, prerequisites, or academic-calendar deadlines get translated into an
+        actual SQL query against the catalog database and run for real. A critic/repair step
+        catches and fixes malformed queries before they're executed.</li>
+      <li><b>Semantic search.</b> Vaguer, topic-shaped questions ("courses about machine
+        learning") are expanded into several related search phrases, each matched against
+        course description embeddings, and the ranked results are merged into one set.</li>
+    </ul>
+    <p class="hint">
+      Every answer that uses real data ends with a sources line naming exactly which dataset it
+      drew from and how fresh that data is. Answers outside the assistant's scope are refused
+      rather than guessed at.
+    </p>
+  </div>
+
+  <div class="panel">
+    <h2>Data sources and freshness</h2>
+    <p class="hint">
+      Course, section, and enrollment data comes from UIUC's public Course Explorer catalog.
+      Grade distribution history comes from a separately published, publicly available dataset.
+      All of it is a periodic snapshot pulled on a schedule, not a live feed — see the
+      <a href="/freshness.html">data freshness page</a> for exactly how current each subject and
+      term is right now. This is not the registrar and should not be used as one; always confirm
+      enrollment, deadlines, and requirements against the official university systems before
+      acting on them.
+    </p>
+  </div>
+
+  <div class="panel">
+    <h2>What it isn't</h2>
+    <p class="hint">
+      This is an independent student project, built and run on personal infrastructure. It is
+      <b>not affiliated with, endorsed by, or sponsored by the University of Illinois</b>, and
+      it is not the university's own Course Explorer tool. No account, login, or personal
+      information is collected — questions asked here are not tied to any identity.
+    </p>
+  </div>
+
+  <footer>
+    Illini Course Copilot &middot; <a href="/">&larr; back to explorer</a> &middot; <a href="/api">API info</a> &middot; <a href="/freshness.html">Data freshness</a>
+  </footer>
+
+</div>
+
+</body>
+</html>

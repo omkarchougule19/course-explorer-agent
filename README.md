@@ -1,6 +1,8 @@
-# UIUC Course Explorer Data Agent
+# Illini Course Copilot
 
 **Ask plain-English questions about UIUC's course catalog and get answers backed by real SQL — not a guess.**
+
+*Not affiliated with, endorsed by, or sponsored by the University of Illinois.*
 
 A full pipeline built on top of UIUC's public [Course Explorer](https://courses.illinois.edu/cisdocs/explorer)
 API: a concurrent, resumable scraper feeds a documented schema; a FastAPI
