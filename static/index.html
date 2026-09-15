@@ -162,6 +162,7 @@
 <script src="/time.js"></script>
 <script src="/md.js"></script>
 <script src="/schedule-store.js"></script>
+<script src="/course-results.js"></script>
 <script src="/theme.js"></script>
 <script>
   const $ = (id) => document.getElementById(id);
@@ -294,231 +295,13 @@
     } catch (e) { /* empty-state note already covers this */ }
   }
 
-  function renderResults(rows) {
-    const wrap = $('results-wrap');
-    wrap.removeAttribute('aria-busy');
-    if (!rows.length) {
-      wrap.innerHTML = '<p class="empty-state">No sections match those filters. Try clearing the instructor field or choosing a different subject.</p>';
-      return;
-    }
-    const labels = ['Subj', 'Course', 'Section', 'CRN', 'Instructor', 'Status', 'Credit', ''];
-    let html = '<table><thead><tr>' + labels.map(l => `<th>${l}</th>`).join('') + '</tr></thead><tbody>';
-    for (const row of rows) {
-      const titleAttr = row.description ? ` title="${esc(row.description)}"` : '';
-      const statusRaw = row.enrollment_status ?? '';
-      let statusCell = '—';
-      if (statusRaw) {
-        const cls = /open/i.test(statusRaw) ? 'pill-open' : /closed/i.test(statusRaw) ? 'pill-closed' : '';
-        statusCell = cls ? `<span class="pill ${cls}">${esc(statusRaw)}</span>` : esc(statusRaw);
-      }
-      const subj = esc(row.subject ?? '');
-      const num = esc(row.course_number ?? '');
-      const crn = esc(row.crn ?? '');
-      const instructorCell = row.instructor
-        ? `<a class="instructor-link" href="/instructor.html?name=${encodeURIComponent(row.instructor)}">${esc(row.instructor)}</a>`
-        : '—';
-      const added = crn && window.ScheduleStore && ScheduleStore.has(row.crn);
-      const addBtn = crn
-        ? `<button type="button" class="sched-add-btn${added ? ' added' : ''}" `
-          + `data-crn="${crn}" data-year="${row.year ?? ''}" data-semester="${esc(row.semester ?? '')}" `
-          + `data-subject="${subj}" data-course="${num}" data-course-label="${esc(row.course_label ?? '')}" `
-          + `data-section="${esc(row.section_name ?? '')}" data-instructor="${esc(row.instructor ?? '')}" `
-          + `data-credit="${esc(row.credit_hours ?? '')}">${added ? 'Added' : 'Add'}</button>`
-        : '';
-      html += `<tr class="course-row" data-subject="${subj}" data-course="${num}" data-description="${esc(row.description ?? '')}"${titleAttr}>`
-        + `<td>${subj || '—'}</td>`
-        + `<td class="num">${num || '—'}</td>`
-        + `<td>${esc(row.section_name ?? '—')}</td>`
-        + `<td class="crn">${crn || '—'}</td>`
-        + `<td>${instructorCell}</td>`
-        + `<td>${statusCell}</td>`
-        + `<td>${esc(row.credit_hours ?? '—')}</td>`
-        + `<td>${addBtn}</td>`
-        + `</tr>`;
-    }
-    html += '</tbody></table>';
-    wrap.innerHTML = html;
-    const p = document.createElement('p');
-    p.className = 'hint';
-    p.style.margin = 'var(--s2) var(--s4) 0';
-    p.textContent = 'Click a row for the full course view — description, prerequisites, and grade history.';
-    wrap.appendChild(p);
-    $('course-detail').hidden = true;
-  }
-
-  // ---- Course quick view (click a Browse Sections row) ------------------
-  const courseCache = {};  // "SUBJ|123" -> { prereqs?: {...}, grades?: {...} }
-  let openCourseKey = null;
-  let openCourseDescription = '';
-  let openTab = 'overview';
-
-  function courseKey(subject, course) { return `${subject}|${course}`; }
-
-  // Per /prereqs: groups are AND-ed together (each rendered as its own line);
-  // the options *within* one group are always alternatives, joined "or".
-  function reqGroupText(group) {
-    if (group.options && group.options.length) {
-      return group.options.map(o => `${esc(o.subject)} ${esc(o.course_number)}`).join(' or ');
-    }
-    return (group.conditions || []).map(esc).join('; ');
-  }
-
-  async function renderCourseTab(subject, course, description) {
-    const panel = document.querySelector('#course-detail .course-tab-panel');
-    if (!panel) return;
-    const key = courseKey(subject, course);
-    courseCache[key] = courseCache[key] || {};
-
-    if (openTab === 'overview') {
-      panel.innerHTML = description
-        ? `<p>${esc(description)}</p>`
-        : '<p class="empty-state">No catalog description on file for this course.</p>';
-      return;
-    }
-
-    if (openTab === 'prereqs') {
-      if (courseCache[key].prereqs === undefined) {
-        panel.innerHTML = '<p class="empty-state">Loading…</p>';
-        try {
-          courseCache[key].prereqs = await getJSON(`/courses/${encodeURIComponent(subject)}/${encodeURIComponent(course)}/prereqs`);
-        } catch (e) {
-          courseCache[key].prereqs = null;
-        }
-      }
-      const data = courseCache[key].prereqs;
-      if (!data || !data.prerequisites || !data.prerequisites.length) {
-        panel.innerHTML = '<p class="empty-state">No parsed prerequisite data for this course.</p>';
-        return;
-      }
-      let html = data.raw ? `<p class="hint" style="margin-top:0;">${esc(data.raw)}</p>` : '';
-      html += data.prerequisites.map(g => `<div class="req-group">${reqGroupText(g)}</div>`).join('');
-      if (data.unlocks && data.unlocks.length) {
-        html += `<p class="hint">Unlocks: ${data.unlocks.map(u => `${esc(u.subject)} ${esc(u.course_number)}`).join(', ')}</p>`;
-      }
-      panel.innerHTML = html;
-      return;
-    }
-
-    if (openTab === 'grades') {
-      if (courseCache[key].grades === undefined) {
-        panel.innerHTML = '<p class="empty-state">Loading…</p>';
-        try {
-          courseCache[key].grades = await getJSON(`/courses/${encodeURIComponent(subject)}/${encodeURIComponent(course)}/grade-trend`);
-        } catch (e) {
-          courseCache[key].grades = null;
-        }
-      }
-      const data = courseCache[key].grades;
-      if (!data || !data.trend || !data.trend.length) {
-        panel.innerHTML = '<p class="empty-state">No grade distribution data for this course.</p>';
-        return;
-      }
-      let html = '<table><thead><tr><th>Term</th><th>Instructor</th><th>Students</th><th>Avg GPA</th></tr></thead><tbody>';
-      for (const t of data.trend) {
-        const who = t.primary_instructor
-          ? `<a class="instructor-link" href="/instructor.html?name=${encodeURIComponent(t.primary_instructor)}">${esc(t.primary_instructor)}</a>`
-          : '—';
-        html += `<tr><td>${esc(t.year_term ?? '—')}</td><td>${who}</td>`
-          + `<td class="num">${esc(t.students ?? '—')}</td><td class="num">${t.average_gpa ?? '—'}</td></tr>`;
-      }
-      html += '</tbody></table>';
-      panel.innerHTML = html;
-    }
-  }
-
-  function openCourseDetail(subject, course, description) {
-    const box = $('course-detail');
-    const key = courseKey(subject, course);
-    if (openCourseKey === key && !box.hidden) {
-      box.hidden = true;
-      openCourseKey = null;
-      document.querySelectorAll('#results-wrap tr.course-row.open').forEach(r => r.classList.remove('open'));
-      history.replaceState(null, '', location.pathname);
-      return;
-    }
-    openCourseKey = key;
-    openCourseDescription = description || '';
-    openTab = 'overview';
-    document.querySelectorAll('#results-wrap tr.course-row.open').forEach(r => r.classList.remove('open'));
-    document.querySelectorAll(`#results-wrap tr.course-row[data-subject="${subject}"][data-course="${course}"]`)
-      .forEach(r => r.classList.add('open'));
-    history.replaceState(null, '', `?course=${encodeURIComponent(subject)}-${encodeURIComponent(course)}`);
-
-    box.hidden = false;
-    box.innerHTML = `
-      <div class="course-detail-head">
-        <h3>${esc(subject)} ${esc(course)}</h3>
-        <div class="course-detail-actions">
-          <button type="button" class="course-detail-share">Copy Link</button>
-          <button type="button" class="course-detail-close">Close</button>
-        </div>
-      </div>
-      <div class="course-tabs">
-        <button type="button" class="course-tab active" data-tab="overview">Overview</button>
-        <button type="button" class="course-tab" data-tab="prereqs">Prerequisites</button>
-        <button type="button" class="course-tab" data-tab="grades">Grade History</button>
-      </div>
-      <div class="course-tab-panel"></div>
-    `;
-    renderCourseTab(subject, course, description);
-    box.scrollIntoView({ behavior: REDUCED ? 'auto' : 'smooth', block: 'nearest' });
-  }
-
-  $('browse-panel').addEventListener('click', (e) => {
-    if (e.target.closest('.instructor-link')) return;  // let the anchor navigate normally
-    const addBtn = e.target.closest('.sched-add-btn');
-    if (addBtn) {
-      const crn = addBtn.dataset.crn;
-      if (ScheduleStore.has(crn)) {
-        ScheduleStore.remove(crn);
-        addBtn.classList.remove('added');
-        addBtn.textContent = 'Add';
-      } else {
-        ScheduleStore.add({
-          year: Number(addBtn.dataset.year) || null,
-          semester: addBtn.dataset.semester,
-          subject: addBtn.dataset.subject,
-          course_number: addBtn.dataset.course,
-          course_label: addBtn.dataset.courseLabel,
-          section_name: addBtn.dataset.section,
-          crn: crn,
-          instructor: addBtn.dataset.instructor,
-          credit_hours: addBtn.dataset.credit,
-        });
-        addBtn.classList.add('added');
-        addBtn.textContent = 'Added';
-      }
-      return;
-    }
-    const closeBtn = e.target.closest('.course-detail-close');
-    if (closeBtn) {
-      $('course-detail').hidden = true;
-      openCourseKey = null;
-      document.querySelectorAll('#results-wrap tr.course-row.open').forEach(r => r.classList.remove('open'));
-      history.replaceState(null, '', location.pathname);
-      return;
-    }
-    const shareBtn = e.target.closest('.course-detail-share');
-    if (shareBtn) {
-      navigator.clipboard.writeText(location.href).then(() => {
-        const original = shareBtn.textContent;
-        shareBtn.textContent = 'Copied!';
-        setTimeout(() => { shareBtn.textContent = original; }, 1500);
-      }).catch(() => { /* clipboard unavailable - link is still in the address bar */ });
-      return;
-    }
-    const tabBtn = e.target.closest('.course-tab');
-    if (tabBtn) {
-      openTab = tabBtn.dataset.tab;
-      document.querySelectorAll('#course-detail .course-tab').forEach(b => b.classList.toggle('active', b === tabBtn));
-      if (openCourseKey) {
-        const [subject, course] = openCourseKey.split('|');
-        renderCourseTab(subject, course, openCourseDescription);
-      }
-      return;
-    }
-    const row = e.target.closest('tr.course-row');
-    if (row) openCourseDetail(row.dataset.subject, row.dataset.course, row.dataset.description);
+  // ---- Course results table + quick view (shared with departments.html) --
+  const browseResults = CourseResults.create({
+    wrapEl: $('results-wrap'),
+    containerEl: $('browse-panel'),
+    courseDetailEl: $('course-detail'),
+    syncUrl: true,
+    emptyMessage: 'No sections match those filters. Try clearing the instructor field or choosing a different subject.',
   });
 
   $('browse-form').addEventListener('submit', async (e) => {
@@ -540,7 +323,7 @@
     showSkeleton($('results-wrap'));
     try {
       const rows = await getJSON('/sections?' + params.toString());
-      renderResults(rows);
+      browseResults.render(rows);
     } catch (err) {
       $('results-wrap').removeAttribute('aria-busy');
       $('results-wrap').innerHTML = `<p class="empty-state">Query failed: ${esc(err.message)}</p>`;
@@ -849,7 +632,7 @@
     const number = course.slice(dash + 1);
     try {
       const rows = await getJSON(`/sections?subject=${encodeURIComponent(subject)}&course_number=${encodeURIComponent(number)}&limit=1`);
-      openCourseDetail(subject, number, rows[0] ? rows[0].description : '');
+      browseResults.openCourseDetail(subject, number, rows[0] ? rows[0].description : '');
     } catch (e) { /* unknown/bad course in the link - leave the page as-is */ }
   }
 

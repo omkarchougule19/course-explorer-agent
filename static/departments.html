@@ -52,6 +52,45 @@
     </section>
   </div>
 
+  <section class="panel" id="dept-courses-panel" style="margin-top: var(--s6);" hidden>
+    <h2>Courses in <span id="dept-courses-subject"></span></h2>
+    <form id="dept-course-form">
+      <div class="field-row">
+        <div class="field">
+          <label for="dc-term">Term</label>
+          <select id="dc-term"><option value="">All terms</option></select>
+        </div>
+        <div class="field">
+          <label for="dc-level">Level</label>
+          <select id="dc-level">
+            <option value="">All levels</option>
+            <option value="undergrad">Undergraduate (&lt;400)</option>
+            <option value="400level">400-level (UG + grad)</option>
+            <option value="grad">Graduate (500+)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="dc-course">Course #</label>
+          <input id="dc-course" type="text" placeholder="e.g. 225">
+        </div>
+        <div class="field">
+          <label for="dc-instructor">Instructor</label>
+          <input id="dc-instructor" type="text" placeholder="e.g. Smith">
+        </div>
+        <div class="field" style="flex: 0 1 96px;">
+          <label for="dc-limit">Limit</label>
+          <input id="dc-limit" type="number" value="100" min="1" max="1000">
+        </div>
+        <button type="submit">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          Run Query
+        </button>
+      </div>
+    </form>
+    <div class="results-wrap" id="dc-results"></div>
+    <div class="course-detail" id="dc-course-detail" hidden></div>
+  </section>
+
   <footer>
     Illini Course Copilot &middot; <a href="/">&larr; back to explorer</a> &middot; <a href="/api">API info</a>
   </footer>
@@ -60,6 +99,7 @@
 
 <script src="/time.js"></script>
 <script src="/schedule-store.js"></script>
+<script src="/course-results.js"></script>
 <script src="/theme.js"></script>
 <script>
   const $ = (id) => document.getElementById(id);
@@ -130,6 +170,87 @@
       <p class="hint">${fresh ? 'This department was synced within the last week — no refresh needed.' : 'This department hasn’t synced recently.'}</p>
       <div style="margin-top: var(--s3);">${action}</div>
     `;
+    $('dept-courses-subject').textContent = row.subject;
+    $('dept-courses-panel').hidden = false;
+    loadDeptCourses();
+  }
+
+  // ---- Courses in the selected department --------------------------------
+  // Same filters, same Add-to-schedule buttons, same quick view as Browse
+  // Sections on the homepage - both pages share course-results.js so this
+  // is one implementation, not two that can drift apart.
+  const deptCourseResults = CourseResults.create({
+    wrapEl: $('dc-results'),
+    containerEl: $('dept-courses-panel'),
+    courseDetailEl: $('dc-course-detail'),
+    syncUrl: false,
+    emptyMessage: 'No courses match those filters in this department.',
+  });
+
+  async function getJSON(url) {
+    const res = await fetch(url);
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.detail || `Request failed (${res.status})`);
+    return body;
+  }
+
+  function showSkeleton(wrap, rows = 6) {
+    wrap.setAttribute('aria-busy', 'true');
+    wrap.innerHTML = '<div class="skeleton">'
+      + Array.from({ length: rows }, () => '<div class="sk-line"></div>').join('')
+      + '</div>';
+  }
+
+  async function loadDeptCourses() {
+    if (!selected) return;
+    const params = new URLSearchParams();
+    params.set('subject', selected);
+    const term = $('dc-term').value.trim();
+    const level = $('dc-level').value.trim();
+    const course = $('dc-course').value.trim();
+    const instructor = $('dc-instructor').value.trim();
+    const limit = $('dc-limit').value.trim();
+    if (term) { const [y, s] = term.split('|'); params.set('year', y); params.set('semester', s); }
+    if (level) params.set('level', level);
+    if (course) params.set('course_number', course);
+    if (instructor) params.set('instructor', instructor);
+    if (limit) params.set('limit', limit);
+
+    showSkeleton($('dc-results'));
+    try {
+      const rows = await getJSON('/sections?' + params.toString());
+      deptCourseResults.render(rows);
+    } catch (err) {
+      $('dc-results').removeAttribute('aria-busy');
+      $('dc-results').innerHTML = `<p class="empty-state">Query failed: ${esc(err.message)}</p>`;
+    }
+  }
+
+  $('dept-course-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    loadDeptCourses();
+  });
+
+  const DC_CURRENT_TERM = 'fall 2026';  // keep in sync with app/terms.py
+
+  async function loadDeptTerms() {
+    try {
+      const stats = await getJSON('/stats');
+      const select = $('dc-term');
+      const order = { spring: 0, summer: 1, fall: 2 };
+      const terms = (stats.terms_covered || []).slice().sort((a, b) => {
+        const [sa, ya] = a.split(' '), [sb, yb] = b.split(' ');
+        return (yb - ya) || (order[sb] - order[sa]);
+      });
+      for (const t of terms) {
+        const [sem, yr] = t.split(' ');
+        const opt = document.createElement('option');
+        opt.value = `${yr}|${sem}`;
+        opt.textContent = t;
+        if (t === DC_CURRENT_TERM) opt.selected = true;
+        select.appendChild(opt);
+      }
+    } catch (e) { /* stays "All terms" */ }
   }
 
   async function loadDepartments() {
@@ -177,7 +298,15 @@
     }
   });
 
-  loadDepartments();
+  // loadDeptTerms() must finish first: it pre-selects "fall 2026" in the
+  // term dropdown, and loadDepartments() triggers the first course fetch
+  // (via renderDetail() auto-selecting a department) - if that fetch ran
+  // before the dropdown had a value, it would query with no term filter
+  // while the dropdown still visibly showed "fall 2026" selected.
+  (async () => {
+    await loadDeptTerms();
+    loadDepartments();
+  })();
 </script>
 </body>
 </html>

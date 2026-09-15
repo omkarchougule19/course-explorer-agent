@@ -1888,6 +1888,48 @@ page-load event in a real browser, local or prod, before this session ended
 - a gap in how it was tested, not just bad luck. Removed the markup, JS, and
 CSS cleanly (self-contained addition, no other code depended on it).
 
+## Departments page gets the same course browser as Browse Sections (2026-09-15)
+
+**Extracted `static/course-results.js`.** The course table + Add-to-schedule
+button + quick view lived only in `index.html`'s inline script. Rather than
+copy-pasting it into `departments.html` (two implementations that drift the
+moment one gets a fix the other doesn't), pulled it into a shared module:
+`CourseResults.create({wrapEl, containerEl, courseDetailEl, syncUrl,
+emptyMessage})` returns `{render, openCourseDetail}`, scoped to whichever
+elements are passed in rather than hardcoded ids - so both pages get one
+real implementation instead of two similar ones. `index.html` now calls
+this instead of its old private copy. Added a "Course Name" column (the
+`course_label` field) to the shared table per request, so both lists show
+it, not just the course number.
+
+**Departments page**: selecting a subject now shows a persistent "Courses
+in `<subject>`" panel below the sidebar/detail layout, with the exact same
+filters as Browse Sections (Term/Level/Course #/Instructor/Limit) scoped to
+that subject, Add buttons, and the same quick view (minus the Copy Link
+button - `syncUrl: false`, since a course URL scoped to `/departments.html`
+doesn't mean anything to re-open on load the way it does on `/`).
+
+**Two real bugs found live while verifying this, not left for later:**
+1. **Double-encoded `course_label`** - "College Physics: Mech &amp; Heat"
+   rendered literally instead of "Mech & Heat" (1,053 affected rows
+   locally). Root cause is the same class of problem as the earlier `<br>`
+   fix: UIUC's catalog XML already contains an HTML-escaped `&amp;` as
+   *text*, XML parsing only unwinds one level of encoding, and our own
+   `esc()` then re-escaped the residual entity on render. Fixed at the
+   source with `html.unescape()` in `scraper.py`, and extended
+   `clean_descriptions.py`'s existing backfill to also sweep already-
+   scraped `course_label` values (ran locally: 1,053 rows fixed, 0 false
+   positives). The prod Neon backfill for this - like the `<br>` one - is
+   still pending explicit go-ahead, same reasoning as before.
+2. **Term-filter race condition on `departments.html`.** The page
+   auto-loads courses for the first department as soon as it's selected,
+   but that fetch could fire before the term `<select>` finished being
+   populated (a separate async call) - so the very first course list came
+   back unfiltered while the dropdown still visibly showed "fall 2026"
+   selected, silently disagreeing with what was on screen. Fixed by
+   sequencing: `await loadDeptTerms()` before `loadDepartments()`, so the
+   dropdown's value is real before anything queries against it.
+
 ## Shared-LLM-budget caution note + a live usage bar (2026-09-15)
 
 Students hitting a dead assistant with no explanation (once

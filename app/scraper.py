@@ -40,6 +40,7 @@ Usage:
 """
 
 import argparse
+import html
 import re
 import threading
 import time
@@ -374,7 +375,12 @@ def fetch_course_sections(
     for el in root:
         tag = strip_ns(el.tag)
         if tag == "label" and not course_label:
-            course_label = (el.text or "").strip()
+            # Some labels arrive double-encoded (the raw XML text is itself
+            # "Mech &amp;amp; Heat"; XML parsing only unwinds one level,
+            # leaving a literal "&amp;" in the string) - unescape it back to
+            # a plain "&" so it isn't later HTML-escaped a second time when
+            # rendered.
+            course_label = html.unescape((el.text or "").strip())
         elif tag == "creditHours":
             credit_hours = (el.text or "").strip() or None
 
