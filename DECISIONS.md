@@ -2087,6 +2087,18 @@ ARTF +14, EIL +14, CW +40, RHET +107, GEOL +76. 9 of 187 subjects now carry
 real Fall 2026 data; the other 178 remain on whatever term their migration
 snapshot covered until synced.
 
+Third batch: GMC +1, BUS +77, SWAH +5, EPSY +82 landed; GGIS failed twice in
+a row with a malformed-XML error on the *term-level* probe
+(`/schedule/2026/fall.xml`, used to check what UIUC has published) - not a
+GGIS-specific problem, since the same probe also failed for spring 2027.
+Almost certainly the WAF soft-block described elsewhere in this file,
+surfacing after this session's cumulative scrape volume. Stopped after one
+retry rather than hammering it - matches the documented design intent
+("operator wanted to eyeball demand and stop at the WAF wall himself").
+GGIS is still on its migration-snapshot term only; try syncing it again
+later once the block (if that's what it is) clears. 13 of 187 subjects now
+carry real Fall 2026 data.
+
 ## No more implying an instructor "isn't good" from a data gap (2026-09-15)
 
 The agent's own "empty result: say so plainly" rule (`app/agent.py`),
