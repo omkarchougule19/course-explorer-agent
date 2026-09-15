@@ -11,17 +11,6 @@
 </head>
 <body>
 
-<noscript><style>#preloader { display: none; }</style></noscript>
-<div id="preloader" aria-hidden="true">
-  <div class="stair" style="transform-origin: top;"></div>
-  <div class="stair" style="transform-origin: bottom;"></div>
-  <div class="stair" style="transform-origin: top;"></div>
-  <div class="stair" style="transform-origin: bottom;"></div>
-  <div class="stair" style="transform-origin: top;"></div>
-  <div class="stair" style="transform-origin: bottom;"></div>
-  <div class="preloader-mark">Illini Course Copilot</div>
-</div>
-
 <header class="banner">
   <div class="wrap">
     <h1>
@@ -155,27 +144,6 @@
 <script>
   const $ = (id) => document.getElementById(id);
   const REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-  // ---- Preloader: a "double stairs" curtain that plays once per tab
-  // session (sessionStorage), skipped entirely under reduced motion. Runs
-  // immediately rather than waiting on DOMContentLoaded/data loads, since
-  // it's covering the page regardless.
-  (function preloader() {
-    const el = $('preloader');
-    if (!el) return;
-    if (REDUCED || sessionStorage.getItem('preloader-shown')) {
-      el.classList.add('done');
-      return;
-    }
-    sessionStorage.setItem('preloader-shown', '1');
-    const stairs = el.querySelectorAll('.stair');
-    setTimeout(() => {
-      el.classList.add('leaving');
-      stairs.forEach((s, i) => { s.style.animationDelay = `${i * 70}ms`; s.classList.add('leave'); });
-      const total = stairs.length * 70 + 600;
-      setTimeout(() => el.classList.add('done'), total);
-    }, 250);
-  })();
 
   // HTML-escape any DB-sourced value that goes into an innerHTML string.
   // (md.js escapes agent answers itself.)

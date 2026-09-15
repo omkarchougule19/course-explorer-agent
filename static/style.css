@@ -132,41 +132,6 @@ code {
 
 hr.rule { display: none; }
 
-/* ---------- Preloader (double-stairs curtain, index.html only) ---------- */
-#preloader {
-  position: fixed;
-  inset: 0;
-  z-index: 999;
-  display: flex;
-}
-#preloader .stair {
-  flex: 1 1 0;
-  background: var(--blue);
-}
-#preloader .preloader-mark {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  font-family: var(--display);
-  font-size: 18px;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-  color: #fff;
-  white-space: nowrap;
-  transition: opacity 0.3s ease;
-}
-#preloader.leaving .preloader-mark { opacity: 0; }
-#preloader .stair.leave {
-  animation: stair-leave 0.6s cubic-bezier(0.76, 0, 0.24, 1) forwards;
-}
-@keyframes stair-leave { to { transform: scaleY(0); } }
-#preloader.done { display: none; }
-
-@media (prefers-reduced-motion: reduce) {
-  #preloader { display: none; }
-}
-
 /* ---------- Site nav ---------- */
 .site-nav {
   position: sticky;

@@ -1876,3 +1876,14 @@ page hadn't actually been scrolled far enough to test it. Switched to
 reading `getBoundingClientRect()`/`getComputedStyle()` directly via the
 JS console instead of trusting pixels, which is what actually caught that
 the first fix was targeting the wrong root cause.
+
+## Removed the startup preloader (2026-09-15)
+
+Didn't work in production - reported by the operator after deploy, not
+diagnosed further before deciding to cut it rather than debug it live.
+Local testing earlier only confirmed the curtain and its accessibility
+fallback (`prefers-reduced-motion`) rendered correctly in isolation, hand-
+triggered via the JS console; it was never verified end-to-end as an actual
+page-load event in a real browser, local or prod, before this session ended
+- a gap in how it was tested, not just bad luck. Removed the markup, JS, and
+CSS cleanly (self-contained addition, no other code depended on it).
