@@ -4,37 +4,37 @@
    panels (Browse, Departments) and drives page height; the assistant sits in
    a sticky right rail so the columns can never desync into dead space.
 
-   Type: EB Garamond (display) + Crimson Text (prose) + Source Sans 3 (data
-   and controls). Palette: University of Illinois brand
-   (marketing.illinois.edu/visual-identity/color). The block-I logo is
-   trademark-restricted and deliberately not used. */
+   Type: Newsreader (display + prose, built for long-form reading) + Roboto
+   (data and controls). Palette: "Scholarly Navy + Gold" — a deliberate
+   choice away from UIUC's own brand colors (see DECISIONS.md rebrand entry)
+   to keep this visually distinct from any official university product. */
 
 :root {
   /* --- brand --- */
-  --blue: #13294b;            /* Illini Blue */
-  --blue-2: #1d4e89;          /* lighter fill for gradients / hovers */
-  --orange: #ff5f05;          /* Illini Orange — accent rules, focus ring; never text */
-  --link: #1d58a7;            /* Industrial — links, KPI values (AA on white) */
-  --open: #0a7d3c;            /* Prairie-ish — status open / fresh */
-  --closed: #8a1c5c;          /* Berry-ish — status closed / stale */
+  --blue: #1e3a5f;            /* Scholarly navy */
+  --blue-2: #2e5a8f;          /* lighter fill for gradients / hovers */
+  --orange: #b45309;          /* Gold accent — rules, focus ring; never body text */
+  --link: #2563eb;            /* Links, KPI values (AA on white) */
+  --open: #0a7d3c;            /* status open / fresh */
+  --closed: #8a1c5c;          /* status closed / stale */
 
   /* --- surfaces --- */
-  --bg: #eef1f5;
-  --bg-2: #f6f8fa;
+  --bg: #f8fafc;
+  --bg-2: #e9eef5;
   --panel: #ffffff;
-  --zebra: #f7f9fb;
-  --row-hover: #eaf1fb;
-  --line: #e0e3e8;
-  --line-strong: #c3c8d0;
-  --field-line: #9aa0a8;
-  --ink: #14181f;
-  --ink-2: #3f4650;
-  --muted: #6a7078;
+  --zebra: #f8fafc;
+  --row-hover: #e9eef5;
+  --line: #cbd5e1;
+  --line-strong: #94a3b8;
+  --field-line: #94a3b8;
+  --ink: #0f172a;
+  --ink-2: #334155;
+  --muted: #475569;
 
   /* --- type --- */
-  --display: "EB Garamond", Georgia, "Times New Roman", serif;
-  --serif: "Crimson Text", Georgia, "Times New Roman", serif;
-  --sans: "Source Sans 3", system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+  --display: "Newsreader", Georgia, "Times New Roman", serif;
+  --serif: "Newsreader", Georgia, "Times New Roman", serif;
+  --sans: "Roboto", system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
   --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
 
   /* --- rhythm --- */
@@ -99,7 +99,6 @@ code {
   color: #fff;
 }
 .banner .wrap { padding-top: var(--s7); padding-bottom: var(--s7); }
-.banner.has-kpi .wrap { padding-bottom: 64px; }   /* room for KPI overlap */
 
 .banner h1 {
   display: flex;
@@ -133,12 +132,75 @@ code {
 
 hr.rule { display: none; }
 
+/* ---------- Preloader (double-stairs curtain, index.html only) ---------- */
+#preloader {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  display: flex;
+}
+#preloader .stair {
+  flex: 1 1 0;
+  background: var(--blue);
+}
+#preloader .preloader-mark {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-family: var(--display);
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: #fff;
+  white-space: nowrap;
+  transition: opacity 0.3s ease;
+}
+#preloader.leaving .preloader-mark { opacity: 0; }
+#preloader .stair.leave {
+  animation: stair-leave 0.6s cubic-bezier(0.76, 0, 0.24, 1) forwards;
+}
+@keyframes stair-leave { to { transform: scaleY(0); } }
+#preloader.done { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  #preloader { display: none; }
+}
+
+/* ---------- Site nav ---------- */
+.site-nav {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+.site-nav .wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--s5);
+  padding: 11px var(--s5);
+  overflow-x: auto;
+}
+.site-nav a {
+  flex-shrink: 0;
+  padding: 3px 1px;
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+}
+.site-nav a:hover { color: var(--ink); text-decoration: none; }
+.site-nav a.active { color: var(--blue); border-bottom-color: var(--orange); }
+
 /* ---------- KPI strip ---------- */
 .kpi-strip {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
   gap: var(--s3);
-  margin: -44px 0 var(--s6);
+  margin: var(--s6) 0;
   position: relative;
   z-index: 2;
 }
@@ -330,7 +392,7 @@ input:hover, select:hover { border-color: var(--line-strong); }
 input:focus, select:focus {
   outline: none;
   border-color: var(--blue);
-  box-shadow: 0 0 0 3px rgba(29, 88, 167, 0.18);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
 }
 input::placeholder { color: #9aa0a8; }
 
@@ -371,7 +433,9 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; transform: none; 
 /* ---------- Results table ---------- */
 .results-wrap {
   margin-top: var(--s4);
+  max-height: 60vh;
   overflow-x: auto;
+  overflow-y: auto;
   border: 1px solid var(--line);
   border-radius: var(--radius);
 }
@@ -448,6 +512,73 @@ td.crn { font-family: var(--mono); font-size: 12px; }
   text-align: center;
 }
 .empty-state .icon { width: 22px; height: 22px; display: block; margin: 0 auto var(--s2); stroke: var(--line-strong); }
+
+/* ---------- Course quick view (click a Browse Sections row) ---------- */
+tbody tr.course-row { cursor: pointer; }
+tbody tr.course-row.open td { background: var(--row-hover); }
+
+.course-detail {
+  margin-top: var(--s4);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.course-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding: var(--s4) var(--s5) 0;
+}
+.course-detail-head h3 {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--blue);
+}
+.course-detail-close {
+  padding: 4px 9px;
+  font-size: 12px;
+  color: var(--muted);
+  background: #fff;
+  border: 1px solid var(--line-strong);
+}
+.course-tabs {
+  display: flex;
+  gap: var(--s5);
+  margin-top: var(--s3);
+  padding: 0 var(--s5);
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+}
+.course-tab {
+  padding: 8px 1px 10px;
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  white-space: nowrap;
+}
+.course-tab:hover { background: none; filter: none; color: var(--ink); }
+.course-tab.active { color: var(--blue); border-bottom-color: var(--orange); }
+.course-tab-panel {
+  padding: var(--s4) var(--s5) var(--s5);
+  font-family: var(--serif);
+  font-size: 14.5px;
+  color: var(--ink-2);
+}
+.course-tab-panel table { background: #fff; }
+.course-tab-panel .req-group {
+  margin: 0 0 var(--s2);
+  padding-left: var(--s3);
+  border-left: 2px solid var(--line-strong);
+}
 
 /* ---------- Loading skeleton ---------- */
 .skeleton { padding: var(--s4); }
@@ -556,6 +687,149 @@ footer .disclaimer {
   opacity: 0.7;
 }
 
+/* ---------- Departments page (side-scroll nav + detail panel) ---------- */
+.dept-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s5);
+  margin-top: var(--s6);
+}
+.dept-sidebar {
+  flex: 0 0 260px;
+  padding: var(--s3);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+.dept-sidebar input {
+  margin-bottom: var(--s2);
+}
+.dept-list {
+  max-height: 62vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.dept-list button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+  width: 100%;
+  padding: 9px 10px;
+  font-family: var(--sans);
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink-2);
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  text-align: left;
+  box-shadow: none;
+}
+.dept-list button:hover { background: var(--row-hover); filter: none; transform: none; }
+.dept-list button.active {
+  color: #fff;
+  background: var(--blue);
+}
+.dept-list .dept-badge {
+  flex-shrink: 0;
+  min-width: 20px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+  color: var(--orange);
+  background: rgba(180, 83, 9, 0.1);
+  border-radius: 999px;
+}
+.dept-list button.active .dept-badge { color: #fff; background: rgba(255, 255, 255, 0.22); }
+
+.dept-detail {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--s6);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+.dept-detail .dept-detail-title {
+  margin: 0 0 var(--s4);
+  font-family: var(--display);
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--blue);
+}
+.dept-detail-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--s3);
+  margin-bottom: var(--s5);
+}
+.dept-detail-stats div {
+  padding: var(--s3) var(--s4);
+  background: var(--bg-2);
+  border-radius: var(--radius);
+}
+.dept-detail-stats dt {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.dept-detail-stats dd {
+  margin: 3px 0 0;
+  font-family: var(--display);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+@media (max-width: 720px) {
+  .dept-layout { flex-direction: column; }
+  .dept-sidebar { flex: 1 1 auto; width: 100%; }
+  .dept-list { max-height: 40vh; }
+}
+
+/* ---------- Calendar page (timeline agenda) ---------- */
+.cal-day {
+  margin-bottom: var(--s5);
+  padding: var(--s5);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+.cal-day h3 {
+  margin: 0 0 var(--s3);
+  font-family: var(--display);
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--blue);
+}
+.cal-events { display: flex; flex-direction: column; gap: 9px; }
+.cal-event {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+  padding: 8px 0;
+  border-bottom: 1px dotted var(--line);
+}
+.cal-event:last-child { border-bottom: 0; padding-bottom: 0; }
+.cal-event .cal-cat {
+  flex-shrink: 0;
+  width: 90px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--orange);
+}
+.cal-event .cal-title { font-family: var(--serif); font-size: 15px; color: var(--ink); }
+
 /* ---------- Freshness page ---------- */
 .fresh { color: var(--open); font-weight: 700; }
 .stale { color: var(--closed); font-weight: 700; }
@@ -631,7 +905,7 @@ footer .disclaimer {
 .feedback-box textarea:focus {
   outline: none;
   border-color: var(--blue);
-  box-shadow: 0 0 0 3px rgba(29, 88, 167, 0.18);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
 }
 .feedback-box-row {
   display: flex;
@@ -718,14 +992,13 @@ td .cell-clip.open { white-space: normal; overflow: visible; }
   .wrap { padding: 0 14px; }
 
   .banner .wrap { padding-top: var(--s6); padding-bottom: var(--s6); }
-  .banner.has-kpi .wrap { padding-bottom: 48px; }
   .banner h1 { font-size: 23px; }
   .banner h1 .icon { width: 22px; height: 22px; }
   .banner h1.with-lock { flex-wrap: wrap; }
   .banner .lock-btn { margin-left: 0; }
   .subtitle { font-size: 14.5px; }
 
-  .kpi-strip { margin: -30px 0 var(--s5); gap: var(--s2); }
+  .kpi-strip { margin: var(--s5) 0; gap: var(--s2); }
   .kpi { min-height: 88px; padding: var(--s3) var(--s4); }
   .kpi .stat-value { font-size: 23px; }
 

@@ -6,12 +6,23 @@
 <title>Illini Course Copilot</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Crimson+Text:ital,wght@0,400;0,600;1,400&family=EB+Garamond:wght@400;600;700&family=Source+Sans+3:wght@400;600;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Roboto:wght@300;400;500;600;700&display=swap">
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
 
-<header class="banner has-kpi">
+<noscript><style>#preloader { display: none; }</style></noscript>
+<div id="preloader" aria-hidden="true">
+  <div class="stair" style="transform-origin: top;"></div>
+  <div class="stair" style="transform-origin: bottom;"></div>
+  <div class="stair" style="transform-origin: top;"></div>
+  <div class="stair" style="transform-origin: bottom;"></div>
+  <div class="stair" style="transform-origin: top;"></div>
+  <div class="stair" style="transform-origin: bottom;"></div>
+  <div class="preloader-mark">Illini Course Copilot</div>
+</div>
+
+<header class="banner">
   <div class="wrap">
     <h1>
       <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 10 12 5 2 10l10 5 10-5Z"/><path d="M6 12v5c0 1 2 3 6 3s6-2 6-3v-5"/><path d="M22 10v6"/></svg>
@@ -20,6 +31,16 @@
     <p class="subtitle">Browse UIUC course sections and ask about them in plain English. The data is a periodic snapshot, not a live registrar feed.</p>
   </div>
 </header>
+
+<nav class="site-nav">
+  <div class="wrap">
+    <a href="/" class="active">Home</a>
+    <a href="/departments.html">Departments</a>
+    <a href="/calendar.html">Calendar</a>
+    <a href="/freshness.html">Data Freshness</a>
+    <a href="/about.html">How It Works</a>
+  </div>
+</nav>
 
 <div class="wrap">
 
@@ -100,20 +121,9 @@
           </button>
         </div>
       </form>
-      <p class="hint">Each department's data is from its last sync. Check freshness or request a refresh under <a href="#dept-panel">Department Data</a>.</p>
+      <p class="hint">Each department's data is from its last sync. Check freshness or request a refresh under <a href="/departments.html">Departments</a>.</p>
       <div class="results-wrap" id="results-wrap"></div>
-    </section>
-
-    <section class="panel" id="dept-panel">
-      <h2>Department Data</h2>
-      <p class="hint">Hit <strong>Sync</strong> to request fresh data for a department — it's picked up within 24 hours. The count is how many refreshes have been requested since the last sync. Use the filter or <strong>Show all</strong> to see every department.</p>
-      <div class="field-row" style="margin: var(--s4) 0 0;">
-        <div class="field" style="flex:1 1 220px;">
-          <label for="dept-filter">Filter</label>
-          <input id="dept-filter" type="text" placeholder="type a subject code, e.g. PHYS">
-        </div>
-      </div>
-      <div class="results-wrap" id="dept-wrap"><p class="empty-state">loading…</p></div>
+      <div class="course-detail" id="course-detail" hidden></div>
     </section>
 
   </div>
@@ -146,16 +156,32 @@
   const $ = (id) => document.getElementById(id);
   const REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+  // ---- Preloader: a "double stairs" curtain that plays once per tab
+  // session (sessionStorage), skipped entirely under reduced motion. Runs
+  // immediately rather than waiting on DOMContentLoaded/data loads, since
+  // it's covering the page regardless.
+  (function preloader() {
+    const el = $('preloader');
+    if (!el) return;
+    if (REDUCED || sessionStorage.getItem('preloader-shown')) {
+      el.classList.add('done');
+      return;
+    }
+    sessionStorage.setItem('preloader-shown', '1');
+    const stairs = el.querySelectorAll('.stair');
+    setTimeout(() => {
+      el.classList.add('leaving');
+      stairs.forEach((s, i) => { s.style.animationDelay = `${i * 70}ms`; s.classList.add('leave'); });
+      const total = stairs.length * 70 + 600;
+      setTimeout(() => el.classList.add('done'), total);
+    }, 250);
+  })();
+
   // HTML-escape any DB-sourced value that goes into an innerHTML string.
   // (md.js escapes agent answers itself.)
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
   ));
-
-  const REFRESH_ICON =
-    '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">' +
-    '<path d="M21 12a9 9 0 0 0-9-9 9 9 0 0 0-6.7 3L3 8"/><path d="M3 3v5h5"/>' +
-    '<path d="M3 12a9 9 0 0 0 9 9 9 9 0 0 0 6.7-3L21 16"/><path d="M21 21v-5h-5"/></svg>';
 
   const SEARCH_EMPTY =
     '<div class="empty-state">' +
@@ -262,9 +288,11 @@
         const cls = /open/i.test(statusRaw) ? 'pill-open' : /closed/i.test(statusRaw) ? 'pill-closed' : '';
         statusCell = cls ? `<span class="pill ${cls}">${esc(statusRaw)}</span>` : esc(statusRaw);
       }
-      html += `<tr${titleAttr}>`
-        + `<td>${esc(row.subject ?? '—')}</td>`
-        + `<td class="num">${esc(row.course_number ?? '—')}</td>`
+      const subj = esc(row.subject ?? '');
+      const num = esc(row.course_number ?? '');
+      html += `<tr class="course-row" data-subject="${subj}" data-course="${num}" data-description="${esc(row.description ?? '')}"${titleAttr}>`
+        + `<td>${subj || '—'}</td>`
+        + `<td class="num">${num || '—'}</td>`
         + `<td>${esc(row.section_name ?? '—')}</td>`
         + `<td class="crn">${esc(row.crn ?? '—')}</td>`
         + `<td>${esc(row.instructor ?? '—')}</td>`
@@ -274,14 +302,145 @@
     }
     html += '</tbody></table>';
     wrap.innerHTML = html;
-    if (rows.some(r => r.description)) {
-      const p = document.createElement('p');
-      p.className = 'hint';
-      p.style.margin = 'var(--s2) var(--s4) 0';
-      p.textContent = 'Hover a row for its catalog description, or ask the agent to summarize it.';
-      wrap.appendChild(p);
+    const p = document.createElement('p');
+    p.className = 'hint';
+    p.style.margin = 'var(--s2) var(--s4) 0';
+    p.textContent = 'Click a row for the full course view — description, prerequisites, and grade history.';
+    wrap.appendChild(p);
+    $('course-detail').hidden = true;
+  }
+
+  // ---- Course quick view (click a Browse Sections row) ------------------
+  const courseCache = {};  // "SUBJ|123" -> { prereqs?: {...}, grades?: {...} }
+  let openCourseKey = null;
+  let openCourseDescription = '';
+  let openTab = 'overview';
+
+  function courseKey(subject, course) { return `${subject}|${course}`; }
+
+  // Per /prereqs: groups are AND-ed together (each rendered as its own line);
+  // the options *within* one group are always alternatives, joined "or".
+  function reqGroupText(group) {
+    if (group.options && group.options.length) {
+      return group.options.map(o => `${esc(o.subject)} ${esc(o.course_number)}`).join(' or ');
+    }
+    return (group.conditions || []).map(esc).join('; ');
+  }
+
+  async function renderCourseTab(subject, course, description) {
+    const panel = document.querySelector('#course-detail .course-tab-panel');
+    if (!panel) return;
+    const key = courseKey(subject, course);
+    courseCache[key] = courseCache[key] || {};
+
+    if (openTab === 'overview') {
+      panel.innerHTML = description
+        ? `<p>${esc(description)}</p>`
+        : '<p class="empty-state">No catalog description on file for this course.</p>';
+      return;
+    }
+
+    if (openTab === 'prereqs') {
+      if (courseCache[key].prereqs === undefined) {
+        panel.innerHTML = '<p class="empty-state">Loading…</p>';
+        try {
+          courseCache[key].prereqs = await getJSON(`/courses/${encodeURIComponent(subject)}/${encodeURIComponent(course)}/prereqs`);
+        } catch (e) {
+          courseCache[key].prereqs = null;
+        }
+      }
+      const data = courseCache[key].prereqs;
+      if (!data || !data.prerequisites || !data.prerequisites.length) {
+        panel.innerHTML = '<p class="empty-state">No parsed prerequisite data for this course.</p>';
+        return;
+      }
+      let html = data.raw ? `<p class="hint" style="margin-top:0;">${esc(data.raw)}</p>` : '';
+      html += data.prerequisites.map(g => `<div class="req-group">${reqGroupText(g)}</div>`).join('');
+      if (data.unlocks && data.unlocks.length) {
+        html += `<p class="hint">Unlocks: ${data.unlocks.map(u => `${esc(u.subject)} ${esc(u.course_number)}`).join(', ')}</p>`;
+      }
+      panel.innerHTML = html;
+      return;
+    }
+
+    if (openTab === 'grades') {
+      if (courseCache[key].grades === undefined) {
+        panel.innerHTML = '<p class="empty-state">Loading…</p>';
+        try {
+          courseCache[key].grades = await getJSON(`/courses/${encodeURIComponent(subject)}/${encodeURIComponent(course)}/grade-trend`);
+        } catch (e) {
+          courseCache[key].grades = null;
+        }
+      }
+      const data = courseCache[key].grades;
+      if (!data || !data.trend || !data.trend.length) {
+        panel.innerHTML = '<p class="empty-state">No grade distribution data for this course.</p>';
+        return;
+      }
+      let html = '<table><thead><tr><th>Term</th><th>Instructor</th><th>Students</th><th>Avg GPA</th></tr></thead><tbody>';
+      for (const t of data.trend) {
+        html += `<tr><td>${esc(t.year_term ?? '—')}</td><td>${esc(t.primary_instructor ?? '—')}</td>`
+          + `<td class="num">${esc(t.students ?? '—')}</td><td class="num">${t.average_gpa ?? '—'}</td></tr>`;
+      }
+      html += '</tbody></table>';
+      panel.innerHTML = html;
     }
   }
+
+  function openCourseDetail(subject, course, description) {
+    const box = $('course-detail');
+    const key = courseKey(subject, course);
+    if (openCourseKey === key && !box.hidden) {
+      box.hidden = true;
+      openCourseKey = null;
+      document.querySelectorAll('#results-wrap tr.course-row.open').forEach(r => r.classList.remove('open'));
+      return;
+    }
+    openCourseKey = key;
+    openCourseDescription = description || '';
+    openTab = 'overview';
+    document.querySelectorAll('#results-wrap tr.course-row.open').forEach(r => r.classList.remove('open'));
+    document.querySelectorAll(`#results-wrap tr.course-row[data-subject="${subject}"][data-course="${course}"]`)
+      .forEach(r => r.classList.add('open'));
+
+    box.hidden = false;
+    box.innerHTML = `
+      <div class="course-detail-head">
+        <h3>${esc(subject)} ${esc(course)}</h3>
+        <button type="button" class="course-detail-close">Close</button>
+      </div>
+      <div class="course-tabs">
+        <button type="button" class="course-tab active" data-tab="overview">Overview</button>
+        <button type="button" class="course-tab" data-tab="prereqs">Prerequisites</button>
+        <button type="button" class="course-tab" data-tab="grades">Grade History</button>
+      </div>
+      <div class="course-tab-panel"></div>
+    `;
+    renderCourseTab(subject, course, description);
+    box.scrollIntoView({ behavior: REDUCED ? 'auto' : 'smooth', block: 'nearest' });
+  }
+
+  $('browse-panel').addEventListener('click', (e) => {
+    const closeBtn = e.target.closest('.course-detail-close');
+    if (closeBtn) {
+      $('course-detail').hidden = true;
+      openCourseKey = null;
+      document.querySelectorAll('#results-wrap tr.course-row.open').forEach(r => r.classList.remove('open'));
+      return;
+    }
+    const tabBtn = e.target.closest('.course-tab');
+    if (tabBtn) {
+      openTab = tabBtn.dataset.tab;
+      document.querySelectorAll('#course-detail .course-tab').forEach(b => b.classList.toggle('active', b === tabBtn));
+      if (openCourseKey) {
+        const [subject, course] = openCourseKey.split('|');
+        renderCourseTab(subject, course, openCourseDescription);
+      }
+      return;
+    }
+    const row = e.target.closest('tr.course-row');
+    if (row) openCourseDetail(row.dataset.subject, row.dataset.course, row.dataset.description);
+  });
 
   $('browse-form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -541,92 +700,6 @@
     } catch (e) { /* stays "All terms" */ }
   }
 
-  // ---- Department data panel ------------------------------------------------
-  const SEVEN_DAYS = 7 * 86400000;
-  const DEPT_PAGE = 20;
-  let deptRows = [];
-  let showAllDepts = false;
-
-  // Rank: most pending sync requests first, then stalest (oldest / never
-  // synced), then alphabetical - so the default page is the departments that
-  // actually need attention.
-  function deptRank(a, b) {
-    const pa = Number(a.pending_count) || 0, pb = Number(b.pending_count) || 0;
-    if (pa !== pb) return pb - pa;
-    const sa = a.last_synced_at ? parseUtc(a.last_synced_at).getTime() : 0;
-    const sb = b.last_synced_at ? parseUtc(b.last_synced_at).getTime() : 0;
-    if (sa !== sb) return sa - sb;
-    return a.subject.localeCompare(b.subject);
-  }
-
-  function renderDepartments() {
-    const wrap = $('dept-wrap');
-    const q = $('dept-filter').value.trim().toUpperCase();
-    const filtered = (q ? deptRows.filter(r => r.subject.includes(q)) : deptRows.slice()).sort(deptRank);
-    if (!filtered.length) {
-      wrap.innerHTML = '<p class="empty-state">No departments match.</p>';
-      return;
-    }
-    const paged = (q || showAllDepts) ? filtered : filtered.slice(0, DEPT_PAGE);
-    let html = '<table><thead><tr><th>Subject</th><th>Sections</th><th>Last Synced</th><th>Requests</th><th></th></tr></thead><tbody>';
-    for (const r of paged) {
-      const subj = esc(r.subject);
-      const synced = r.last_synced_at;
-      const fresh = synced && (Date.now() - parseUtc(synced).getTime()) < SEVEN_DAYS;
-      const when = synced ? formatRelativeTime(synced) : 'never';
-      const action = fresh
-        ? '<span class="pill pill-open">current</span>'
-        : `<button type="button" class="sync-btn" data-subject="${subj}">${REFRESH_ICON}Sync</button>`;
-      html += `<tr><td>${subj}</td><td class="num">${Number(r.section_count) || 0}</td><td>${esc(when)}</td>`
-        + `<td class="num">${Number(r.pending_count) || '—'}</td><td>${action}</td></tr>`;
-    }
-    html += '</tbody></table>';
-    if (!q && filtered.length > DEPT_PAGE) {
-      html += `<div class="table-more">Showing ${paged.length} of ${filtered.length} departments`
-        + `<button type="button" id="dept-toggle" class="link-btn">${showAllDepts ? 'Show fewer' : 'Show all'}</button></div>`;
-    }
-    wrap.innerHTML = html;
-    const toggle = $('dept-toggle');
-    if (toggle) toggle.addEventListener('click', () => { showAllDepts = !showAllDepts; renderDepartments(); });
-  }
-
-  async function loadDepartments() {
-    try {
-      const data = await getJSON('/sync/status');
-      deptRows = data.departments || [];
-      renderDepartments();
-    } catch (e) {
-      $('dept-wrap').innerHTML = `<p class="empty-state">Couldn't load department data: ${esc(e.message)}</p>`;
-    }
-  }
-
-  $('dept-filter').addEventListener('input', renderDepartments);
-
-  $('dept-wrap').addEventListener('click', async (e) => {
-    const btn = e.target.closest('.sync-btn');
-    if (!btn) return;
-    const subject = btn.dataset.subject;
-    btn.disabled = true;
-    btn.textContent = '…';
-    try {
-      const res = await fetch('/sync/request', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ subject }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.detail || `Request failed (${res.status})`);
-      btn.textContent = 'Requested ✓';
-      const row = deptRows.find(r => r.subject === subject);
-      if (row) row.pending_count = body.pending_count;
-      const cell = btn.closest('tr').children[3];
-      if (cell) cell.textContent = body.pending_count;
-    } catch (err) {
-      btn.disabled = false;
-      btn.textContent = 'Retry';
-    }
-  });
-
   // ---- Site feedback box -------------------------------------------------
   // Free-text feedback, unrelated to the assistant. POSTs to /feedback, which
   // is public and best-effort: it returns {ok, reason} and never 5xx, so a
@@ -689,7 +762,6 @@
   loadSubjects();
   loadFreshness();
   loadAskSummary();
-  loadDepartments();
 </script>
 </body>
 </html>

@@ -40,6 +40,7 @@ Usage:
 """
 
 import argparse
+import re
 import threading
 import time
 import sys
@@ -314,6 +315,27 @@ def fetch_section_detail(year: int, semester: str, subject: str, course_number: 
 # return None (graceful no-op) instead of crashing.
 DESCRIPTION_TAGS = ("description", "courseDescription", "descr")
 
+# UIUC catalog descriptions are authored with embedded HTML formatting
+# (<br/>, occasionally <b>/<i>/lists) that survives as literal escaped text
+# inside the XML. itertext() correctly decodes the entities, so the tag
+# characters end up as plain text in the description string unless stripped
+# here. Block-level tags become a space (they were separating text, not
+# joining it); everything else is just dropped.
+_DESC_BLOCK_TAG = re.compile(r"<\s*(br|p|li|/p|/li|/div|/ul|/ol)\s*/?\s*>", re.IGNORECASE)
+_DESC_ANY_TAG = re.compile(r"<[^>]+>")
+_DESC_WHITESPACE = re.compile(r"\s+")
+
+
+def clean_description(text: Optional[str]) -> Optional[str]:
+    """Strip embedded HTML markup out of a raw catalog description. Safe to
+    call on already-clean text (no-op)."""
+    if not text:
+        return text
+    text = _DESC_BLOCK_TAG.sub(" ", text)
+    text = _DESC_ANY_TAG.sub("", text)
+    text = _DESC_WHITESPACE.sub(" ", text).strip()
+    return text or None
+
 
 def fetch_course_description(year: int, semester: str, subject: str, course_number: str) -> Optional[str]:
     """Fetch a course's catalog description. One request per course, independent of
@@ -329,7 +351,7 @@ def fetch_course_description(year: int, semester: str, subject: str, course_numb
             # markup (e.g. a nested link) rather than being plain text.
             text = "".join(el.itertext()).strip()
             if text:
-                return text
+                return clean_description(text)
     return None
 
 

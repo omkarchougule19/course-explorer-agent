@@ -1741,3 +1741,138 @@ authored under the operator's real full name (GitHub's private noreply
 email is already in use, so only the name is exposed). Fixing that requires
 rewriting commit history and force-pushing, which is destructive and breaks
 any existing clones/forks - deferred pending an explicit decision to do it.
+
+## UI redesign: Scholarly Navy + Gold palette, a real site nav, Departments/Calendar pages, and a course quick-view (2026-09-14)
+
+**Why.** Request was to make the UI more aesthetic and student-friendly, move
+the Department Data panel to its own page, and fix literal `<br>` tags
+occasionally showing up in fetched results.
+
+**The `<br>` bug.** Root-caused to `app/scraper.py`'s
+`fetch_course_description()`: UIUC catalog descriptions are authored with
+embedded HTML formatting (mostly `<br/>`), which XML-decodes into literal
+tag characters in the description text - not a rendering bug, dirty source
+data that every render site was correctly HTML-escaping (so it *displayed*
+as literal `<br>` rather than being silently broken). Fixed with a
+`clean_description()` regex pass (block tags -> space, everything else
+stripped) applied at scrape time, plus a one-off `app/clean_descriptions.py`
+backfill for rows already in the database. The local dev DB had zero rows
+matching `LIKE '%<%'`, so the script's logic was verified against real
+data shape but not against rows that actually need cleaning - **the prod
+Neon backfill was not run**; it needs `psycopg2` installed (not in this
+environment) and is a live-database write, so it's deferred pending
+explicit go-ahead rather than run un-asked.
+
+**Visual direction.** Sourced 3 candidate palette/typography systems from
+the `ui-ux-pro-max` skill's design database rather than guessing; picked
+"Scholarly Navy + Gold" (navy `#1e3a5f` / gold accent `#b45309` / Newsreader
+serif + Roboto sans) over a flat teal dev-tool look and over leaving the
+palette untouched. Reasoning: it's the closest quality evolution of the
+site's existing serif/editorial identity (Crimson Text/EB Garamond before
+this), rather than a jarring pivot to a SaaS-dashboard look that wouldn't
+fit a campus-facing tool. Applied by swapping only the CSS custom-property
+values in `static/style.css` (`--blue`, `--orange`, `--link`, `--display`,
+`--serif`, `--sans`, plus the surface/ink scale) - every component already
+consumed those tokens rather than hardcoded colors/fonts, so the whole site
+re-themed from one edit. The old `--orange` was UIUC's literal "Illini
+Orange" brand color; replacing it with gold is a small bonus on top of the
+earlier rebrand (one less exact-brand-color match).
+
+**Component inspiration from Skiper UI.** Browsed skiper-ui.com (a
+React/Tailwind/Framer-Motion component gallery) for layout ideas -
+nothing was copied as code (wrong stack entirely), only the visual/layout
+concept was hand-ported into this app's vanilla HTML/CSS/JS:
+- "Timeline calendar" (skiper74) -> the new `static/calendar.html`'s
+  day-grouped agenda cards, replacing what had no frontend at all before
+  (the `/calendar` API existed, unused).
+- "Vercel navigation bar" (skiper57) -> `.site-nav`, a real top tab bar
+  (Home/Departments/Calendar/Data Freshness/How It Works) added to every
+  page, replacing the old footer-only links as the primary way to move
+  around the site.
+- "Apple Navbar V002" (skiper75) -> the course quick-view's tab row
+  (Overview/Prerequisites/Grade History) in `index.html`.
+- "Side Scroll Navigation" (skiper60) -> the new `static/departments.html`
+  layout: a left subject list + right detail panel, replacing the old
+  single long table (`#dept-panel`, removed from `index.html` entirely).
+
+**Course quick-view.** Clicking a row in Browse Sections opens a tabbed
+panel below the table (Overview = catalog description already in the row;
+Prerequisites = `/courses/{subject}/{course}/prereqs`; Grade History =
+`/courses/{subject}/{course}/grade-trend`), instead of only a hover
+tooltip on the description. Two real bugs surfaced and were fixed during
+manual browser testing (`run` skill / Claude-in-Chrome), not left for
+later:
+1. The click listener was attached to `#results-wrap`, but `#course-detail`
+   is a sibling `<div>` outside it - clicks on the tabs/close button never
+   bubbled through. Moved the listener to the enclosing `#browse-panel`.
+2. `/prereqs`' `relation` field is a category label (e.g. `"prereq"`), not
+   an `"and"/"or"` operator as assumed - the docstring on that endpoint
+   already says options *within* a group are always alternatives, so the
+   frontend now always joins a group's options with "or" regardless of
+   `relation`, matching the endpoint's actual documented semantics instead
+   of a wrong guess about an undocumented field value.
+
+**Departments page.** `#dept-panel` and its JS (`renderDepartments`,
+`loadDepartments`, the sync-request handler) moved out of `index.html`
+wholesale into `static/departments.html`, restructured from a flat table
+into subject-list-left / detail-right. `index.html`'s Browse Sections hint
+now links to `/departments.html` instead of an in-page anchor.
+
+**Startup preloader.** Added a "double stairs" curtain (six navy bars,
+alternating top/bottom `transform-origin`, staggered `scaleY` collapse) to
+`index.html` only - the app's actual entry point, not every internal page
+nav - inspired by Skiper UI's `skiper10` ("Double stairs preloader"). Its
+source is a paid/paywalled component and wasn't purchased or copied (wrong
+stack regardless - React/Framer Motion vs. this app's vanilla JS); only the
+visual concept (alternating-direction bar curtain) was hand-ported after
+inspecting the live demo in a browser. Plays once per tab session
+(`sessionStorage`), and is skipped outright - both via a `prefers-reduced-
+motion` CSS media query and a matching JS check - rather than just made
+faster, per the motion-accessibility guideline in the `ui-ux-pro-max` skill.
+A `<noscript>` rule hides it if JS never runs at all.
+
+## Post-redesign layout audit: two bugs from the new site-nav, one pre-existing (2026-09-14)
+
+Before committing the redesign, went back through it deliberately looking
+for breakage rather than waiting for it to surface live. Found three real
+issues:
+
+1. **KPI cards clipped under the nav.** The KPI strip used a negative
+   top margin (`margin: -44px 0 ...`) to visually float up and overlap the
+   bottom of the banner - a fine effect when the banner was immediately
+   followed by `.wrap`. With the new `.site-nav` now sitting between them,
+   that same negative margin pulled the cards up under the nav's opaque,
+   higher-z-index bar instead, clipping them. Fix: dropped the overlap
+   entirely (`margin: -44px` -> `var(--s6) 0`) and removed the
+   `.banner.has-kpi` extra bottom padding that existed only to leave room
+   for it (both desktop and the 640px mobile variant).
+2. **Sticky table headers silently non-functional, site-wide.** Not
+   caused by this session - `.results-wrap { overflow-x: auto }` already
+   existed. Per the CSS overflow spec, when one axis is non-`visible` and
+   the other is left `visible`, the `visible` one computes to `auto` too -
+   so `.results-wrap` was unintentionally a scroll container on *both*
+   axes, which became `thead th`'s sticky positioning context instead of
+   the page. Since `.results-wrap` itself never had its own scroll offset
+   (the *page* scrolled, not that box), sticky never actually engaged -
+   confirmed via `getBoundingClientRect()` in the browser console, since
+   screenshots alone couldn't be trusted to catch it (see below). Initially
+   patched as a nav-collision problem (`top: 51px` to clear the sticky
+   nav), then found the real issue and did the actual fix instead: gave
+   `.results-wrap` a real `max-height: 60vh` + deliberate `overflow-y:
+   auto`, turning it into its own internally-scrolling box. This makes the
+   sticky header genuinely work (verified: scrolling the container 400px
+   left the header pinned to the box's own top edge), and as a side
+   effect stops a 100-row query from ballooning the whole page - the course
+   quick-view panel now sits directly below a fixed-height table instead of
+   below 100 rows of it.
+3. **Dead CSS class.** `.banner.has-kpi` had no rules left after fix #1;
+   removed the class from `index.html`'s markup too.
+
+**Tooling note, not a codebase decision, worth recording anyway:** browser
+screenshots during this audit were unreliable (stale crops, viewport size
+drifting between calls, 30s CDP timeouts) and produced a false negative -
+an early screenshot after the nav-offset patch looked fine only because the
+page hadn't actually been scrolled far enough to test it. Switched to
+reading `getBoundingClientRect()`/`getComputedStyle()` directly via the
+JS console instead of trusting pixels, which is what actually caught that
+the first fix was targeting the wrong root cause.

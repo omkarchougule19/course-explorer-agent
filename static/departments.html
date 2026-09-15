@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Departments — Illini Course Copilot</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Roboto:wght@300;400;500;600;700&display=swap">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header class="banner">
+  <div class="wrap">
+    <h1><a href="/">Illini Course Copilot</a></h1>
+    <p class="subtitle">Department data, freshness, and refresh requests — one subject at a time.</p>
+  </div>
+</header>
+
+<nav class="site-nav">
+  <div class="wrap">
+    <a href="/">Home</a>
+    <a href="/departments.html" class="active">Departments</a>
+    <a href="/calendar.html">Calendar</a>
+    <a href="/freshness.html">Data Freshness</a>
+    <a href="/about.html">How It Works</a>
+  </div>
+</nav>
+
+<div class="wrap">
+
+  <p class="hint" style="margin-top: var(--s5);">
+    Pick a subject on the left. Hit <strong>Sync</strong> to request fresh data for it — it's
+    picked up within 24 hours. The count next to a subject is how many refreshes are pending
+    since its last sync.
+  </p>
+
+  <div class="dept-layout">
+    <aside class="dept-sidebar">
+      <input id="dept-filter" type="text" placeholder="Filter, e.g. PHYS">
+      <div class="dept-list" id="dept-list"><p class="empty-state">loading…</p></div>
+    </aside>
+
+    <section class="dept-detail" id="dept-detail">
+      <p class="empty-state">Choose a subject from the list.</p>
+    </section>
+  </div>
+
+  <footer>
+    Illini Course Copilot &middot; <a href="/">&larr; back to explorer</a> &middot; <a href="/api">API info</a>
+  </footer>
+
+</div>
+
+<script src="/time.js"></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+
+  const REFRESH_ICON =
+    '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">' +
+    '<path d="M21 12a9 9 0 0 0-9-9 9 9 0 0 0-6.7 3L3 8"/><path d="M3 3v5h5"/>' +
+    '<path d="M3 12a9 9 0 0 0 9 9 9 9 0 0 0 6.7-3L21 16"/><path d="M21 21v-5h-5"/></svg>';
+
+  const SEVEN_DAYS = 7 * 86400000;
+  let deptRows = [];
+  let selected = null;
+
+  // Rank: most pending sync requests first, then stalest (oldest / never
+  // synced), then alphabetical - so the top of the list is what actually
+  // needs attention.
+  function deptRank(a, b) {
+    const pa = Number(a.pending_count) || 0, pb = Number(b.pending_count) || 0;
+    if (pa !== pb) return pb - pa;
+    const sa = a.last_synced_at ? parseUtc(a.last_synced_at).getTime() : 0;
+    const sb = b.last_synced_at ? parseUtc(b.last_synced_at).getTime() : 0;
+    if (sa !== sb) return sa - sb;
+    return a.subject.localeCompare(b.subject);
+  }
+
+  function renderList() {
+    const wrap = $('dept-list');
+    const q = $('dept-filter').value.trim().toUpperCase();
+    const filtered = (q ? deptRows.filter(r => r.subject.includes(q)) : deptRows.slice()).sort(deptRank);
+    if (!filtered.length) {
+      wrap.innerHTML = '<p class="empty-state">No departments match.</p>';
+      return;
+    }
+    if (!selected || !filtered.some(r => r.subject === selected)) selected = filtered[0].subject;
+    wrap.innerHTML = filtered.map(r => {
+      const active = r.subject === selected ? ' active' : '';
+      const pending = Number(r.pending_count) || 0;
+      const badge = pending ? `<span class="dept-badge">${pending}</span>` : '';
+      return `<button type="button" class="${active.trim()}" data-subject="${esc(r.subject)}">${esc(r.subject)}${badge}</button>`;
+    }).join('');
+    renderDetail();
+  }
+
+  function renderDetail() {
+    const wrap = $('dept-detail');
+    const row = deptRows.find(r => r.subject === selected);
+    if (!row) {
+      wrap.innerHTML = '<p class="empty-state">Choose a subject from the list.</p>';
+      return;
+    }
+    const synced = row.last_synced_at;
+    const fresh = synced && (Date.now() - parseUtc(synced).getTime()) < SEVEN_DAYS;
+    const when = synced ? formatRelativeTime(synced) : 'never';
+    const action = fresh
+      ? '<span class="pill pill-open">current</span>'
+      : `<button type="button" id="dept-sync-btn" data-subject="${esc(row.subject)}">${REFRESH_ICON}Sync</button>`;
+    wrap.innerHTML = `
+      <h2 class="dept-detail-title">${esc(row.subject)}</h2>
+      <dl class="dept-detail-stats">
+        <div><dt>Sections</dt><dd>${Number(row.section_count) || 0}</dd></div>
+        <div><dt>Last Synced</dt><dd>${esc(when)}</dd></div>
+        <div><dt>Pending Requests</dt><dd>${Number(row.pending_count) || 0}</dd></div>
+      </dl>
+      <p class="hint">${fresh ? 'This department was synced within the last week — no refresh needed.' : 'This department hasn’t synced recently.'}</p>
+      <div style="margin-top: var(--s3);">${action}</div>
+    `;
+  }
+
+  async function loadDepartments() {
+    try {
+      const res = await fetch('/sync/status');
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.detail || `Request failed (${res.status})`);
+      deptRows = body.departments || [];
+      renderList();
+    } catch (e) {
+      $('dept-list').innerHTML = `<p class="empty-state">Couldn't load department data: ${esc(e.message)}</p>`;
+    }
+  }
+
+  $('dept-filter').addEventListener('input', renderList);
+
+  $('dept-list').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-subject]');
+    if (!btn) return;
+    selected = btn.dataset.subject;
+    renderList();
+  });
+
+  $('dept-detail').addEventListener('click', async (e) => {
+    const btn = e.target.closest('#dept-sync-btn');
+    if (!btn) return;
+    const subject = btn.dataset.subject;
+    btn.disabled = true;
+    btn.textContent = '…';
+    try {
+      const res = await fetch('/sync/request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subject }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.detail || `Request failed (${res.status})`);
+      const row = deptRows.find(r => r.subject === subject);
+      if (row) row.pending_count = body.pending_count;
+      renderDetail();
+      renderList();
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = 'Retry';
+    }
+  });
+
+  loadDepartments();
+</script>
+</body>
+</html>
