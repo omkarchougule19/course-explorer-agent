@@ -2072,3 +2072,36 @@ Freshness page. Each list's citation is as precise as the rows actually
 displayed allow - e.g. a single-term result set links straight to that
 term's page; a mixed-term list falls back to the general schedule URL
 rather than pointing at the wrong term.
+
+## Populated Fall 2026 for 4 previously-empty departments on prod (2026-09-15)
+
+Operator ran `python -m app.sync_requests --run AGCM ASTR ACCY ANTH` against
+the live Neon DB, picking 4 of the 183 subjects (out of 187 total) that had
+zero Fall 2026 rows - the migration snapshot only covered Fall 2026 for a
+handful of subjects (CS among them), everything else only had Spring 2026
+until manually synced, per the demand-driven refresh model. Confirmed
+after: AGCM +4, ASTR +42, ACCY +187, ANTH +73 sections written.
+
+## No more implying an instructor "isn't good" from a data gap (2026-09-15)
+
+The agent's own "empty result: say so plainly" rule (`app/agent.py`),
+applied literally to `teachers_ranked_excellent` for a named instructor,
+produced phrasing like "no recorded excellent ranking for [name]" - true
+about the *data* (that dataset only has partial coverage), but reads as a
+negative claim about the *person*. Added a rule specific to that table:
+absence of a row there is a coverage gap, never a judgment on the
+instructor - the agent should say the dataset has no entry for them for
+that term and stop, not speculate or imply anything about their teaching.
+
+## Departments' empty course list explains *why*, not just *that* (2026-09-15)
+
+"No courses match those filters" reads like a bug when the real reason is
+almost always "this department hasn't been synced for the selected term"
+(the common case, per the demand-driven refresh model - most departments
+only have data for whatever term the original migration snapshot covered).
+`departments.html` now picks from three messages using data already on the
+page (`deptRows`' `section_count`, the term `<select>`'s value): no data at
+all yet -> prompts Sync; has data but not for the selected term -> names
+the term and suggests Sync or "All terms"; has matching-term data but other
+filters (course #/instructor/level) exclude everything -> suggests clearing
+those. Verified all three render correctly.

@@ -222,11 +222,42 @@
     showSkeleton($('dc-results'));
     try {
       const rows = await getJSON('/sections?' + params.toString());
+      if (!rows.length) {
+        $('dc-results').removeAttribute('aria-busy');
+        $('dc-results').innerHTML = `<p class="empty-state">${esc(emptyDeptMessage())}</p>`;
+        $('dc-course-detail').hidden = true;
+        return;
+      }
       deptCourseResults.render(rows);
     } catch (err) {
       $('dc-results').removeAttribute('aria-busy');
       $('dc-results').innerHTML = `<p class="empty-state">Query failed: ${esc(err.message)}</p>`;
     }
+  }
+
+  // Distinguishes "this department just hasn't been synced for the
+  // selected term" (the common case - see the demand-driven refresh model
+  // in DECISIONS.md, sync is manual and per-department) from "no filters
+  // match" or "nothing on file at all yet", instead of one generic message
+  // that reads like a bug either way.
+  function emptyDeptMessage() {
+    const row = deptRows.find(r => r.subject === selected);
+    const termSelect = $('dc-term');
+    const termOpt = termSelect.selectedOptions[0];
+    const termLabel = termSelect.value ? termOpt.textContent : null;
+    const hasAnyData = row && Number(row.section_count) > 0;
+    const otherFiltersSet = $('dc-level').value || $('dc-course').value.trim() || $('dc-instructor').value.trim();
+
+    if (otherFiltersSet && hasAnyData) {
+      return 'No courses match those filters in this department. Try clearing the course #, instructor, or level.';
+    }
+    if (!hasAnyData) {
+      return 'Not synced yet — no course data on file for this department. Hit Sync above to request it.';
+    }
+    if (termLabel) {
+      return `Not synced for ${termLabel} — this department's last sync didn't cover that term. Hit Sync above, or switch to "All terms" to see what's on file.`;
+    }
+    return 'No courses match those filters in this department.';
   }
 
   $('dept-course-form').addEventListener('submit', (e) => {

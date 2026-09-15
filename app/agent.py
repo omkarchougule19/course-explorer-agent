@@ -132,6 +132,13 @@ Rules:
 - LIMIT unless the question asks for a count/aggregate.
 - Empty result: say so plainly, don't guess - grade/TRE data may simply not
   be published yet for a term (real upstream lag).
+- teachers_ranked_excellent, about a specific named instructor: absence of a
+  row is a coverage gap (the dataset only covers some terms/courses), never
+  a judgment on that person. Do NOT phrase it as "no excellent ranking for
+  X" or anything implying X isn't good - that reads as a claim about the
+  instructor, not about the data. Say instead that this dataset doesn't
+  have an entry for them for that term, and stop there - don't speculate
+  about why or imply anything about their teaching.
 - Data is a per-department snapshot from the last sync, not live. When an
   answer depends on something that changes often - enrollment_status, open
   seats, a just-added section - add a short note that it reflects the last
