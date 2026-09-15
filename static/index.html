@@ -126,6 +126,7 @@
         </div>
       </form>
       <p class="hint">Each department's data is from its last sync. Check freshness or request a refresh under <a href="/departments.html">Departments</a>.</p>
+      <p class="hint row-hint">Click any row for the full course view — description, prerequisites, and grade history.</p>
       <div class="results-wrap" id="results-wrap"></div>
       <div class="course-detail" id="course-detail" hidden></div>
     </section>
@@ -328,6 +329,7 @@
     } catch (err) {
       $('results-wrap').removeAttribute('aria-busy');
       $('results-wrap').innerHTML = `<p class="empty-state">Query failed: ${esc(err.message)}</p>`;
+      document.querySelector('.row-hint').hidden = true;
     }
   });
 
@@ -620,6 +622,7 @@
   });
 
   $('results-wrap').innerHTML = SEARCH_EMPTY;
+  document.querySelector('.row-hint').hidden = true;
   // ---- Sharable course links (?course=SUBJ-123) -------------------------
   // openCourseDetail() itself keeps the URL in sync (history.replaceState)
   // while a course panel is open; this is just the reverse direction, run

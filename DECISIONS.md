@@ -2122,3 +2122,30 @@ all yet -> prompts Sync; has data but not for the selected term -> names
 the term and suggests Sync or "All terms"; has matching-term data but other
 filters (course #/instructor/level) exclude everything -> suggests clearing
 those. Verified all three render correctly.
+
+## Row-click quick view got a static, always-visible hint (2026-09-15)
+
+Reported: clicking a course name opens the quick-view panel (description,
+prerequisites, grade history) but nothing signals that's possible - a new
+user has no way to discover it.
+
+Root cause: the existing hint text was appended *inside* the results table's
+wrapper (`.results-wrap`), which since the sticky-header fix has its own
+`max-height` + `overflow-y: auto`. The hint sat below the last row, so it
+scrolled out of view along with the table content instead of acting like
+one.
+
+Fix: moved the hint to a static `<p class="row-hint">` sibling element placed
+above the results wrapper in both `index.html` and `departments.html`, so
+it's visible immediately, before any query even runs. `course-results.js`'s
+shared `render()` now toggles that sibling's `hidden` attribute based on
+whether the query returned rows, instead of injecting/removing its own copy.
+Added a dotted-underline hover affordance on the course-name cell
+(`.course-name-cell`) as a secondary "this is clickable" signal.
+
+Caught in testing: both pages have code paths that bypass `render()` entirely
+(query-failed catch blocks, and index.html's before-first-query empty state) -
+these were left showing the hint over an empty/error box since they never
+called the toggle. Fixed by hiding `.row-hint` explicitly in those three
+spots (`index.html` catch block + initial load; `departments.html` catch
+block + empty-result branch).

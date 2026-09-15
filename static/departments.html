@@ -87,6 +87,7 @@
             </button>
           </div>
         </form>
+        <p class="hint row-hint">Click any row for the full course view — description, prerequisites, and grade history.</p>
         <div class="results-wrap" id="dc-results"></div>
         <div class="course-detail" id="dc-course-detail" hidden></div>
       </section>
@@ -226,12 +227,14 @@
         $('dc-results').removeAttribute('aria-busy');
         $('dc-results').innerHTML = `<p class="empty-state">${esc(emptyDeptMessage())}</p>`;
         $('dc-course-detail').hidden = true;
+        document.querySelector('.row-hint').hidden = true;
         return;
       }
       deptCourseResults.render(rows);
     } catch (err) {
       $('dc-results').removeAttribute('aria-busy');
       $('dc-results').innerHTML = `<p class="empty-state">Query failed: ${esc(err.message)}</p>`;
+      document.querySelector('.row-hint').hidden = true;
     }
   }
 

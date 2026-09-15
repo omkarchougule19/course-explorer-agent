@@ -73,10 +73,19 @@
       wrapEl.removeAttribute('aria-busy');
       courseDetailEl.hidden = true;
       openCourseKey = null;
+      // The "click a row" hint lives as a static sibling right before
+      // wrapEl in the page markup (always visible, unlike the old version
+      // of this hint which got appended inside wrapEl and was easy to miss
+      // once the table grew tall enough to scroll). Only worth showing
+      // when there's something to click.
+      var rowHint = wrapEl.previousElementSibling;
+      if (rowHint && !rowHint.classList.contains('row-hint')) rowHint = null;
       if (!rows.length) {
         wrapEl.innerHTML = '<p class="empty-state">' + esc(emptyMessage) + '</p>';
+        if (rowHint) rowHint.hidden = true;
         return;
       }
+      if (rowHint) rowHint.hidden = false;
       var labels = ['Subj', 'Course', 'Course Name', 'Section', 'CRN', 'Instructor', 'Status', 'Credit', ''];
       var html = '<table><thead><tr>' + labels.map(function (l) { return '<th>' + l + '</th>'; }).join('') + '</tr></thead><tbody>';
       rows.forEach(function (row) {
@@ -101,7 +110,7 @@
         html += '<tr class="course-row" data-subject="' + subj + '" data-course="' + num + '" data-year="' + (row.year || '') + '" data-semester="' + esc(row.semester || '') + '" data-description="' + esc(row.description || '') + '"' + titleAttr + '>'
           + '<td>' + (subj || '—') + '</td>'
           + '<td class="num">' + (num || '—') + '</td>'
-          + '<td>' + esc(row.course_label || '—') + '</td>'
+          + '<td>' + (row.course_label ? '<span class="course-name-cell">' + esc(row.course_label) + '</span>' : '—') + '</td>'
           + '<td>' + esc(row.section_name || '—') + '</td>'
           + '<td class="crn">' + (crn || '—') + '</td>'
           + '<td>' + instructorLink(row.instructor) + '</td>'
@@ -112,11 +121,6 @@
       });
       html += '</tbody></table>';
       wrapEl.innerHTML = html;
-      var p = document.createElement('p');
-      p.className = 'hint';
-      p.style.margin = 'var(--s2) var(--s4) 0';
-      p.textContent = 'Click a row for the full course view — description, prerequisites, and grade history.';
-      wrapEl.appendChild(p);
 
       if (global.Citations) {
         var terms = {};

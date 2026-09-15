@@ -567,6 +567,15 @@ td.crn { font-family: var(--mono); font-size: 12px; }
 /* ---------- Course quick view (click a Browse Sections row) ---------- */
 tbody tr.course-row { cursor: pointer; }
 tbody tr.course-row.open td { background: var(--row-hover); }
+/* A visual cue that the row expands - underline just the course name,
+   not styled as a full link (the whole row is the click target, not just
+   this cell), so it reads as "this row has more" rather than "click this
+   one word". */
+tbody tr.course-row .course-name-cell {
+  border-bottom: 1px dotted var(--line-strong);
+  padding-bottom: 1px;
+}
+tbody tr.course-row:hover .course-name-cell { border-bottom-color: var(--link); }
 
 .course-detail {
   margin-top: var(--s4);
