@@ -68,6 +68,7 @@
 </div>
 
 <script src="/schedule-store.js"></script>
+<script src="/citations.js"></script>
 <script src="/theme.js"></script>
 <script>
   const $ = (id) => document.getElementById(id);
@@ -112,6 +113,8 @@
       }
       html += '</div></div>';
     }
+    const [year, semester] = ($('cal-term').value || '').split('|');
+    html += Citations.line(Citations.link(Citations.registrarCalendarUrl(year, semester), 'UIUC Registrar Academic Calendar'));
     wrap.innerHTML = html;
   }
 

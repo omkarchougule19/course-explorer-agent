@@ -55,6 +55,7 @@
 
 <script src="/time.js"></script>
 <script src="/schedule-store.js"></script>
+<script src="/citations.js"></script>
 <script src="/theme.js"></script>
 <script>
   const $ = (id) => document.getElementById(id);
@@ -104,6 +105,7 @@
         + `</tr>`;
     }
     html += '</tbody></table>';
+    html += Citations.line(Citations.link(Citations.courseExplorerUrl(), 'UIUC Course Explorer'));
     wrap.innerHTML = html;
   }
 

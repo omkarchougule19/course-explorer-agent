@@ -526,6 +526,15 @@ td.crn { font-family: var(--mono); font-size: 12px; }
 .pill-open { color: var(--open); background: rgba(10, 125, 60, 0.08); }
 .pill-closed { color: var(--closed); background: rgba(138, 28, 92, 0.08); }
 
+.citation {
+  margin: var(--s2) var(--s4) 0;
+  font-family: var(--sans);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.citation a { color: var(--muted); text-decoration: underline; }
+.citation a:hover { color: var(--link); }
+
 .table-more {
   padding: var(--s3) var(--s4);
   font-family: var(--serif);
@@ -736,6 +745,13 @@ footer .disclaimer {
   align-items: flex-start;
   gap: var(--s5);
   margin-top: var(--s6);
+}
+.dept-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s5);
 }
 .dept-sidebar {
   flex: 0 0 260px;

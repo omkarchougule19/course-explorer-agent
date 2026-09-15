@@ -46,6 +46,7 @@
 </div>
 
 <script src="/schedule-store.js"></script>
+<script src="/citations.js"></script>
 <script src="/theme.js"></script>
 <script>
   const $ = (id) => document.getElementById(id);
@@ -115,10 +116,14 @@
     for (const c of sortedCourses) {
       const block = document.createElement('div');
       block.className = 'instructor-course';
-      const terms = [...c.terms.values()].sort(termSort).map(t => termLabel(t.year, t.semester));
+      const sortedTerms = [...c.terms.values()].sort(termSort);
+      const terms = sortedTerms.map(t => termLabel(t.year, t.semester));
+      const mostRecent = sortedTerms[0];
+      const catalogUrl = Citations.courseExplorerUrl(mostRecent.year, mostRecent.semester, c.subject, c.course_number);
       block.innerHTML = `
         <h3>${esc(c.subject)} ${esc(c.course_number)}${c.course_label ? ' — ' + esc(c.course_label) : ''}</h3>
         <p class="hint">Taught: ${terms.map(esc).join(', ')} &middot; ${c.sectionCount} section${c.sectionCount === 1 ? '' : 's'} total</p>
+        ${Citations.line(Citations.link(catalogUrl, 'UIUC Course Explorer'))}
         <div class="instructor-grades"><p class="empty-state">Loading grade history…</p></div>
       `;
       list.appendChild(block);
@@ -134,6 +139,7 @@
             html += `<tr><td>${esc(t.year_term ?? '—')}</td><td class="num">${esc(t.students ?? '—')}</td><td class="num">${t.average_gpa ?? '—'}</td></tr>`;
           }
           html += '</tbody></table>';
+          html += Citations.line(Citations.link(Citations.GRADES_URL, 'wadefagen/datasets'));
           block.querySelector('.instructor-grades').innerHTML = html;
         })
         .catch(() => { block.querySelector('.instructor-grades').innerHTML = ''; });

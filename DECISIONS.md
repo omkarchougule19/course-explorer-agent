@@ -2020,3 +2020,55 @@ frontend then wraps each trending code in one of a few generic templates
 into a generic question, never a student's actual wording. New `GET
 /ask/trending` endpoint; falls back to the original static chips (kept in
 the markup) when there isn't enough data yet.
+
+## Departments layout fix + no more false sync-timing promise (2026-09-15)
+
+**Layout**: the "Courses in `<subject>`" panel sat full-width below the
+whole `.dept-layout` row, leaving the empty space beside the short
+department-detail box unused while the tall sidebar list ran on
+independently. Wrapped `#dept-detail` and `#dept-courses-panel` in a new
+`.dept-main` flex column, nested inside `.dept-layout` as the sidebar's
+sibling - the courses panel now stacks directly under the detail box in
+the same right-hand column, filling that space, while the sidebar's own
+position is untouched.
+
+**Wording**: the department page promised sync requests are "picked up
+within 24 hours." Checked against the actual mechanism (see the demand-
+driven refresh entry above) - processing is manual and local
+(`python -m app.sync_requests --run`), run whenever the operator chooses,
+by design ("operator wanted to eyeball demand ... himself"). There's no
+24-hour SLA and never was one; reworded to say requests are picked up
+manually with no guaranteed turnaround, instead of a number that was never
+actually true.
+
+## Real, clickable citations everywhere data is shown (2026-09-15)
+
+Every place the app shows UIUC data now cites where it came from, with a
+real working link - not just the LLM-answer footer `citations.py` already
+had. New shared `static/citations.js` builds the actual public URLs this
+app's own scraper hits (`app/scraper.py`'s `BASE_URL`, `app/load_calendar.py`'s
+registrar pattern), so a citation link is never a guess:
+
+- `courseExplorerUrl(year, semester, subject, course)` -> the public
+  `courses.illinois.edu/schedule/...` page, as specific as the data on
+  screen allows (bare, term-only, or down to the exact course).
+- `registrarCalendarUrl(year, semester)` -> `registrar.illinois.edu/{semester}-
+  {year}-academic-calendar/`. `load_calendar.py`'s own docstring says this
+  isn't uniformly derivable across *all* terms (archived terms use
+  different paths) - but it's confirmed correct for the term(s) this app
+  ever actually loads (current + next, never archived), so it's safe here
+  even though it wouldn't be as a general-purpose UIUC calendar-URL
+  builder.
+- `GRADES_URL` -> `github.com/wadefagen/datasets`, the actual source
+  `citations.py` already names for grade data.
+
+Wired in everywhere: Browse Sections and Departments' course list (via
+`course-results.js`, one citation per rendered table plus one per quick-
+view tab - Overview cites the catalog page, Prerequisites cites it as
+"parsed from", Grade History cites wadefagen), the Calendar page (cites
+the registrar), Instructor pages (course-explorer per course, wadefagen
+per grade table), the Schedule builder's meeting-time list, and the
+Freshness page. Each list's citation is as precise as the rows actually
+displayed allow - e.g. a single-term result set links straight to that
+term's page; a mixed-term list falls back to the general schedule URL
+rather than pointing at the wrong term.

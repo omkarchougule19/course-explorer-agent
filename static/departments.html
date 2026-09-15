@@ -36,9 +36,9 @@
 <div class="wrap">
 
   <p class="hint" style="margin-top: var(--s5);">
-    Pick a subject on the left. Hit <strong>Sync</strong> to request fresh data for it — it's
-    picked up within 24 hours. The count next to a subject is how many refreshes are pending
-    since its last sync.
+    Pick a subject on the left. Hit <strong>Sync</strong> to request fresh data for it — requests
+    are picked up manually, not on a fixed schedule, so there's no guaranteed turnaround. The
+    count next to a subject is how many refreshes are pending since its last sync.
   </p>
 
   <div class="dept-layout">
@@ -47,49 +47,51 @@
       <div class="dept-list" id="dept-list"><p class="empty-state">loading…</p></div>
     </aside>
 
-    <section class="dept-detail" id="dept-detail">
-      <p class="empty-state">Choose a subject from the list.</p>
-    </section>
-  </div>
+    <div class="dept-main">
+      <section class="dept-detail" id="dept-detail">
+        <p class="empty-state">Choose a subject from the list.</p>
+      </section>
 
-  <section class="panel" id="dept-courses-panel" style="margin-top: var(--s6);" hidden>
-    <h2>Courses in <span id="dept-courses-subject"></span></h2>
-    <form id="dept-course-form">
-      <div class="field-row">
-        <div class="field">
-          <label for="dc-term">Term</label>
-          <select id="dc-term"><option value="">All terms</option></select>
-        </div>
-        <div class="field">
-          <label for="dc-level">Level</label>
-          <select id="dc-level">
-            <option value="">All levels</option>
-            <option value="undergrad">Undergraduate (&lt;400)</option>
-            <option value="400level">400-level (UG + grad)</option>
-            <option value="grad">Graduate (500+)</option>
-          </select>
-        </div>
-        <div class="field">
-          <label for="dc-course">Course #</label>
-          <input id="dc-course" type="text" placeholder="e.g. 225">
-        </div>
-        <div class="field">
-          <label for="dc-instructor">Instructor</label>
-          <input id="dc-instructor" type="text" placeholder="e.g. Smith">
-        </div>
-        <div class="field" style="flex: 0 1 96px;">
-          <label for="dc-limit">Limit</label>
-          <input id="dc-limit" type="number" value="100" min="1" max="1000">
-        </div>
-        <button type="submit">
-          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-          Run Query
-        </button>
-      </div>
-    </form>
-    <div class="results-wrap" id="dc-results"></div>
-    <div class="course-detail" id="dc-course-detail" hidden></div>
-  </section>
+      <section class="panel" id="dept-courses-panel" hidden>
+        <h2>Courses in <span id="dept-courses-subject"></span></h2>
+        <form id="dept-course-form">
+          <div class="field-row">
+            <div class="field">
+              <label for="dc-term">Term</label>
+              <select id="dc-term"><option value="">All terms</option></select>
+            </div>
+            <div class="field">
+              <label for="dc-level">Level</label>
+              <select id="dc-level">
+                <option value="">All levels</option>
+                <option value="undergrad">Undergraduate (&lt;400)</option>
+                <option value="400level">400-level (UG + grad)</option>
+                <option value="grad">Graduate (500+)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="dc-course">Course #</label>
+              <input id="dc-course" type="text" placeholder="e.g. 225">
+            </div>
+            <div class="field">
+              <label for="dc-instructor">Instructor</label>
+              <input id="dc-instructor" type="text" placeholder="e.g. Smith">
+            </div>
+            <div class="field" style="flex: 0 1 96px;">
+              <label for="dc-limit">Limit</label>
+              <input id="dc-limit" type="number" value="100" min="1" max="1000">
+            </div>
+            <button type="submit">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+              Run Query
+            </button>
+          </div>
+        </form>
+        <div class="results-wrap" id="dc-results"></div>
+        <div class="course-detail" id="dc-course-detail" hidden></div>
+      </section>
+    </div>
+  </div>
 
   <footer>
     Illini Course Copilot &middot; <a href="/">&larr; back to explorer</a> &middot; <a href="/api">API info</a>
@@ -99,6 +101,7 @@
 
 <script src="/time.js"></script>
 <script src="/schedule-store.js"></script>
+<script src="/citations.js"></script>
 <script src="/course-results.js"></script>
 <script src="/theme.js"></script>
 <script>

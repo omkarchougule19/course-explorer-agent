@@ -162,6 +162,7 @@
 <script src="/time.js"></script>
 <script src="/md.js"></script>
 <script src="/schedule-store.js"></script>
+<script src="/citations.js"></script>
 <script src="/course-results.js"></script>
 <script src="/theme.js"></script>
 <script>
@@ -632,7 +633,8 @@
     const number = course.slice(dash + 1);
     try {
       const rows = await getJSON(`/sections?subject=${encodeURIComponent(subject)}&course_number=${encodeURIComponent(number)}&limit=1`);
-      browseResults.openCourseDetail(subject, number, rows[0] ? rows[0].description : '');
+      const row = rows[0];
+      browseResults.openCourseDetail(subject, number, row ? row.description : '', row ? row.year : null, row ? row.semester : '');
     } catch (e) { /* unknown/bad course in the link - leave the page as-is */ }
   }
 

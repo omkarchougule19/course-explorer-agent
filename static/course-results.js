@@ -65,6 +65,8 @@
     var courseCache = {};  // "SUBJ|123" -> { prereqs?: {...}, grades?: {...} }
     var openCourseKey = null;
     var openCourseDescription = '';
+    var openCourseYear = null;
+    var openCourseSemester = '';
     var openTab = 'overview';
 
     function render(rows) {
@@ -96,7 +98,7 @@
             + 'data-section="' + esc(row.section_name || '') + '" data-instructor="' + esc(row.instructor || '') + '" '
             + 'data-credit="' + esc(row.credit_hours || '') + '">' + (added ? 'Added' : 'Add') + '</button>'
           : '';
-        html += '<tr class="course-row" data-subject="' + subj + '" data-course="' + num + '" data-description="' + esc(row.description || '') + '"' + titleAttr + '>'
+        html += '<tr class="course-row" data-subject="' + subj + '" data-course="' + num + '" data-year="' + (row.year || '') + '" data-semester="' + esc(row.semester || '') + '" data-description="' + esc(row.description || '') + '"' + titleAttr + '>'
           + '<td>' + (subj || '—') + '</td>'
           + '<td class="num">' + (num || '—') + '</td>'
           + '<td>' + esc(row.course_label || '—') + '</td>'
@@ -115,6 +117,18 @@
       p.style.margin = 'var(--s2) var(--s4) 0';
       p.textContent = 'Click a row for the full course view — description, prerequisites, and grade history.';
       wrapEl.appendChild(p);
+
+      if (global.Citations) {
+        var terms = {};
+        rows.forEach(function (r) { if (r.year && r.semester) terms[r.year + '|' + r.semester] = r; });
+        var termKeys = Object.keys(terms);
+        var url = termKeys.length === 1
+          ? global.Citations.courseExplorerUrl(terms[termKeys[0]].year, terms[termKeys[0]].semester)
+          : global.Citations.courseExplorerUrl();
+        var cite = document.createElement('div');
+        cite.innerHTML = global.Citations.line(global.Citations.link(url, 'UIUC Course Explorer'));
+        wrapEl.appendChild(cite.firstChild);
+      }
     }
 
     async function renderCourseTab(subject, course, description) {
@@ -122,11 +136,13 @@
       if (!panel) return;
       var key = courseKey(subject, course);
       courseCache[key] = courseCache[key] || {};
+      var catalogUrl = global.Citations ? global.Citations.courseExplorerUrl(openCourseYear, openCourseSemester, subject, course) : null;
 
       if (openTab === 'overview') {
         panel.innerHTML = description
           ? '<p>' + esc(description) + '</p>'
           : '<p class="empty-state">No catalog description on file for this course.</p>';
+        if (catalogUrl) panel.innerHTML += global.Citations.line(global.Citations.link(catalogUrl, 'UIUC Course Explorer catalog'));
         return;
       }
 
@@ -149,6 +165,7 @@
         if (data.unlocks && data.unlocks.length) {
           html += '<p class="hint">Unlocks: ' + data.unlocks.map(function (u) { return esc(u.subject) + ' ' + esc(u.course_number); }).join(', ') + '</p>';
         }
+        if (catalogUrl) html += global.Citations.line('parsed from ' + global.Citations.link(catalogUrl, 'UIUC catalog descriptions'));
         panel.innerHTML = html;
         return;
       }
@@ -173,6 +190,7 @@
             + '<td class="num">' + esc(t.students != null ? t.students : '—') + '</td><td class="num">' + (t.average_gpa != null ? t.average_gpa : '—') + '</td></tr>';
         });
         ghtml += '</tbody></table>';
+        if (global.Citations) ghtml += global.Citations.line(global.Citations.link(global.Citations.GRADES_URL, 'wadefagen/datasets'));
         panel.innerHTML = ghtml;
       }
     }
@@ -184,7 +202,7 @@
       if (syncUrl) history.replaceState(null, '', location.pathname);
     }
 
-    function openCourseDetail(subject, course, description) {
+    function openCourseDetail(subject, course, description, year, semester) {
       var key = courseKey(subject, course);
       if (openCourseKey === key && !courseDetailEl.hidden) {
         closeCourseDetail();
@@ -192,6 +210,8 @@
       }
       openCourseKey = key;
       openCourseDescription = description || '';
+      openCourseYear = year || null;
+      openCourseSemester = semester || '';
       openTab = 'overview';
       wrapEl.querySelectorAll('tr.course-row.open').forEach(function (r) { r.classList.remove('open'); });
       wrapEl.querySelectorAll('tr.course-row[data-subject="' + subject + '"][data-course="' + course + '"]')
@@ -267,7 +287,7 @@
       }
 
       var row = e.target.closest('tr.course-row');
-      if (row) openCourseDetail(row.dataset.subject, row.dataset.course, row.dataset.description);
+      if (row) openCourseDetail(row.dataset.subject, row.dataset.course, row.dataset.description, row.dataset.year, row.dataset.semester);
     });
 
     return { render: render, openCourseDetail: openCourseDetail };

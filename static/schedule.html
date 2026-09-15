@@ -67,6 +67,7 @@
 </div>
 
 <script src="/schedule-store.js"></script>
+<script src="/citations.js"></script>
 <script src="/theme.js"></script>
 <script>
   const $ = (id) => document.getElementById(id);
@@ -167,7 +168,7 @@
         getJSON(`/meetings?crns=${crns.map(encodeURIComponent).join(',')}&year=${year}&semester=${semester}`),
       ]);
       renderConflictResult(conflictData, items);
-      renderTimes(meetings, items);
+      renderTimes(meetings, items, year, semester);
     } catch (e) {
       resultEl.innerHTML = `<p class="empty-state">Couldn't check this schedule: ${esc(e.message)}</p>`;
     }
@@ -193,7 +194,7 @@
     resultEl.innerHTML = html;
   }
 
-  function renderTimes(meetings, items) {
+  function renderTimes(meetings, items, year, semester) {
     const timesEl = $('sched-times');
     if (!meetings.length) {
       timesEl.innerHTML = '<p class="hint">No meeting-time data for these sections (fully online/async, or not loaded).</p>';
@@ -225,7 +226,8 @@
       }
       html += '</div>';
     }
-    timesEl.innerHTML = html || '<p class="hint">No meeting-time data for these sections.</p>';
+    timesEl.innerHTML = (html || '<p class="hint">No meeting-time data for these sections.</p>')
+      + Citations.line(Citations.link(Citations.courseExplorerUrl(year, semester), 'UIUC Course Explorer'));
   }
 
   // ---- .ics export --------------------------------------------------------
