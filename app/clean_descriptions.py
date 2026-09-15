@@ -35,7 +35,7 @@ def main():
     conn = db.get_connection()
 
     desc_rows = conn.execute(
-        "SELECT id, description FROM sections WHERE description LIKE '%<%'"
+        "SELECT id, description FROM sections WHERE description LIKE ?", ("%<%",)
     ).fetchall()
     desc_changed = 0
     for row in desc_rows:
@@ -45,7 +45,7 @@ def main():
             desc_changed += 1
 
     label_rows = conn.execute(
-        "SELECT id, course_label FROM sections WHERE course_label LIKE '%&amp;%'"
+        "SELECT id, course_label FROM sections WHERE course_label LIKE ?", ("%&amp;%",)
     ).fetchall()
     label_changed = 0
     for row in label_rows:

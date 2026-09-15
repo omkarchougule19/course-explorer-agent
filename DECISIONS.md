@@ -2149,3 +2149,42 @@ these were left showing the hint over an empty/error box since they never
 called the toggle. Fixed by hiding `.row-hint` explicitly in those three
 spots (`index.html` catch block + initial load; `departments.html` catch
 block + empty-result branch).
+
+## Populated last remaining empty departments on prod (2026-09-15)
+
+Synced BULG, CZCH, ES, WLTE for fall 2026 against the live Neon DB
+(`python -m app.sync_requests --run BULG CZCH ES WLTE`). All 4 succeeded:
+BULG 2 sections, CZCH 1, ES 7, WLTE 2.
+
+These were the only subjects left in the full fall-2026 catalog (186
+subjects, from `scraper.list_subjects`) with zero rows in `sections` across
+any term - the prior three sync batches this session already covered
+everything else. No known department is left unsynced on prod now.
+
+## Prod backfill for &amp; / <br> fixes, and a Postgres LIKE bug (2026-09-15)
+
+Ran `app/clean_descriptions.py` against prod (Neon). First attempt failed:
+`IndexError: tuple index out of range` from psycopg2. Root cause: `db.py`'s
+Postgres path passes the query text through psycopg2's client-side
+%-substitution whenever `params` is given (even an empty tuple) - a literal
+`%` in a `LIKE '%<%'` string constant gets parsed as a format placeholder
+instead of a literal character, since it's not a `?` this module's
+`_translate()` knows to protect.
+
+Fix: rewrote both queries in `clean_descriptions.py` to bind the LIKE
+pattern as a parameter (`LIKE ?`, params `("%<%",)`) instead of embedding
+it in the SQL text - `?` still gets `_translate()`'d to `%s` correctly, and
+a bound parameter is never subject to %-parsing. This is a bug in any
+future query written the same way (a literal `%` in Postgres SQL text with
+params passed), not just this script - worth remembering as a pattern.
+
+Result: 1053 `course_label` rows fixed (double-encoded `&amp;`), 0
+`description` rows needed the `<br>` strip (already clean). Idempotent,
+safe to re-run.
+
+## GGIS retry succeeded (2026-09-15)
+
+Retried `python -m app.sync_requests --run GGIS` (previously WAF-blocked in
+this session's third batch). Cleared this time: 35 courses, 68 sections
+saved to prod. Confirms that block was the documented transient WAF
+soft-block, not a permanent per-subject issue.
