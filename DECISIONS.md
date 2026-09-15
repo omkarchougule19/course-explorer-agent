@@ -2082,6 +2082,11 @@ handful of subjects (CS among them), everything else only had Spring 2026
 until manually synced, per the demand-driven refresh model. Confirmed
 after: AGCM +4, ASTR +42, ACCY +187, ANTH +73 sections written.
 
+Second batch, same run: 5 more random subjects from the still-missing list -
+ARTF +14, EIL +14, CW +40, RHET +107, GEOL +76. 9 of 187 subjects now carry
+real Fall 2026 data; the other 178 remain on whatever term their migration
+snapshot covered until synced.
+
 ## No more implying an instructor "isn't good" from a data gap (2026-09-15)
 
 The agent's own "empty result: say so plainly" rule (`app/agent.py`),
