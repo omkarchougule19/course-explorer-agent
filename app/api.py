@@ -703,15 +703,22 @@ def get_calendar(
 @app.get("/ask/summary")
 def get_ask_summary():
     """Public, non-sensitive: how many distinct clients have used the
-    assistant in the last 7 days - just an integer for the landing-page KPI
-    tile. No IPs, no question text. Fails soft to 0 so a cold Neon wake can't
-    break the page."""
+    assistant in the last 7 days (landing-page KPI tile), plus the shared
+    daily LLM-call budget and how much of it is used - drives the usage bar
+    under the assistant. No IPs, no question text. Fails soft to 0s so a
+    cold Neon wake or a missing table can't break the page."""
     try:
         with get_conn() as conn:
-            return {"unique_7d": ask_log_mod.unique_clients(conn, timedelta(days=7))}
+            outcomes_24h = ask_log_mod.outcome_counts(conn, timedelta(days=1))
+            global_calls_24h = outcomes_24h.get("answered", 0) + outcomes_24h.get("refused", 0)
+            return {
+                "unique_7d": ask_log_mod.unique_clients(conn, timedelta(days=7)),
+                "global_calls_24h": global_calls_24h,
+                "global_limit": ask_log_mod.GLOBAL_PER_DAY,
+            }
     except Exception as exc:  # noqa: BLE001 - KPI tile must not 5xx the page
         print(f"[ask/summary] failed: {exc!r}", flush=True)
-        return {"unique_7d": 0}
+        return {"unique_7d": 0, "global_calls_24h": 0, "global_limit": ask_log_mod.GLOBAL_PER_DAY}
 
 
 class ConflictCheckRequest(BaseModel):

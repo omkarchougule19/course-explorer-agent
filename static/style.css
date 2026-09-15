@@ -225,6 +225,60 @@ hr.rule { display: none; }
 }
 .system-note.show { display: block; }
 
+/* ---------- Usage note + budget bar (ask-hero) ---------- */
+.usage-note {
+  margin: 0 0 var(--s4);
+  padding: var(--s3) var(--s4);
+  background: #fff7ed;
+  border: 1px solid #fcd9b6;
+  border-left: 3px solid var(--orange);
+  border-radius: var(--radius);
+}
+.usage-note-text {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-family: var(--serif);
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+.usage-note-text .icon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  stroke: var(--orange);
+}
+.usage-bar-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin-top: var(--s2);
+}
+.usage-bar {
+  flex: 1 1 auto;
+  height: 6px;
+  background: rgba(20, 24, 31, 0.08);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.usage-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--blue);
+  border-radius: 999px;
+  transition: width 0.5s ease, background 0.3s ease;
+}
+.usage-bar-fill.high { background: var(--orange); }
+.usage-text {
+  flex-shrink: 0;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
 /* ---------- Ask hero (the primary action) ---------- */
 .ask-hero {
   padding: var(--s6);

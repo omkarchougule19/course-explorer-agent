@@ -1887,3 +1887,28 @@ triggered via the JS console; it was never verified end-to-end as an actual
 page-load event in a real browser, local or prod, before this session ended
 - a gap in how it was tested, not just bad luck. Removed the markup, JS, and
 CSS cleanly (self-contained addition, no other code depended on it).
+
+## Shared-LLM-budget caution note + a live usage bar (2026-09-15)
+
+Students hitting a dead assistant with no explanation (once
+`ASK_GLOBAL_PER_DAY` is spent) reads as broken rather than as a known,
+temporary limit. Added a visible caution block above the ask form
+(`static/index.html`, `.usage-note`) explaining the project is under active
+development on a small free LLM budget, and that browsing/search/prereqs/
+grade-history keep working regardless (true - those are plain SQL, not
+LLM-gated, so it's an honest reassurance, not just a caveat). Same point
+added as one sentence to `about.html`'s "What it isn't" section for anyone
+who lands there first.
+
+**The usage bar is real data, not decoration.** `GET /ask/summary` (already
+public, already used for the "People Asking" KPI) now also returns
+`global_calls_24h` and `global_limit` - computed from the same
+`answered`+`refused` count in `ask_log` that `ask_log.global_over_limit()`
+already uses to enforce the cap, so the bar can never show a number that
+disagrees with what actually gates the assistant. Deliberately did *not*
+expose the per-IP hourly/day limits this way - that would mean silently
+identifying a viewer's own IP-scoped usage to render it, which the
+`/ask/summary` endpoint's own docstring promises not to do ("No IPs, no
+question text"); the per-IP limit still gets surfaced, just directly at
+the point of being hit (`api.py`'s existing blocked-request error message),
+not proactively.

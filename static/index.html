@@ -49,6 +49,16 @@
   <section class="panel ask-hero">
     <h2>Ask the Course Assistant <button type="button" class="link-btn" id="new-chat" hidden>New chat</button></h2>
     <p class="ask-lead">Ask about courses, sections, instructors, or gen-eds. Follow-ups work — it remembers the last few turns. Answers come from the latest snapshot of each department, not a live feed.</p>
+    <div class="usage-note" id="usage-note">
+      <div class="usage-note-text">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+        <span>This project is under active development and runs on a small, shared free LLM budget. If the daily limit below is reached, the assistant may stop answering for a while — try again later. Browsing, search, prerequisites, and grade history below always keep working regardless.</span>
+      </div>
+      <div class="usage-bar-row" id="usage-bar-row" hidden>
+        <div class="usage-bar"><div class="usage-bar-fill" id="usage-bar-fill"></div></div>
+        <span class="usage-text" id="usage-text"></span>
+      </div>
+    </div>
     <form id="ask-form" class="ask-form">
       <input id="ask-input" type="text" placeholder="e.g. Which CS courses have the most sections this fall?" autocomplete="off">
       <button type="submit">
@@ -211,7 +221,17 @@
     try {
       const data = await getJSON('/ask/summary');
       countUp($('stat-visitors'), data.unique_7d);
-    } catch (e) { /* leave the tile at — */ }
+      const used = Number(data.global_calls_24h) || 0;
+      const limit = Number(data.global_limit) || 0;
+      if (limit > 0) {
+        const pct = Math.min(100, Math.round((used / limit) * 100));
+        const fill = $('usage-bar-fill');
+        fill.style.width = pct + '%';
+        fill.classList.toggle('high', pct >= 85);
+        $('usage-text').textContent = `${used} / ${limit} questions answered today`;
+        $('usage-bar-row').hidden = false;
+      }
+    } catch (e) { /* leave the tile at —, usage bar stays hidden */ }
   }
 
   async function loadFreshness() {
