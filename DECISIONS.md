@@ -1912,3 +1912,69 @@ identifying a viewer's own IP-scoped usage to render it, which the
 question text"); the per-IP limit still gets surfaced, just directly at
 the point of being hit (`api.py`'s existing blocked-request error message),
 not proactively.
+
+## Schedule builder, instructor pages, sharable course links, dark mode, trending chips (2026-09-15)
+
+**Schedule builder (`static/schedule.html` + `static/schedule-store.js`).**
+`POST /schedule/conflicts` and the `meetings` table already existed but had
+no frontend at all. Added an "Add" button per row in Browse Sections that
+pushes a section into a localStorage-backed cart (`schedule-store.js`,
+shared across every page for the nav badge) - client-side only, no server
+concept of a schedule, matching the rest of the app's no-accounts design.
+`schedule.html` lists the cart, checks the selected term's sections against
+`/schedule/conflicts`, and lists real meeting times via a new `GET
+/meetings` endpoint (mirrors the same query `/schedule/conflicts` already
+ran internally, just exposed generically instead of only for conflicting
+pairs). Also exports a `.ics` file, built client-side: term start/end dates
+come from the already-loaded academic calendar (`instruction`/`finals`
+categories) with a 16-week fallback when that term's calendar isn't loaded.
+Caught and fixed one real bug while testing live: the day's meeting-time
+list sorted `start_time` strings lexically ("01:00 PM" sorted before
+"09:00 AM" as text) instead of chronologically - fixed by parsing to
+minutes-of-day before sorting.
+
+**Instructor pages (`static/instructor.html`).** New page, reached by
+clicking an instructor's name (now a link) in Browse Sections or a course's
+grade-history table - not a top-level nav destination, since there's no
+"browse all instructors" list, only a target for an already-known name.
+Built entirely from existing endpoints, no new backend: `GET /sections?
+instructor=` (no year/semester filter) grouped client-side into distinct
+courses + terms taught, then per-course `GET /courses/{s}/{c}/grade-trend?
+instructor=` calls (best-effort, 404 on no data is just "nothing to show").
+
+**Sharable course links (`index.html`).** The course quick-view already
+existed as pure in-page JS state with no URL trace. `openCourseDetail()` now
+calls `history.replaceState` with `?course=SUBJ-NUM` on open and clears it
+on close; a `Copy Link` button next to `Close` copies the current URL. On
+load, `?course=` in the address bar re-opens that course's panel via one
+`/sections` lookup for its description.
+
+**Dark mode.** Explicit toggle (localStorage + `data-theme` attribute) wins
+over the OS `prefers-color-scheme`, which is the default when no explicit
+choice has been made - same navy/gold family inverted, not a second
+palette, since every color was already a token in `style.css`. A tiny
+inline script in each page's `<head>` sets the attribute before first paint
+to avoid a flash of the wrong theme. The one hand-maintained exception is
+`.banner`'s gradient, which mixes hardcoded dark-navy stops with `var(
+--blue)` - harmless when `--blue` is dark, but `--blue` becomes a light
+blue in dark mode, so dark mode gets its own all-dark gradient override
+rather than inheriting the mixed one.
+
+**Mobile "jump to Ask" FAB (`index.html` only).** Shown only once scrolled
+past the ask-hero's own bottom edge, so it never floats over the assistant
+it exists to get you back to.
+
+**Trending suggested-question chips.** Wanted to make the 4 example chips
+on the homepage reflect real usage, but a live "most-asked questions" feed
+would mean publishing verbatim question text - which `/ask/summary`'s own
+design explicitly refuses to do, since it's free-text a student typed and
+could contain anything. Resolved (per explicit direction) by extracting
+only course codes already mentioned in recent questions server-side
+(`ask_log.trending_courses()`, regex-matched against real subject codes) and
+never returning the questions themselves - a course code isn't personal,
+it's the same public catalog data Browse Sections already shows. The
+frontend then wraps each trending code in one of a few generic templates
+("Who teaches CS 225 this fall?"), so what's shown is real signal reframed
+into a generic question, never a student's actual wording. New `GET
+/ask/trending` endpoint; falls back to the original static chips (kept in
+the markup) when there isn't enough data yet.

@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>try{var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
 <title>How It Works — Illini Course Copilot</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -23,8 +24,12 @@
     <a href="/">Home</a>
     <a href="/departments.html">Departments</a>
     <a href="/calendar.html">Calendar</a>
+    <a href="/schedule.html">Schedule<span class="schedule-badge" id="schedule-badge" hidden>0</span></a>
     <a href="/freshness.html">Data Freshness</a>
     <a href="/about.html" class="active">How It Works</a>
+    <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Toggle dark mode">
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+    </button>
   </div>
 </nav>
 
@@ -93,5 +98,7 @@
 
 </div>
 
+<script src="/schedule-store.js"></script>
+<script src="/theme.js"></script>
 </body>
 </html>

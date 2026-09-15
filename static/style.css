@@ -159,6 +159,29 @@ hr.rule { display: none; }
 }
 .site-nav a:hover { color: var(--ink); text-decoration: none; }
 .site-nav a.active { color: var(--blue); border-bottom-color: var(--orange); }
+.schedule-badge {
+  display: inline-block;
+  min-width: 16px;
+  margin-left: 4px;
+  padding: 0 5px;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.5;
+  text-align: center;
+  color: #fff;
+  background: var(--orange);
+  border-radius: 999px;
+}
+.theme-toggle {
+  margin-left: auto;
+  padding: 4px 9px;
+  font-size: 12px;
+  color: var(--muted);
+  background: none;
+  border: 1px solid var(--line-strong);
+}
+.theme-toggle:hover { filter: none; color: var(--blue); border-color: var(--blue); }
+.theme-toggle .icon { width: 14px; height: 14px; }
 
 /* ---------- KPI strip ---------- */
 .kpi-strip {
@@ -557,7 +580,8 @@ tbody tr.course-row.open td { background: var(--row-hover); }
   font-weight: 700;
   color: var(--blue);
 }
-.course-detail-close {
+.course-detail-actions { display: flex; gap: var(--s2); flex-shrink: 0; }
+.course-detail-close, .course-detail-share {
   padding: 4px 9px;
   font-size: 12px;
   color: var(--muted);
@@ -1000,6 +1024,156 @@ td .cell-clip.open { white-space: normal; overflow: visible; }
 .hist-turn { margin: var(--s2) 0; padding-left: var(--s3); border-left: 2px solid var(--line-strong); }
 .hist-turn b { color: var(--blue); }
 
+/* ---------- Schedule builder (schedule.html) ---------- */
+.sched-add-btn {
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--link);
+  background: #fff;
+  border: 1px solid var(--line-strong);
+}
+.sched-add-btn.added { color: #fff; background: var(--blue); border-color: var(--blue); }
+.sched-add-btn .icon { width: 12px; height: 12px; }
+
+.sched-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding: var(--s3) var(--s4);
+  border-bottom: 1px solid var(--line);
+}
+.sched-item:last-child { border-bottom: 0; }
+.sched-item-main { display: flex; flex-direction: column; gap: 2px; }
+.sched-item-title { font-family: var(--display); font-weight: 700; color: var(--blue); }
+.sched-item-meta { font-family: var(--sans); font-size: 12px; color: var(--muted); }
+.sched-item-remove {
+  padding: 4px 9px;
+  font-size: 11px;
+  color: var(--closed);
+  background: #fff;
+  border: 1px solid var(--line-strong);
+}
+.sched-item-remove:hover { border-color: var(--closed); filter: none; }
+
+.sched-conflict {
+  margin-top: var(--s4);
+  padding: var(--s3) var(--s4);
+  font-family: var(--serif);
+  font-size: 14px;
+  color: var(--closed);
+  background: rgba(138, 28, 92, 0.06);
+  border: 1px solid var(--closed);
+  border-left: 3px solid var(--closed);
+  border-radius: var(--radius);
+}
+.sched-ok {
+  margin-top: var(--s4);
+  padding: var(--s3) var(--s4);
+  font-family: var(--serif);
+  font-size: 14px;
+  color: var(--open);
+  background: rgba(10, 125, 60, 0.06);
+  border: 1px solid var(--open);
+  border-left: 3px solid var(--open);
+  border-radius: var(--radius);
+}
+
+/* A plain day-by-day meeting list rather than a true visual grid - a real
+   weekly grid needs to handle overlaps, all-day/async sections, and varying
+   term start times; a sorted list gets 90% of the value (see your times at
+   a glance) for a fraction of the layout complexity. */
+.sched-day-group { margin-bottom: var(--s4); }
+.sched-day-group h4 {
+  margin: 0 0 var(--s2);
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.sched-slot {
+  display: flex;
+  gap: var(--s3);
+  padding: 6px 0;
+  font-size: 13.5px;
+}
+.sched-slot .sched-time { flex: 0 0 130px; font-variant-numeric: tabular-nums; color: var(--ink-2); }
+.sched-slot .sched-what { color: var(--ink); }
+
+/* ---------- Instructor page ---------- */
+.instructor-course {
+  padding: var(--s4);
+  border-bottom: 1px solid var(--line);
+}
+.instructor-course:last-child { border-bottom: 0; }
+.instructor-course h3 {
+  margin: 0 0 4px;
+  font-family: var(--display);
+  font-size: 17px;
+  color: var(--blue);
+}
+.instructor-course .hint { margin-top: 4px; }
+
+/* ---------- Dark mode ----------
+   Explicit toggle (data-theme, set by the theme-toggle button + persisted
+   in localStorage) always wins; absent an explicit choice, follow the OS
+   preference. Same navy/gold family, just inverted for a dark ground -
+   not a second, unrelated palette. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --blue: #6ea8dc;
+    --blue-2: #3a5f8a;
+    --orange: #e0973f;
+    --link: #7fabf7;
+    --bg: #10161f;
+    --bg-2: #1a2230;
+    --panel: #171f2b;
+    --zebra: #141b26;
+    --row-hover: #1e2937;
+    --line: #2a3444;
+    --line-strong: #3c4a5c;
+    --field-line: #46566b;
+    --ink: #e6eaf0;
+    --ink-2: #b9c2cf;
+    --muted: #8892a0;
+  }
+}
+:root[data-theme="dark"] {
+  --blue: #6ea8dc;
+  --blue-2: #3a5f8a;
+  --orange: #e0973f;
+  --link: #7fabf7;
+  --bg: #10161f;
+  --bg-2: #1a2230;
+  --panel: #171f2b;
+  --zebra: #141b26;
+  --row-hover: #1e2937;
+  --line: #2a3444;
+  --line-strong: #3c4a5c;
+  --field-line: #46566b;
+  --ink: #e6eaf0;
+  --ink-2: #b9c2cf;
+  --muted: #8892a0;
+}
+/* The base .banner gradient mixes hardcoded dark-navy stops with var(--blue)
+   in the middle - fine when --blue is dark, but --blue becomes a light blue
+   in dark mode, which would put a bright band between two dark stops. Give
+   dark mode its own all-dark gradient instead. */
+:root[data-theme="dark"] .banner {
+  background: linear-gradient(150deg, #1a2c47 0%, #0f1d33 55%, #060d1a 100%);
+}
+:root[data-theme="dark"] thead th { background: var(--bg-2); }
+:root[data-theme="dark"] .kpi { box-shadow: none; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .banner {
+    background: linear-gradient(150deg, #1a2c47 0%, #0f1d33 55%, #060d1a 100%);
+  }
+  :root:not([data-theme="light"]) thead th { background: var(--bg-2); }
+  :root:not([data-theme="light"]) .kpi { box-shadow: none; }
+}
+
 /* ---------- Narrow screens (phones / small tablets) ----------
    The layout above is desktop-first with no breakpoints; this block makes
    it usable under ~640px. Main offenders were the multi-field filter row in
@@ -1050,4 +1224,24 @@ td .cell-clip.open { white-space: normal; overflow: visible; }
   .admin-gate { margin-top: 6vh; }
   .admin-gate form { flex-direction: column; }
   .chart svg { height: 150px; }
+
+  /* Sticky "jump to Ask" FAB (index.html only) - once you've scrolled past
+     the assistant while browsing, this is quicker than scrolling all the
+     way back up on a phone. */
+  .mobile-ask-fab {
+    display: flex;
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 30;
+    align-items: center;
+    gap: 6px;
+    padding: 12px 18px;
+    font-size: 14px;
+    border-radius: 999px;
+    box-shadow: var(--shadow-md);
+  }
+}
+@media (min-width: 641px) {
+  .mobile-ask-fab { display: none; }
 }

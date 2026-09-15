@@ -721,6 +721,54 @@ def get_ask_summary():
         return {"unique_7d": 0, "global_calls_24h": 0, "global_limit": ask_log_mod.GLOBAL_PER_DAY}
 
 
+@app.get("/ask/trending")
+def get_ask_trending():
+    """Public: the most-mentioned course codes in the last 7 days' worth of
+    questions, for the homepage's suggested-question chips. Course codes
+    only, never question text - see ask_log.trending_courses(). Fails soft
+    to an empty list so the frontend falls back to its static chips."""
+    try:
+        with get_conn() as conn:
+            subjects = {r["subject"] for r in run_query(conn, "SELECT DISTINCT subject FROM sections", [])}
+            return {"courses": ask_log_mod.trending_courses(conn, subjects, timedelta(days=7))}
+    except Exception as exc:  # noqa: BLE001 - decorative feature, must not break the page
+        print(f"[ask/trending] failed: {exc!r}", flush=True)
+        return {"courses": []}
+
+
+class MeetingOut(BaseModel):
+    crn: str
+    meeting_type: Optional[str]
+    days_of_week: Optional[str]
+    start_time: Optional[str]
+    end_time: Optional[str]
+    building: Optional[str]
+    room: Optional[str]
+
+
+@app.get("/meetings", response_model=list[MeetingOut])
+def get_meetings(crns: str, year: int, semester: str):
+    """Meeting day/time/location for a set of CRNs in one term - powers the
+    schedule builder's grid (schedule.html), which needs every picked
+    section's meeting info, not just the conflicting pairs /schedule/
+    conflicts returns. `crns` is a comma-separated list."""
+    crn_list = [c.strip() for c in crns.split(",") if c.strip()]
+    if not crn_list:
+        raise HTTPException(status_code=400, detail="crns is required")
+    placeholders = ",".join(["?"] * len(crn_list))
+    with get_conn() as conn:
+        rows = run_query(
+            conn,
+            f"""
+            SELECT crn, meeting_type, days_of_week, start_time, end_time, building, room
+            FROM meetings
+            WHERE year = ? AND semester = ? AND crn IN ({placeholders})
+            """,
+            [year, semester.lower(), *crn_list],
+        )
+    return [dict(r) for r in rows]
+
+
 class ConflictCheckRequest(BaseModel):
     # Cap the list: the comparison is O(n^2) over meetings, and a real
     # schedule is a handful of sections. 50 is generous.

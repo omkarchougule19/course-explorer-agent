@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>try{var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
 <title>Illini Course Copilot</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -26,8 +27,12 @@
     <a href="/" class="active">Home</a>
     <a href="/departments.html">Departments</a>
     <a href="/calendar.html">Calendar</a>
+    <a href="/schedule.html">Schedule<span class="schedule-badge" id="schedule-badge" hidden>0</span></a>
     <a href="/freshness.html">Data Freshness</a>
     <a href="/about.html">How It Works</a>
+    <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Toggle dark mode">
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+    </button>
   </div>
 </nav>
 
@@ -149,8 +154,15 @@
 
 </div>
 
+<button type="button" class="mobile-ask-fab" id="mobile-ask-fab" hidden>
+  <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+  Ask
+</button>
+
 <script src="/time.js"></script>
 <script src="/md.js"></script>
+<script src="/schedule-store.js"></script>
+<script src="/theme.js"></script>
 <script>
   const $ = (id) => document.getElementById(id);
   const REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -217,6 +229,29 @@
     }
   }
 
+  // ---- Trending suggested-question chips ---------------------------------
+  // Reframes real usage into generic templates rather than ever showing a
+  // student's actual typed question - see ask_log.trending_courses().
+  // Leaves the last chip (a topic search, not a course lookup) alone for
+  // variety, and falls back to the static defaults already in the markup
+  // if there isn't enough trending data yet.
+  const CHIP_TEMPLATES = [
+    (c) => `Who teaches ${c} this fall?`,
+    (c) => `What sections does ${c} have left?`,
+    (c) => `What's the prerequisite for ${c}?`,
+  ];
+  async function loadTrendingChips() {
+    try {
+      const data = await getJSON('/ask/trending');
+      const courses = data.courses || [];
+      if (!courses.length) return;
+      const buttons = [...$('chips').querySelectorAll('.chip')].slice(0, -1);
+      courses.slice(0, buttons.length).forEach((course, i) => {
+        buttons[i].textContent = CHIP_TEMPLATES[i % CHIP_TEMPLATES.length](course);
+      });
+    } catch (e) { /* keep the static defaults already in the markup */ }
+  }
+
   async function loadAskSummary() {
     try {
       const data = await getJSON('/ask/summary');
@@ -266,7 +301,7 @@
       wrap.innerHTML = '<p class="empty-state">No sections match those filters. Try clearing the instructor field or choosing a different subject.</p>';
       return;
     }
-    const labels = ['Subj', 'Course', 'Section', 'CRN', 'Instructor', 'Status', 'Credit'];
+    const labels = ['Subj', 'Course', 'Section', 'CRN', 'Instructor', 'Status', 'Credit', ''];
     let html = '<table><thead><tr>' + labels.map(l => `<th>${l}</th>`).join('') + '</tr></thead><tbody>';
     for (const row of rows) {
       const titleAttr = row.description ? ` title="${esc(row.description)}"` : '';
@@ -278,14 +313,27 @@
       }
       const subj = esc(row.subject ?? '');
       const num = esc(row.course_number ?? '');
+      const crn = esc(row.crn ?? '');
+      const instructorCell = row.instructor
+        ? `<a class="instructor-link" href="/instructor.html?name=${encodeURIComponent(row.instructor)}">${esc(row.instructor)}</a>`
+        : '—';
+      const added = crn && window.ScheduleStore && ScheduleStore.has(row.crn);
+      const addBtn = crn
+        ? `<button type="button" class="sched-add-btn${added ? ' added' : ''}" `
+          + `data-crn="${crn}" data-year="${row.year ?? ''}" data-semester="${esc(row.semester ?? '')}" `
+          + `data-subject="${subj}" data-course="${num}" data-course-label="${esc(row.course_label ?? '')}" `
+          + `data-section="${esc(row.section_name ?? '')}" data-instructor="${esc(row.instructor ?? '')}" `
+          + `data-credit="${esc(row.credit_hours ?? '')}">${added ? 'Added' : 'Add'}</button>`
+        : '';
       html += `<tr class="course-row" data-subject="${subj}" data-course="${num}" data-description="${esc(row.description ?? '')}"${titleAttr}>`
         + `<td>${subj || '—'}</td>`
         + `<td class="num">${num || '—'}</td>`
         + `<td>${esc(row.section_name ?? '—')}</td>`
-        + `<td class="crn">${esc(row.crn ?? '—')}</td>`
-        + `<td>${esc(row.instructor ?? '—')}</td>`
+        + `<td class="crn">${crn || '—'}</td>`
+        + `<td>${instructorCell}</td>`
         + `<td>${statusCell}</td>`
         + `<td>${esc(row.credit_hours ?? '—')}</td>`
+        + `<td>${addBtn}</td>`
         + `</tr>`;
     }
     html += '</tbody></table>';
@@ -367,7 +415,10 @@
       }
       let html = '<table><thead><tr><th>Term</th><th>Instructor</th><th>Students</th><th>Avg GPA</th></tr></thead><tbody>';
       for (const t of data.trend) {
-        html += `<tr><td>${esc(t.year_term ?? '—')}</td><td>${esc(t.primary_instructor ?? '—')}</td>`
+        const who = t.primary_instructor
+          ? `<a class="instructor-link" href="/instructor.html?name=${encodeURIComponent(t.primary_instructor)}">${esc(t.primary_instructor)}</a>`
+          : '—';
+        html += `<tr><td>${esc(t.year_term ?? '—')}</td><td>${who}</td>`
           + `<td class="num">${esc(t.students ?? '—')}</td><td class="num">${t.average_gpa ?? '—'}</td></tr>`;
       }
       html += '</tbody></table>';
@@ -382,6 +433,7 @@
       box.hidden = true;
       openCourseKey = null;
       document.querySelectorAll('#results-wrap tr.course-row.open').forEach(r => r.classList.remove('open'));
+      history.replaceState(null, '', location.pathname);
       return;
     }
     openCourseKey = key;
@@ -390,12 +442,16 @@
     document.querySelectorAll('#results-wrap tr.course-row.open').forEach(r => r.classList.remove('open'));
     document.querySelectorAll(`#results-wrap tr.course-row[data-subject="${subject}"][data-course="${course}"]`)
       .forEach(r => r.classList.add('open'));
+    history.replaceState(null, '', `?course=${encodeURIComponent(subject)}-${encodeURIComponent(course)}`);
 
     box.hidden = false;
     box.innerHTML = `
       <div class="course-detail-head">
         <h3>${esc(subject)} ${esc(course)}</h3>
-        <button type="button" class="course-detail-close">Close</button>
+        <div class="course-detail-actions">
+          <button type="button" class="course-detail-share">Copy Link</button>
+          <button type="button" class="course-detail-close">Close</button>
+        </div>
       </div>
       <div class="course-tabs">
         <button type="button" class="course-tab active" data-tab="overview">Overview</button>
@@ -409,11 +465,46 @@
   }
 
   $('browse-panel').addEventListener('click', (e) => {
+    if (e.target.closest('.instructor-link')) return;  // let the anchor navigate normally
+    const addBtn = e.target.closest('.sched-add-btn');
+    if (addBtn) {
+      const crn = addBtn.dataset.crn;
+      if (ScheduleStore.has(crn)) {
+        ScheduleStore.remove(crn);
+        addBtn.classList.remove('added');
+        addBtn.textContent = 'Add';
+      } else {
+        ScheduleStore.add({
+          year: Number(addBtn.dataset.year) || null,
+          semester: addBtn.dataset.semester,
+          subject: addBtn.dataset.subject,
+          course_number: addBtn.dataset.course,
+          course_label: addBtn.dataset.courseLabel,
+          section_name: addBtn.dataset.section,
+          crn: crn,
+          instructor: addBtn.dataset.instructor,
+          credit_hours: addBtn.dataset.credit,
+        });
+        addBtn.classList.add('added');
+        addBtn.textContent = 'Added';
+      }
+      return;
+    }
     const closeBtn = e.target.closest('.course-detail-close');
     if (closeBtn) {
       $('course-detail').hidden = true;
       openCourseKey = null;
       document.querySelectorAll('#results-wrap tr.course-row.open').forEach(r => r.classList.remove('open'));
+      history.replaceState(null, '', location.pathname);
+      return;
+    }
+    const shareBtn = e.target.closest('.course-detail-share');
+    if (shareBtn) {
+      navigator.clipboard.writeText(location.href).then(() => {
+        const original = shareBtn.textContent;
+        shareBtn.textContent = 'Copied!';
+        setTimeout(() => { shareBtn.textContent = original; }, 1500);
+      }).catch(() => { /* clipboard unavailable - link is still in the address bar */ });
       return;
     }
     const tabBtn = e.target.closest('.course-tab');
@@ -745,11 +836,45 @@
   });
 
   $('results-wrap').innerHTML = SEARCH_EMPTY;
+  // ---- Sharable course links (?course=SUBJ-123) -------------------------
+  // openCourseDetail() itself keeps the URL in sync (history.replaceState)
+  // while a course panel is open; this is just the reverse direction, run
+  // once on load, for opening whatever the incoming link points at.
+  async function openSharedCourseFromURL() {
+    const course = new URLSearchParams(location.search).get('course');
+    if (!course) return;
+    const dash = course.lastIndexOf('-');
+    if (dash < 1) return;
+    const subject = course.slice(0, dash).toUpperCase();
+    const number = course.slice(dash + 1);
+    try {
+      const rows = await getJSON(`/sections?subject=${encodeURIComponent(subject)}&course_number=${encodeURIComponent(number)}&limit=1`);
+      openCourseDetail(subject, number, rows[0] ? rows[0].description : '');
+    } catch (e) { /* unknown/bad course in the link - leave the page as-is */ }
+  }
+
+  // ---- Mobile "jump to Ask" FAB ------------------------------------------
+  // Shown only past the ask-hero's own bottom edge, so it's never floating
+  // over the assistant it's meant to get you back to.
+  const askHeroEl = document.querySelector('.ask-hero');
+  const fab = $('mobile-ask-fab');
+  if (askHeroEl && fab) {
+    document.addEventListener('scroll', () => {
+      fab.hidden = window.scrollY < askHeroEl.offsetTop + askHeroEl.offsetHeight;
+    }, { passive: true });
+    fab.addEventListener('click', () => {
+      askHeroEl.scrollIntoView({ behavior: REDUCED ? 'auto' : 'smooth', block: 'start' });
+      setTimeout(() => $('ask-input').focus(), REDUCED ? 0 : 400);
+    });
+  }
+
   loadStats();
   loadTerms();
   loadSubjects();
   loadFreshness();
   loadAskSummary();
+  loadTrendingChips();
+  openSharedCourseFromURL();
 </script>
 </body>
 </html>

@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>try{var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+<title>Instructor — Illini Course Copilot</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Roboto:wght@300;400;500;600;700&display=swap">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header class="banner">
+  <div class="wrap">
+    <h1><a href="/">Illini Course Copilot</a></h1>
+    <p class="subtitle" id="instructor-subtitle">What a course's instructor has taught, and their grade history.</p>
+  </div>
+</header>
+
+<nav class="site-nav">
+  <div class="wrap">
+    <a href="/">Home</a>
+    <a href="/departments.html">Departments</a>
+    <a href="/calendar.html">Calendar</a>
+    <a href="/schedule.html">Schedule<span class="schedule-badge" id="schedule-badge" hidden>0</span></a>
+    <a href="/freshness.html">Data Freshness</a>
+    <a href="/about.html">How It Works</a>
+    <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Toggle dark mode">
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+    </button>
+  </div>
+</nav>
+
+<div class="wrap">
+
+  <div class="panel" style="margin-top: var(--s6);" id="instructor-panel">
+    <p class="empty-state">Loading…</p>
+  </div>
+
+  <footer>
+    Illini Course Copilot &middot; <a href="/">&larr; back to explorer</a> &middot; <a href="/api">API info</a>
+  </footer>
+
+</div>
+
+<script src="/schedule-store.js"></script>
+<script src="/theme.js"></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+
+  async function getJSON(url) {
+    const res = await fetch(url);
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.detail || `Request failed (${res.status})`);
+    return body;
+  }
+
+  const TERM_ORDER = { spring: 0, summer: 1, fall: 2 };
+  function termLabel(year, semester) {
+    return `${semester.charAt(0).toUpperCase()}${semester.slice(1)} ${year}`;
+  }
+  function termSort(a, b) {
+    return (b.year - a.year) || (TERM_ORDER[b.semester] - TERM_ORDER[a.semester]);
+  }
+
+  function courseKeyOf(r) { return `${r.subject}|${r.course_number}`; }
+
+  async function loadInstructor() {
+    const name = new URLSearchParams(location.search).get('name');
+    const panel = $('instructor-panel');
+    if (!name) {
+      panel.innerHTML = '<p class="empty-state">No instructor specified. Click an instructor’s name from Browse Sections or a course’s grade history to land here.</p>';
+      return;
+    }
+    document.title = `${name} — Illini Course Copilot`;
+    $('instructor-subtitle').textContent = `Courses taught by ${name}, and their grade history where available.`;
+
+    let sections;
+    try {
+      sections = await getJSON(`/sections?instructor=${encodeURIComponent(name)}&limit=1000`);
+    } catch (e) {
+      panel.innerHTML = `<p class="empty-state">Couldn't load this instructor's sections: ${esc(e.message)}</p>`;
+      return;
+    }
+    if (!sections.length) {
+      panel.innerHTML = `<p class="empty-state">No sections found for an instructor matching "${esc(name)}".</p>`;
+      return;
+    }
+
+    const courses = new Map();  // "SUBJ|123" -> { subject, course_number, course_label, terms: Set, sectionCount }
+    for (const s of sections) {
+      const key = courseKeyOf(s);
+      if (!courses.has(key)) {
+        courses.set(key, { subject: s.subject, course_number: s.course_number, course_label: s.course_label, terms: new Map(), sectionCount: 0 });
+      }
+      const c = courses.get(key);
+      c.sectionCount++;
+      const termKey = `${s.year}|${s.semester}`;
+      c.terms.set(termKey, { year: s.year, semester: s.semester });
+    }
+
+    panel.innerHTML = `<h2>${esc(name)}</h2>`;
+    const list = document.createElement('div');
+    panel.appendChild(list);
+
+    const sortedCourses = [...courses.values()].sort((a, b) =>
+      a.subject.localeCompare(b.subject) || String(a.course_number).localeCompare(String(b.course_number))
+    );
+
+    for (const c of sortedCourses) {
+      const block = document.createElement('div');
+      block.className = 'instructor-course';
+      const terms = [...c.terms.values()].sort(termSort).map(t => termLabel(t.year, t.semester));
+      block.innerHTML = `
+        <h3>${esc(c.subject)} ${esc(c.course_number)}${c.course_label ? ' — ' + esc(c.course_label) : ''}</h3>
+        <p class="hint">Taught: ${terms.map(esc).join(', ')} &middot; ${c.sectionCount} section${c.sectionCount === 1 ? '' : 's'} total</p>
+        <div class="instructor-grades"><p class="empty-state">Loading grade history…</p></div>
+      `;
+      list.appendChild(block);
+
+      // Best-effort, per course - a course with no grade_distributions rows
+      // for this instructor 404s, which just means "nothing to show" here.
+      getJSON(`/courses/${encodeURIComponent(c.subject)}/${encodeURIComponent(c.course_number)}/grade-trend?instructor=${encodeURIComponent(name)}`)
+        .then((data) => {
+          const rows = data.trend || [];
+          if (!rows.length) { block.querySelector('.instructor-grades').innerHTML = ''; return; }
+          let html = '<table><thead><tr><th>Term</th><th>Students</th><th>Avg GPA</th></tr></thead><tbody>';
+          for (const t of rows) {
+            html += `<tr><td>${esc(t.year_term ?? '—')}</td><td class="num">${esc(t.students ?? '—')}</td><td class="num">${t.average_gpa ?? '—'}</td></tr>`;
+          }
+          html += '</tbody></table>';
+          block.querySelector('.instructor-grades').innerHTML = html;
+        })
+        .catch(() => { block.querySelector('.instructor-grades').innerHTML = ''; });
+    }
+  }
+
+  loadInstructor();
+</script>
+</body>
+</html>

@@ -43,6 +43,8 @@ Tunable via env vars, all with sane defaults:
 """
 
 import os
+import re
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 from app import db
@@ -290,6 +292,34 @@ def daily_counts(conn: db.Connection, days: int = 30) -> list:
         {"day": r["day"], "questions": int(r["questions"]), "uniq": int(r["uniq"])}
         for r in rows
     ]
+
+
+def trending_courses(conn: db.Connection, subjects: "set[str]", since: timedelta = timedelta(days=7),
+                      limit: int = 6) -> list[str]:
+    """Which course codes show up most in recent questions - for the
+    homepage's suggested-question chips. Deliberately returns catalog course
+    codes only (e.g. "CS 225"), never the question text itself: /ask/summary
+    and this function both hold the line that raw free-text questions never
+    become public, since a student could have typed anything into that box.
+    A course code isn't personal - it's the same public catalog data Browse
+    Sections already shows for anyone."""
+    if not subjects:
+        return []
+    pattern = re.compile(
+        r"\b(" + "|".join(re.escape(s) for s in subjects) + r")\s?(\d{2,3}[A-Z]?)\b",
+        re.IGNORECASE,
+    )
+    w, p = _window(since, "AND")
+    rows = conn.execute(
+        "SELECT question FROM ask_log WHERE outcome IN ('answered', 'refused')" + w,
+        p,
+    ).fetchall()
+
+    counts: Counter = Counter()
+    for r in rows:
+        for subj, num in pattern.findall(r["question"] or ""):
+            counts[f"{subj.upper()} {num.upper()}"] += 1
+    return [code for code, _ in counts.most_common(limit)]
 
 
 def summary(conn: db.Connection) -> dict:
