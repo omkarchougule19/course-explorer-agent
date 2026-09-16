@@ -223,19 +223,32 @@ def run_syncs(subjects: list[str], top: "int | None" = None) -> int:
         snapshot = int(srow["pending_count"]) if srow else 0
 
         soft_rejected = False
+        probe_rejected = False
         for (y, s) in term_list:
             res = scraper.run(
                 y, s, subjects=[subj], skip_recent_hours=RECENT_HOURS, quiet_errors=True
             )
             found = res["per_subject"].get(subj, {}).get("courses_found")
-            if (y, s) == cur and prior > 0 and found == 0:
-                soft_rejected = True
+            if (y, s) == cur:
+                # `found is None` means the term-level probe itself failed
+                # (WAF returned malformed XML) before this subject was ever
+                # scraped - a stronger block signal than "found 0 courses",
+                # and one that applies even to a subject with no prior data
+                # (prior == 0 doesn't mean "genuinely empty" here - it means
+                # we got no signal at all).
+                if found is None:
+                    probe_rejected = True
+                elif prior > 0 and found == 0:
+                    soft_rejected = True
 
-        if soft_rejected:
+        if soft_rejected or probe_rejected:
             wall += 1
             blocked.append(subj)
-            print(f"  ! {subj}: current term returned 0 courses but {prior} sections "
-                  f"are on file - soft-reject.", flush=True)
+            if probe_rejected:
+                print(f"  ! {subj}: term probe was rejected - soft-reject.", flush=True)
+            else:
+                print(f"  ! {subj}: current term returned 0 courses but {prior} sections "
+                      f"are on file - soft-reject.", flush=True)
             if wall >= WALL_STREAK:
                 print(f"\nStopping - {wall} departments in a row look soft-rejected. "
                       f"Wait a while and re-run.", flush=True)

@@ -2188,3 +2188,41 @@ Retried `python -m app.sync_requests --run GGIS` (previously WAF-blocked in
 this session's third batch). Cleared this time: 35 courses, 68 sections
 saved to prod. Confirms that block was the documented transient WAF
 soft-block, not a permanent per-subject issue.
+
+## Wall detection missed a failure mode: term-probe rejects (2026-09-15)
+
+While syncing fall 2026 for the 164 remaining departments, the run finished
+reporting all 164 "Synced" - but only 23 actually got data written; 141 were
+silently no-ops.
+
+Root cause: `scraper.run()` can fail two different ways under WAF pressure -
+(a) the subject-level scrape completes but finds 0 courses (`courses_found
+== 0`), which the existing wall check catches when `prior > 0`; or (b) the
+*term-level* probe itself gets rejected (malformed XML) before any subject
+scraping starts, in which case `per_subject` has no entry for the subject at
+all and `courses_found` comes back `None`. The check was `if found == 0`,
+and `None == 0` is `False`, so case (b) fell into the success branch -
+`wall` got reset to 0 and the subject was appended to `done`, even though
+nothing was written for it. Since case (b) is what actually happened
+repeatedly, the stop condition never fired.
+
+Fix: treat `found is None` (term probe rejected) as its own block signal,
+independent of `prior` - it means "we got no signal", not "this department
+is genuinely empty" (that inference only holds for case (a) with `prior ==
+0`, which is unaffected). It now counts toward the wall streak like a
+soft-reject.
+
+Real prod state after that run: 45 of 186 fall-2026 subjects have data (up
+from 22); 141 still don't. Re-run planned after a cooldown, now that the
+detection will actually stop and report cleanly instead of masking the
+block.
+
+## Fall 2026 dept sync stopped for now (2026-09-15)
+
+Stopped the fall-2026 catch-up sync at the user's request. State as of
+stopping: 63 of 186 subjects have fall-2026 data; 123 (BASQ, BCOG, and
+everything alphabetically after) still don't. WAF wall is currently up at
+BASQ/BCOG. Resume later with:
+`python -m app.sync_requests --run BASQ BCOG BCS ...` (see git log for the
+full remaining list, or just re-derive it: subjects with no `year=2026
+AND semester='fall'` rows).
