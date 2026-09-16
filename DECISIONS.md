@@ -2226,3 +2226,57 @@ BASQ/BCOG. Resume later with:
 `python -m app.sync_requests --run BASQ BCOG BCS ...` (see git log for the
 full remaining list, or just re-derive it: subjects with no `year=2026
 AND semester='fall'` rows).
+
+## RateMyProfessors: link out, don't scrape (2026-09-16)
+
+Considered adding RMP ratings data to the app directly. Rejected: RMP's own
+Terms of Use explicitly prohibit scraping/automated access without prior
+permission, and every "dataset" found elsewhere (Kaggle, Mendeley, Apify,
+GitHub) traces back to someone else's scrape done in violation of that same
+clause - using it doesn't grant a license, it just launders the origin.
+Checked for a legitimate alternative first: UIUC's own official teaching
+evaluations (the `teachers_ranked_excellent` table, sourced from
+`github.com/illinois/teachers-ranked-as-excellent`, first-party CITL data)
+is the right one already integrated - but it's stale, since ICES was
+retired for a new FLEX-based award starting fall 2025 and that GitHub repo
+hasn't tracked the transition.
+
+Built instead: a plain outbound link to RMP's own search, which carries
+none of the scraping risk - it's just a hyperlink, same as any citation
+link already in the app, and it always reflects RMP's live current data
+rather than a stale copy. `Citations.rmpSearchUrl()` (static/citations.js)
+builds `https://www.ratemyprofessors.com/search/professors/1112?q=<surname>`
+- 1112 is UIUC's school id on RMP, confirmed live against RMP's own search
+result URLs, not guessed. Deliberately queries the surname only (the part
+before the comma in the stored "Last, F" format): tested live, the full
+"Last, F" string degrades badly (RMP appears to OR-match the tokens - e.g.
+"Beard, J" surfaced 760 mostly-unrelated results because it also loosely
+matched on "J" against other professors), while the surname alone gave 3
+clean, correct matches. No match resolution attempted on this app's side -
+per the user, if RMP's own search can't find the professor, let RMP's own
+"no results" state handle that rather than trying to guess/gate it here.
+
+A small "RMP" badge now sits next to every instructor link
+(`instructorLink()` in course-results.js, shared by the results table and
+quick-view) and on the instructor detail page header, which also carries a
+one-line disclaimer that ratings are self-selected and don't reflect
+grading rigor - pairing the same caution the user wanted next to any
+professor-reputation signal, grade-based or not.
+
+Also extended the AI chat: when an answer lists 2+ courses/sections, the
+agent now includes crn and instructor per row and links both - the course
+to this site's own `/?course=SUBJ-NUM` deep link, the instructor to the
+same RMP search - so a student doesn't need a follow-up query just to get
+a CRN or a professor's rating (new Rule in agent.py's SYSTEM_CONTEXT).
+This needed one addition to the chat's tiny hand-rolled Markdown renderer
+(`static/md.js`), which had no link support at all before now -
+`linkify()` only ever accepts a same-site relative path or an
+`https://` URL as the href, since the renderer's whole premise is that
+LLM output is untrusted and must never reach innerHTML unsanitized.
+
+Looked into linking average course GPA the same way too, per a "not sure
+if feasible" ask - turned out to already be fully built and more accurate
+than any external link could be: `/courses/{subject}/{course_number}/
+grade-trend` computes it per-term, per-instructor from the same first-party
+grade_distributions dataset already cited elsewhere, and it's shown in the
+quick-view's Grade History tab. Nothing to add there.

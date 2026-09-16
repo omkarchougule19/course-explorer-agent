@@ -105,7 +105,11 @@
       c.terms.set(termKey, { year: s.year, semester: s.semester });
     }
 
-    panel.innerHTML = `<h2>${esc(name)}</h2>`;
+    const rmpUrl = Citations.rmpSearchUrl(name);
+    panel.innerHTML = `
+      <h2>${esc(name)}${rmpUrl ? ` <a class="rmp-link" href="${rmpUrl}" target="_blank" rel="noopener">RMP</a>` : ''}</h2>
+      ${rmpUrl ? '<p class="hint">Ratings on RateMyProfessors are self-selected by students who chose to leave one, and don\'t account for a course\'s difficulty or grading rigor — worth reading alongside the grade history below, not instead of it.</p>' : ''}
+    `;
     const list = document.createElement('div');
     panel.appendChild(list);
 

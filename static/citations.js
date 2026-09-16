@@ -33,6 +33,26 @@
 
   var GRADES_URL = 'https://github.com/wadefagen/datasets';
 
+  // UIUC's school id on RateMyProfessors (confirmed against RMP's own search
+  // result URLs, not guessed). Linking to RMP's search - not scraping it -
+  // carries none of the ToS/legal risk scraping their data would: see
+  // DECISIONS.md's "RateMyProfessors: link out, don't scrape" entry.
+  var RMP_SCHOOL_ID = '1112';
+
+  // Stored instructor names are "Last, F" (surname, first initial - see
+  // scraper.py's fetch_section_detail()). Verified live against RMP's search:
+  // querying the full "Last, F" string degrades badly (RMP seems to OR-match
+  // the tokens, e.g. "Beard, J" surfaced 760 mostly-unrelated results
+  // because it also loosely matched on "J"), while the surname alone gives
+  // clean results. So this strips to just the part before the comma.
+  function rmpSearchUrl(instructor) {
+    if (!instructor) return null;
+    var surname = String(instructor).split(',')[0].trim();
+    if (!surname || surname === '-') return null;
+    return 'https://www.ratemyprofessors.com/search/professors/' + RMP_SCHOOL_ID
+      + '?q=' + encodeURIComponent(surname);
+  }
+
   function line(html) {
     return '<p class="citation">Source: ' + html + '</p>';
   }
@@ -45,6 +65,7 @@
     courseExplorerUrl: courseExplorerUrl,
     registrarCalendarUrl: registrarCalendarUrl,
     GRADES_URL: GRADES_URL,
+    rmpSearchUrl: rmpSearchUrl,
     line: line,
     link: link,
   };

@@ -535,6 +535,22 @@ td.crn { font-family: var(--mono); font-size: 12px; }
 .citation a { color: var(--muted); text-decoration: underline; }
 .citation a:hover { color: var(--link); }
 
+/* Compact secondary link next to an instructor name, opens RateMyProfessors'
+   own search (never scraped - see DECISIONS.md). Deliberately small and
+   muted so it doesn't compete with the primary instructor.html link. */
+.rmp-link {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0 3px;
+  text-decoration: none;
+  vertical-align: middle;
+}
+.rmp-link:hover { color: var(--link); border-color: var(--link); }
+
 .table-more {
   padding: var(--s3) var(--s4);
   font-family: var(--serif);

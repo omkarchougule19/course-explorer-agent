@@ -20,12 +20,29 @@
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return ESC[c]; });
   }
 
+  // [text](url) - only ever emitted by the agent for its own known-safe
+  // link shapes (a same-site "/?course=SUBJ-NUM" deep link, or an
+  // "https://ratemyprofessors.com/..." search link - see agent.py's Rules).
+  // The URL is restricted to those two shapes here regardless of what the
+  // model actually wrote, since this is untrusted LLM output going into
+  // innerHTML: a scheme like "javascript:" is never allowed through, link
+  // text is already-escaped by the time this runs, and the href itself
+  // passes through unescaped only because escapeHtml() already ran on the
+  // whole line before inline() sees it.
+  function linkify(escaped) {
+    return escaped.replace(/\[([^\[\]\n]+)\]\((\/[^\s()]*|https:\/\/[^\s()]+)\)/g, function (m, text, url) {
+      var external = /^https:\/\//.test(url);
+      return '<a href="' + url + '"' + (external ? ' target="_blank" rel="noopener noreferrer"' : '') + '>' + text + '</a>';
+    });
+  }
+
   // Applied to already-escaped text. `code` first so ** inside a code span
-  // stays literal; then **bold**, then *italic* (the italic pattern requires
-  // a non-space, non-word boundary on both sides so "3 * 4" isn't matched).
+  // stays literal; then links, then **bold**, then *italic* (the italic
+  // pattern requires a non-space, non-word boundary on both sides so
+  // "3 * 4" isn't matched).
   function inline(escaped) {
-    return escaped
-      .replace(/`([^`]+)`/g, '<code>$1</code>')
+    return linkify(escaped
+      .replace(/`([^`]+)`/g, '<code>$1</code>'))
       .replace(/\*\*([^*\n]+?)\*\*/g, '<strong>$1</strong>')
       .replace(/(?<![\w*])\*(?!\s)([^*\n]+?)(?<!\s)\*(?![\w*])/g, '<em>$1</em>');
   }
