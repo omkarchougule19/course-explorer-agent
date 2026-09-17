@@ -54,6 +54,17 @@ _DATE_RE = re.compile(
     r"(?:\s*[–—-]\s*(?:(?P<mon2>[A-Za-z]{3,9})\.?\s+)?(?P<d2>\d{1,2}))?\s*$"
 )
 
+# Some registrar events are split across two adjacent block elements - a
+# title line, then a separate "Month Day at H:MM PM" line giving the exact
+# time. That second fragment doesn't match _DATE_RE (it has a trailing "at
+# <time>", so it isn't a bare date), and on its own it isn't a real event
+# either - it's a continuation of the title fragment right before it. This
+# catches that shape so it gets merged into the previous title instead of
+# becoming its own bogus "October 13 at 2:00 PM" row (see DECISIONS.md).
+_DATE_TIME_ONLY_RE = re.compile(
+    r"^\s*[A-Za-z]{3,9}\.?\s+\d{1,2}\s+at\s+\d{1,2}(:\d{2})?\s*[AaPp]\.?[Mm]\.?\s*$"
+)
+
 # title keyword -> category, first match wins (order matters).
 _CATEGORY_RULES = [
     (r"final exam|final examination", "finals"),
@@ -185,6 +196,11 @@ def extract_events(html: str, term_year: int, semester: str, source_url: str | N
             continue
         if cur is None or len(frag) < 4:
             continue
+        if _DATE_TIME_ONLY_RE.match(frag) and rows and rows[-1][2] == cur[0]:
+            prev = rows[-1]
+            merged_title = (prev[4] + " - " + frag.strip(" ."))[:300]
+            rows[-1] = prev[:4] + (merged_title, _categorize(merged_title)) + prev[6:]
+            continue
         title = frag.strip(" .")[:300]
         rows.append((
             term_year, semester, cur[0], cur[1], title,
@@ -240,4 +256,5 @@ if __name__ == "__main__":
     except Exception as exc:  # noqa: BLE001
         print(f"Failed: {exc}", flush=True)
         sys.exit(1)
-    print(f"Loaded {n} calendar events for {args.term} into {DB_PATH}.", flush=True)
+    target = "Neon Postgres (DATABASE_URL)" if db.is_postgres() else str(DB_PATH)
+    print(f"Loaded {n} calendar events for {args.term} into {target}.", flush=True)

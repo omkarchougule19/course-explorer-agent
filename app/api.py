@@ -689,7 +689,7 @@ def get_calendar(
     if category:
         query += " AND category = ?"
         params.append(category.lower())
-    query += " ORDER BY event_date, title"
+    query += " ORDER BY event_date DESC, title"
 
     with get_conn() as conn:
         try:

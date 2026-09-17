@@ -2319,3 +2319,49 @@ data (CGGE). It correctly answered "There are no CGGE sections listed for
 Fall 2026" with an accurate citation, no invented names. The rule holds
 under a live empty-result case; no code change made, since nothing
 reproduced.
+
+## Calendar page fixes: reverse-chron order + garbled event fragments (2026-09-16)
+
+Two issues found on a full top-to-bottom check of the Calendar page:
+
+**Order flipped to newest-first.** Per the user, the calendar should read
+like a feed - latest date at top, oldest at bottom - not chronological
+ascending. Changed `/calendar`'s `ORDER BY event_date, title` to
+`ORDER BY event_date DESC, title` in api.py. The frontend groups
+consecutive same-date rows into one card using a `Map` in whatever order
+the API returns them, so no JS change was needed - the backend sort alone
+reorders the cards.
+
+**Garbled "October 13 at 2:00 PM"-style entries, fixed at the source.**
+Root cause in `load_calendar.py`: the registrar sometimes splits one
+logical event across two adjacent block elements - a title `<p>`, then a
+separate `<p>Month Day at H:MM PM</p>` giving the exact time. Both are
+block-level, so the text-flattening parser (`_Text`) split them into two
+independent fragments. The date+time fragment didn't match `_DATE_RE` (it
+has a trailing "at <time>", not a bare date), so it fell through and
+became its own meaningless standalone event instead of attaching to the
+real title right before it.
+
+Fix: added `_DATE_TIME_ONLY_RE` to recognize that specific "Month Day at
+H:MM PM" shape, and when it appears right after a real title under the
+same date heading, merge it into that title (` - Month Day at time`)
+instead of emitting a new row. Verified against the live registrar page
+(fall 2026): 91 events parsed, 0 orphaned date/time-only rows, and the
+three previously-bogus rows now read correctly, e.g. "Degree conferral.
+Diplomas will be shipped in approximately 9 weeks - December 22 at 2:00
+PM". Re-ran the loader against prod directly to fix the already-loaded
+data (`python -m app.load_calendar --term 2026-fall --url
+https://registrar.illinois.edu/fall-2026-academic-calendar/`).
+
+Also fixed while in there: `load_calendar.py`'s final success message
+always printed the local SQLite path regardless of which backend was
+actually used (unlike scraper.py, which correctly checks
+`db.is_postgres()`) - cosmetic only, the write itself was going to the
+right place, but the confirmation message lied about where. Matched it to
+scraper.py's existing pattern.
+
+Residual, left alone: a rarer one-off case ("TBD at 2:00 PM", no
+month/day) still stands as its own short row rather than merging - it
+doesn't match the "Month Day at time" shape this fix specifically
+targeted, and on its own it's short and readable enough not to be worth
+chasing further for one occurrence.
