@@ -2416,3 +2416,36 @@ course as bad, just acknowledges it's a hot topic.
 Tested locally by seeding ask_log with repeated "CS 225" mentions to
 force /ask/trending to return real data, confirmed the label and new chip
 wording render correctly, then removed the seeded rows.
+
+## Chat state was getting wiped by clicking a course link (2026-09-16)
+
+Reported: asking a question, then clicking a course hyperlink in the
+answer, made the whole query+answer vanish. Root cause: the AI chat's
+course links (e.g. `[CS 225](/?course=CS-225)`, added earlier this
+session) are real `<a href>` tags. `openSharedCourseFromURL()` already
+handled that URL shape, but only on page *load* - nothing intercepted a
+click on such a link once the page was already showing chat state, so a
+normal left-click just navigated the browser to `/?course=CS-225`,
+reloading the page and wiping the in-memory (deliberately unpersisted)
+chat transcript. This is the same class of link a table row already
+opens in-place without navigating; the chat's version just wasn't wired
+into that path.
+
+Fix: extracted the URL-parsing/open logic into one `openCourseByCode()`
+function (used by both the page-load case and the new path), and added a
+document-level click listener that intercepts any same-origin, unmodified
+left-click on an `/?course=SUBJ-NUM` link anywhere on the page - stopping
+the navigation and opening the quick-view in place instead, exactly like
+clicking a results-table row already does. Modified clicks (ctrl/cmd/
+shift/middle-click, for opening in a new tab) are left alone.
+
+Verified by dispatching a real click on such a link while a chat answer
+was showing: `chatIntact` (scrollback DOM unchanged) and the quick-view
+opened, with the URL updating via the same `history.replaceState` the
+share-link feature already used - no reload occurred.
+
+Noted in passing, not fixed here (doesn't touch state, low-priority
+cosmetic issue): the model sometimes wraps a CRN in a Markdown link with
+a placeholder `#` href (e.g. `[35917](#)`) even though the Rule never
+told it to link CRN - harmless (clicking it does nothing) but reads like
+a broken link.

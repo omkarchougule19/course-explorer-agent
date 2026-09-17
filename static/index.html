@@ -627,11 +627,11 @@
   document.querySelector('.row-hint').hidden = true;
   // ---- Sharable course links (?course=SUBJ-123) -------------------------
   // openCourseDetail() itself keeps the URL in sync (history.replaceState)
-  // while a course panel is open; this is just the reverse direction, run
-  // once on load, for opening whatever the incoming link points at.
-  async function openSharedCourseFromURL() {
-    const course = new URLSearchParams(location.search).get('course');
-    if (!course) return;
+  // while a course panel is open. This one function opens a course by its
+  // "SUBJ-NUM" code, fetching section info first since a link (whether the
+  // incoming page URL, or a course link the AI chat renders inline in an
+  // answer) only ever carries the code, not the full row.
+  async function openCourseByCode(course) {
     const dash = course.lastIndexOf('-');
     if (dash < 1) return;
     const subject = course.slice(0, dash).toUpperCase();
@@ -642,6 +642,30 @@
       browseResults.openCourseDetail(subject, number, row ? row.description : '', row ? row.year : null, row ? row.semester : '');
     } catch (e) { /* unknown/bad course in the link - leave the page as-is */ }
   }
+
+  async function openSharedCourseFromURL() {
+    const course = new URLSearchParams(location.search).get('course');
+    if (course) await openCourseByCode(course);
+  }
+
+  // A course link the AI chat renders (e.g. "[CS 225](/?course=CS-225)")
+  // is a real <a href> - state (the whole chat transcript, unpersisted by
+  // design) was getting wiped because a plain left-click just navigated
+  // the page instead of opening the course in place, the way clicking a
+  // results-table row already does. Intercept it the same way, anywhere
+  // on the page, and leave modified clicks (new tab, etc.) alone.
+  document.addEventListener('click', (e) => {
+    if (e.defaultPrevented || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+    const a = e.target.closest('a[href]');
+    if (!a) return;
+    let url;
+    try { url = new URL(a.href, location.href); } catch (err) { return; }
+    if (url.origin !== location.origin || url.pathname !== '/') return;
+    const course = url.searchParams.get('course');
+    if (!course) return;
+    e.preventDefault();
+    openCourseByCode(course);
+  });
 
   // ---- Mobile "jump to Ask" FAB ------------------------------------------
   // Shown only past the ask-hero's own bottom edge, so it's never floating
