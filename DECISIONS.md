@@ -2365,3 +2365,36 @@ month/day) still stands as its own short row rather than merging - it
 doesn't match the "Month Day at time" shape this fix specifically
 targeted, and on its own it's short and readable enough not to be worth
 chasing further for one occurrence.
+
+## Calendar: site chrome was leaking in as bogus events (2026-09-16)
+
+User re-checked after the previous calendar fix deployed and still saw
+"so much nonsense stuff." Root cause was bigger than the earlier fix: the
+newest date bucket (Jan 8 2027) was full of page footer/navigation
+content wrongly attributed to it as if it were calendar events - "901
+West Illinois Street", "Office Hours: Monday - Friday", "Contact Us",
+"Email: registrar@illinois.edu", and a literal `{"prefetch":[...` JSON
+blob from a `<script type="speculationrules">` tag.
+
+Two causes, both fixed:
+
+1. `extract_events()` fed the *entire* page HTML to the parser with no
+   concept of where the real calendar content ends. The registrar's
+   actual `.entry-content` div closes, then a `<footer>` and multiple
+   `<script>` blocks follow - all of which got walked as if they were
+   more calendar text, attributed to whatever the last real date heading
+   was, since there's no signal telling the parser "stop, the list is
+   over." Fixed by truncating the HTML at the literal
+   `<!-- .entry-content -->` comment WordPress renders right after the
+   real content closes, before parsing anything past it.
+2. `_Text` (the HTML-to-text flattener) had no concept of `<script>`/
+   `<style>` content being code, not page text - `handle_data` collected
+   everything indiscriminately, including a `<script>`'s raw JSON.
+   Fixed with a skip-depth counter that suppresses `handle_data` while
+   inside either tag.
+
+Verified against the live registrar page: 79 events (down from 91 - the
+12 removed were 100% the footer junk), zero rows matching any of the
+known junk markers (address, office hours, contact links, the JSON
+blob). Re-ran the loader against prod to fix the already-loaded data,
+confirmed via the live `/calendar` API afterward.

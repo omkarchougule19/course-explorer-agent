@@ -111,13 +111,21 @@ def init_table(conn: db.Connection) -> None:
 
 
 class _Text(HTMLParser):
-    """Flatten HTML to newline-separated text fragments (one per block)."""
+    """Flatten HTML to newline-separated text fragments (one per block).
+
+    Skips text inside <script>/<style> - their content is code/JSON, never
+    page text, and without this a page's speculation-rules or emoji-data
+    <script> blob gets read as if it were calendar text (see DECISIONS.md's
+    "calendar page fixes" entry - a literal '{"prefetch":[...' JSON string
+    was showing up as a bogus event before this)."""
     _BLOCK = {"dt", "dd", "li", "p", "br", "tr", "div", "h1", "h2", "h3", "h4"}
+    _SKIP = {"script", "style"}
 
     def __init__(self):
         super().__init__()
         self.parts: list[str] = []
         self._buf: list[str] = []
+        self._skip_depth = 0
 
     def _flush(self):
         s = re.sub(r"\s+", " ", "".join(self._buf)).strip()
@@ -126,15 +134,20 @@ class _Text(HTMLParser):
         self._buf = []
 
     def handle_starttag(self, tag, attrs):
+        if tag in self._SKIP:
+            self._skip_depth += 1
         if tag in self._BLOCK:
             self._flush()
 
     def handle_endtag(self, tag):
+        if tag in self._SKIP and self._skip_depth:
+            self._skip_depth -= 1
         if tag in self._BLOCK:
             self._flush()
 
     def handle_data(self, data):
-        self._buf.append(data)
+        if not self._skip_depth:
+            self._buf.append(data)
 
     def close(self):
         super().close()
@@ -182,7 +195,23 @@ def _categorize(title: str) -> str:
     return "other"
 
 
+
+# Marks the end of the registrar page's actual article body (WordPress
+# renders this literal comment right after the real .entry-content div
+# closes). Everything past it is site chrome - the footer's address,
+# office hours, and nav links - which used to get swept in as if it were
+# more calendar text and attributed to whichever date heading happened to
+# be last, producing nonsense entries like "901 West Illinois Street"
+# under the final real date (see DECISIONS.md). Truncating here is a
+# no-op (keeps the full page) if the site ever drops this comment.
+_CONTENT_END_MARKER = "<!-- .entry-content -->"
+
+
 def extract_events(html: str, term_year: int, semester: str, source_url: str | None):
+    end = html.find(_CONTENT_END_MARKER)
+    if end != -1:
+        html = html[:end]
+
     parser = _Text()
     parser.feed(html)
     parser.close()
