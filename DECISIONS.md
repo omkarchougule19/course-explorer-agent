@@ -2280,3 +2280,42 @@ than any external link could be: `/courses/{subject}/{course_number}/
 grade-trend` computes it per-term, per-instructor from the same first-party
 grade_distributions dataset already cited elsewhere, and it's shown in the
 quick-view's Grade History tab. Nothing to add there.
+
+## RMP link narrowed to the instructor page only (2026-09-16)
+
+Simplified the RMP feature per feedback: the inline "RMP" badge next to
+every instructor name in the results table/quick-view was clutter -
+clicking a professor's name should just go to their existing internal
+instructor.html page, like it always did. `instructorLink()` in
+course-results.js is back to a single link.
+
+The RMP outbound link now lives in exactly one place - the instructor
+page's header, restyled as "Ratings ->" instead of a boxed "RMP" tag, more
+legible next to a name-sized heading.
+
+Also updated the AI chat's instructor links to match: they now point at
+`/instructor.html?name=...` (this site's own page) instead of straight to
+RMP. Per the user, the goal was never to save a *click* - it's to avoid a
+follow-up *AI question* (which costs against the shared daily budget); a
+plain internal page link costs nothing, so routing through it first is
+free and keeps one URL-building convention everywhere instead of two.
+
+## Investigated "BDI shows nothing + assistant invents a professor" report (2026-09-16)
+
+A feedback submission reported Browse Sections returning nothing for BDI
+and the assistant giving generic/fabricated info (an example: "professor
+john doe"). Reproduced live on prod: BDI now returns 11 real fall-2026
+sections with real instructors (Park, Du, Guymon, Brunner) through both
+Browse Sections and the chat assistant, correctly cited. Root cause: BDI
+had zero rows in the database until this session's fall-2026 sync batch
+ran a few hours before this investigation - the report was almost
+certainly filed before that sync completed, when the department was
+genuinely empty.
+
+The more important question - whether the assistant fabricates an answer
+instead of following its "empty result: say so plainly, don't guess" rule
+- was retested directly against a subject still genuinely missing fall-2026
+data (CGGE). It correctly answered "There are no CGGE sections listed for
+Fall 2026" with an accurate citation, no invented names. The rule holds
+under a live empty-result case; no code change made, since nothing
+reproduced.

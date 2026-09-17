@@ -41,13 +41,9 @@
   }
 
   function instructorLink(name) {
-    if (!name) return '—';
-    var html = '<a class="instructor-link" href="/instructor.html?name=' + encodeURIComponent(name) + '">' + esc(name) + '</a>';
-    var rmpUrl = global.Citations && global.Citations.rmpSearchUrl(name);
-    if (rmpUrl) {
-      html += ' <a class="rmp-link" href="' + rmpUrl + '" target="_blank" rel="noopener" title="Search this name on RateMyProfessors">RMP</a>';
-    }
-    return html;
+    return name
+      ? '<a class="instructor-link" href="/instructor.html?name=' + encodeURIComponent(name) + '">' + esc(name) + '</a>'
+      : '—';
   }
 
   /**
