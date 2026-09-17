@@ -71,6 +71,7 @@
         Send
       </button>
     </form>
+    <p class="chips-label" id="chips-label" hidden>What everyone's stressing about this week</p>
     <div class="chips" id="chips">
       <button type="button" class="chip">Who teaches CS 225 this fall?</button>
       <button type="button" class="chip">Which courses satisfy a QR gen-ed?</button>
@@ -239,7 +240,7 @@
   // variety, and falls back to the static defaults already in the markup
   // if there isn't enough trending data yet.
   const CHIP_TEMPLATES = [
-    (c) => `Who teaches ${c} this fall?`,
+    (c) => `Is ${c} as rough as people say?`,
     (c) => `What sections does ${c} have left?`,
     (c) => `What's the prerequisite for ${c}?`,
   ];
@@ -252,6 +253,7 @@
       courses.slice(0, buttons.length).forEach((course, i) => {
         buttons[i].textContent = CHIP_TEMPLATES[i % CHIP_TEMPLATES.length](course);
       });
+      $('chips-label').hidden = false;
     } catch (e) { /* keep the static defaults already in the markup */ }
   }
 

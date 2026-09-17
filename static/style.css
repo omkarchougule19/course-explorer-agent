@@ -472,6 +472,16 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; transform: none; 
 }
 .hint a { text-decoration: underline; }
 
+.chips-label {
+  margin: var(--s3) 0 var(--s2);
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--orange);
+}
+
 /* ---------- Results table ---------- */
 .results-wrap {
   margin-top: var(--s4);

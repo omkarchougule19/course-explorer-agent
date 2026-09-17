@@ -2398,3 +2398,21 @@ Verified against the live registrar page: 79 events (down from 91 - the
 known junk markers (address, office hours, contact links, the JSON
 blob). Re-ran the loader against prod to fix the already-loaded data,
 confirmed via the live `/calendar` API afterward.
+
+## Playful trending-chips framing (2026-09-16)
+
+Added a lighthearted label above the trending question chips - "WHAT
+EVERYONE'S STRESSING ABOUT THIS WEEK" - and reworded the first chip
+template from "Who teaches X this fall?" to "Is X as rough as people
+say?". Both only appear once `/ask/trending` actually returns real
+courses (`loadTrendingChips()` reveals `#chips-label` on success); the
+static default chips (which aren't trending-derived) keep their original
+neutral phrasing so the playful framing never misrepresents placeholder
+examples as real aggregate signal. Kept the tone light rather than
+mocking, per the same spirit as the "don't imply a professor isn't good
+from a data gap" rule already in agent.py - nothing here singles out a
+course as bad, just acknowledges it's a hot topic.
+
+Tested locally by seeding ask_log with repeated "CS 225" mentions to
+force /ask/trending to return real data, confirmed the label and new chip
+wording render correctly, then removed the seeded rows.
