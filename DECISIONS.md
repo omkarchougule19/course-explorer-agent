@@ -2791,3 +2791,37 @@ get today when the 120b is capped, but it is a low-traffic safety net, not extra
 capacity. Rejected for now: setting a low `max_tokens` on the fallback client to
 dodge that rejection, since it could truncate answers and it is not yet known how
 Groq computes "expected output" for this model.
+
+---
+
+## "Vibes" became schedule sub-filters on the Browse panel (2026-09-20)
+
+The vibe chips sat in the assistant panel and each sent a canned question to the
+LLM ("No 8ams" asked for CS 100/200-level courses starting at 10 AM or later).
+The owner pointed out that nobody browses by vibe: students pick a subject
+first and want the vibe to narrow it. They were also CS-only, spent Groq budget
+for something a query can do, and returned an answer instead of the section
+list. Now they are toggle chips inside Browse Sections: "No 8ams"
+(`starts_after=09:00`), "Done by 5" (`ends_before=17:00`) and "No Fridays"
+(`no_days=F`), combinable with each other and with subject/level/instructor.
+They call `/sections` directly: no LLM, no daily-budget cost. The old chat
+chips "Busiest profs" and "Gen-ed finder" were removed rather than ported; they
+are not sub-filters (a ranking and a category lookup) and would need a
+`gen_ed` filter and an instructor join to do properly. Tell the owner if they
+should come back.
+
+Semantics chosen: a section passes only if every one of its timed meetings
+passes (a 9 AM lecture with an 8 AM Friday discussion is dropped from "No
+8ams"), and sections with no timed meetings (online, ARRANGED) pass, since they
+cannot clash. Filters need a `subject` (the API returns 400 otherwise, and the UI
+shows a hint) because meeting lookup is per subject; done in Python after the
+SQL fetch, like the level filter, because times are text.
+
+Bug found on the way: the two databases store times differently. Local SQLite has
+"03:00 PM"; production Neon has "03:00PM". `_parse_time` only accepted the
+spaced form, so on production every time parsed to None and the schedule
+conflict checker (`/schedule/conflicts`) has been silently reporting no
+conflicts. Fixed by stripping spaces before parsing. Not fixed: `SYSTEM_CONTEXT`
+in `app/agent.py` tells the model start_time looks like '10:00 AM', which is
+wrong for Neon, so LLM-written time comparisons there may be off. Covered by
+`evals/test_schedule_filters.py`.

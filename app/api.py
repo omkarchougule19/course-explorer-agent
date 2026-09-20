@@ -240,6 +240,33 @@ def _course_level(course_number: Optional[str]) -> Optional[str]:
     return "undergrad"
 
 
+def _parse_hhmm(raw: Optional[str], name: str):
+    """A 24-hour 'HH:MM' query value (e.g. '09:00') as a time, or None if unset."""
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw.strip(), "%H:%M").time()
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"{name} must be HH:MM in 24-hour time, e.g. 09:00")
+
+
+def _meetings_fit(meetings: list[dict], starts_after, ends_before, no_days: set) -> bool:
+    """True if every timed meeting of a section passes the schedule filters:
+    nothing starts before `starts_after`, nothing ends after `ends_before`, and
+    no meeting falls on a day in `no_days`. A section with no timed meetings
+    (online / arranged) passes, since it can't clash with any of these."""
+    for m in meetings:
+        if no_days and set((m.get("days_of_week") or "").upper()) & no_days:
+            return False
+        start = _parse_time(m.get("start_time"))
+        end = _parse_time(m.get("end_time"))
+        if starts_after and start and start < starts_after:
+            return False
+        if ends_before and end and end > ends_before:
+            return False
+    return True
+
+
 @app.get("/sections", response_model=list[SectionOut])
 def get_sections(
     subject: Optional[str] = None,
@@ -248,9 +275,21 @@ def get_sections(
     semester: Optional[str] = None,
     instructor: Optional[str] = None,
     level: Optional[str] = Query(default=None, description="undergrad | 400level | grad"),
+    starts_after: Optional[str] = Query(default=None, description="HH:MM (24h); drop sections with a meeting that starts earlier, e.g. 09:00 for 'no 8 AMs'"),
+    ends_before: Optional[str] = Query(default=None, description="HH:MM (24h); drop sections with a meeting that ends later, e.g. 17:00"),
+    no_days: Optional[str] = Query(default=None, max_length=7, description="day letters to avoid (M T W R F S U), e.g. F for no Fridays"),
     limit: int = Query(default=100, le=1000, ge=1),
 ):
-    """Query individual sections with optional filters."""
+    """Query individual sections with optional filters. `starts_after`,
+    `ends_before` and `no_days` are schedule filters over each section's
+    meeting times; they need a `subject` (the meeting lookup is per subject)."""
+    t_after = _parse_hhmm(starts_after, "starts_after")
+    t_before = _parse_hhmm(ends_before, "ends_before")
+    avoid = {c for c in (no_days or "").upper() if c in "MTWRFSU"}
+    schedule_filter = bool(t_after or t_before or avoid)
+    if schedule_filter and not subject:
+        raise HTTPException(status_code=400, detail="pick a subject to use schedule filters")
+
     query = "SELECT * FROM sections WHERE 1=1"
     params: list = []
     if subject:
@@ -274,12 +313,36 @@ def get_sections(
     # in SQL. Filter it in Python: pull a wider set (capped), then trim to
     # `limit`. Without a level filter, keep the plain SQL LIMIT.
     level = level.lower() if level else None
-    if level in ("undergrad", "400level", "grad"):
+    by_level = level in ("undergrad", "400level", "grad")
+    if by_level or schedule_filter:
         query += " LIMIT ?"
         params.append(min(5000, max(limit * 20, 1000)))
         with get_conn() as conn:
             rows = run_query(conn, query, params)
-        filtered = [dict(r) for r in rows if _course_level(r["course_number"]) == level]
+            filtered = [dict(r) for r in rows]
+            if by_level:
+                filtered = [r for r in filtered if _course_level(r["course_number"]) == level]
+            if schedule_filter and filtered:
+                mq = ("SELECT year, semester, course_number, crn, days_of_week, start_time, end_time "
+                      "FROM meetings WHERE subject = ?")
+                mparams: list = [subject.upper()]
+                if year:
+                    mq += " AND year = ?"
+                    mparams.append(year)
+                if semester:
+                    mq += " AND semester = ?"
+                    mparams.append(semester.lower())
+                by_section: dict = {}
+                for m in run_query(conn, mq, mparams):
+                    m = dict(m)
+                    by_section.setdefault(
+                        (m["year"], m["semester"], m["course_number"], m["crn"]), []).append(m)
+                filtered = [
+                    r for r in filtered
+                    if _meetings_fit(
+                        by_section.get((r["year"], r["semester"], r["course_number"], r["crn"]), []),
+                        t_after, t_before, avoid)
+                ]
         return filtered[:limit]
 
     query += " LIMIT ?"
@@ -777,14 +840,18 @@ class ConflictCheckRequest(BaseModel):
     semester: str = Field(max_length=10)
 
 
-_TIME_FMT = "%I:%M %p"
+# Times are stored as text, and the two databases disagree on the shape: the
+# local SQLite snapshot has "03:00 PM", production Neon has "03:00PM" (and both
+# have "ARRANGED" for unscheduled meetings). Spaces are stripped before parsing
+# so either form works; anything else parses to None.
+_TIME_FMT = "%I:%M%p"
 
 
 def _parse_time(raw: Optional[str]):
     if not raw:
         return None
     try:
-        return datetime.strptime(raw.strip(), _TIME_FMT).time()
+        return datetime.strptime(raw.strip().upper().replace(" ", ""), _TIME_FMT).time()
     except ValueError:
         return None
 

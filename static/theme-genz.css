@@ -411,3 +411,20 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 0.8; }
   .pill, tr:hover .pill { transform: none; transition: none; }
   .fx-toast { transition: opacity 0.2s ease; transform: translate(-50%, 0); }
 }
+
+
+/* ---------- Browse vibes (schedule sub-filters) ---------- */
+.vibes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+  margin-top: var(--s3);
+}
+.vibe[aria-pressed="true"] {
+  color: #fff;
+  background: var(--btn-grad);
+  border-color: transparent;
+}
+.vibe:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+.vibe-hint { font-size: 12px; color: var(--muted, var(--ink)); }

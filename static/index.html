@@ -79,12 +79,6 @@
       <button type="button" class="chip">What does STAT 400 cover?</button>
       <button type="button" class="chip">Find courses about machine learning</button>
     </div>
-    <p class="chips-label"><span class="sticker">✨ Vibes</span> Pick a mood</p>
-    <div class="chips topic-chips" id="topic-chips">
-      <button type="button" class="chip" data-q="Which CS 100- and 200-level courses have a lecture starting at 10 AM or later?">😴 No 8ams</button>
-      <button type="button" class="chip" data-q="Which instructors teach the most CS sections this fall?">👑 Busiest profs</button>
-      <button type="button" class="chip" data-q="Which courses satisfy the Quantitative Reasoning gen-ed?">🎯 Gen-ed finder</button>
-    </div>
     <div class="scrollback" id="scrollback" aria-live="polite">
       <div class="line line-sys" id="sb-placeholder">Your conversation will appear here.</div>
     </div>
@@ -131,6 +125,13 @@
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
             Search
           </button>
+        </div>
+        <div class="vibes" id="vibes" role="group" aria-label="Schedule vibes">
+          <span class="sticker">✨ Vibes</span>
+          <button type="button" class="chip vibe" data-param="starts_after" data-value="09:00" aria-pressed="false">😴 No 8ams</button>
+          <button type="button" class="chip vibe" data-param="ends_before" data-value="17:00" aria-pressed="false">🌙 Done by 5</button>
+          <button type="button" class="chip vibe" data-param="no_days" data-value="F" aria-pressed="false">🎉 No Fridays</button>
+          <span class="vibe-hint" id="vibe-hint" hidden>Pick a subject first. Vibes narrow the classes inside a subject.</span>
         </div>
       </form>
       <p class="hint">Each department's data is from its last sync. Check freshness or request a refresh under <a href="/departments.html">Departments</a>.</p>
@@ -317,6 +318,16 @@
     emptyMessage: 'Nothing matched 👀 Try a different subject, or clear the instructor field.',
   });
 
+  // Vibe chips toggle on/off; with a subject picked they re-run the search at
+  // once, otherwise they wait and the hint says why.
+  $('vibes').addEventListener('click', (e) => {
+    const chip = e.target.closest('.vibe');
+    if (!chip) return;
+    chip.setAttribute('aria-pressed', chip.getAttribute('aria-pressed') === 'true' ? 'false' : 'true');
+    if ($('f-subject').value.trim()) $('browse-form').requestSubmit();
+    else $('vibe-hint').hidden = false;
+  });
+
   $('browse-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const params = new URLSearchParams();
@@ -332,6 +343,10 @@
     if (course) params.set('course_number', course);
     if (instructor) params.set('instructor', instructor);
     if (limit) params.set('limit', limit);
+    // Pressed vibes are schedule sub-filters; the API needs a subject for them.
+    const pressed = [...document.querySelectorAll('#vibes .vibe[aria-pressed="true"]')];
+    $('vibe-hint').hidden = !(pressed.length && !subject);
+    if (subject) pressed.forEach((b) => params.set(b.dataset.param, b.dataset.value));
 
     showSkeleton($('results-wrap'));
     try {
@@ -455,13 +470,6 @@
     const chip = e.target.closest('.chip');
     if (!chip) return;
     $('ask-input').value = chip.textContent;
-    $('ask-form').requestSubmit();
-  });
-
-  $('topic-chips').addEventListener('click', (e) => {
-    const chip = e.target.closest('.chip');
-    if (!chip || $('ask-input').disabled) return;   // a reply is still streaming
-    $('ask-input').value = chip.dataset.q;
     $('ask-form').requestSubmit();
   });
 
