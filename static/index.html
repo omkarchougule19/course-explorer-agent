@@ -445,20 +445,63 @@
 
   // Windowed conversation memory: the browser keeps the transcript and
   // sends the last few turns back so follow-ups ("who teaches it?") resolve.
-  // Server re-trims; nothing is persisted, so a reload starts fresh.
+  // Server re-trims. The transcript also lives in sessionStorage, so it
+  // survives moving to another page and back (or a reload) within the tab;
+  // "New chat" or closing the tab clears it.
   let chatHistory = [];
+  let transcript = [];          // full answers, for redrawing the chat on return
+  let pendingQuestion = null;   // asked but not yet answered (the page was left mid-reply)
   const HISTORY_TURNS_SENT = 3;
   const HISTORY_TURNS_KEPT = 10;
   const HISTORY_ANSWER_CLIP = 600;
+  const CHAT_KEY = 'illini-chat-v1';
+  const TRANSCRIPT_ANSWER_CAP = 8000;
+
+  function saveChat() {
+    try {
+      if (!transcript.length && !pendingQuestion) sessionStorage.removeItem(CHAT_KEY);
+      else sessionStorage.setItem(CHAT_KEY, JSON.stringify({ transcript, chatHistory, pendingQuestion }));
+    } catch (e) { /* storage blocked or full: the chat just won't survive navigation */ }
+  }
 
   function recordTurn(q, a) {
     chatHistory.push({ q, a: String(a || '').slice(0, HISTORY_ANSWER_CLIP) });
     if (chatHistory.length > HISTORY_TURNS_KEPT) chatHistory = chatHistory.slice(-HISTORY_TURNS_KEPT);
+    transcript.push({ q, a: String(a || '').slice(0, TRANSCRIPT_ANSWER_CAP) });
+    if (transcript.length > HISTORY_TURNS_KEPT) transcript = transcript.slice(-HISTORY_TURNS_KEPT);
+    pendingQuestion = null;
+    saveChat();
+    $('new-chat').hidden = false;
+  }
+
+  // Redraw a saved conversation into the (empty) scrollback.
+  function restoreChat() {
+    let saved;
+    try { saved = JSON.parse(sessionStorage.getItem(CHAT_KEY) || 'null'); } catch (e) { return; }
+    if (!saved || (!(saved.transcript || []).length && !saved.pendingQuestion)) return;
+    transcript = Array.isArray(saved.transcript) ? saved.transcript : [];
+    chatHistory = Array.isArray(saved.chatHistory) ? saved.chatHistory : [];
+    $('sb-placeholder')?.remove();
+    $('chips').style.display = 'none';
+    for (const t of transcript) {
+      addLine(t.q, 'line-q');
+      const a = addLine('', 'line-a md');
+      a.innerHTML = window.renderMarkdown(t.a);
+    }
+    if (saved.pendingQuestion) {
+      addLine(saved.pendingQuestion, 'line-q');
+      addLine('That reply was cut off when you left the page. Ask again to retry.', 'line-sys');
+    }
+    pendingQuestion = null;
+    saveChat();   // the interrupted question is shown once, not on every visit
     $('new-chat').hidden = false;
   }
 
   $('new-chat').addEventListener('click', () => {
     chatHistory = [];
+    transcript = [];
+    pendingQuestion = null;
+    saveChat();
     $('new-chat').hidden = true;
     $('chips').style.display = '';
     $('scrollback').innerHTML =
@@ -484,6 +527,8 @@
     if (chipsEl) chipsEl.style.display = 'none';
     $('sb-placeholder')?.remove();
 
+    pendingQuestion = question;
+    saveChat();
     addLine(question, 'line-q');
     const answerLine = addLine('', 'line-a');
     answerLine.setAttribute('aria-busy', 'true');
@@ -496,6 +541,7 @@
     const settle = (finalText, asError) => {
       if (settled) return;
       settled = true;
+      if (asError) { pendingQuestion = null; saveChat(); }   // shown as an error, not "cut off"
       if (status) { status.remove(); status = null; }
       answerLine.removeAttribute('aria-busy');
       const text = (finalText != null && finalText !== '') ? finalText : raw;
@@ -531,6 +577,7 @@
         answerLine.className = 'line line-sys';
         answerLine.textContent = body.detail || `Request failed (${res.status})`;
         settled = true;
+        pendingQuestion = null; saveChat();
         input.disabled = false; input.focus();
         return;
       }
@@ -565,6 +612,7 @@
         answerLine.className = 'line line-sys';
         answerLine.textContent = 'Connection lost — is the API server still running?';
         settled = true;
+        pendingQuestion = null; saveChat();
       } else {
         settle(raw, false);
       }
@@ -711,6 +759,7 @@
     });
   }
 
+  restoreChat();
   loadStats();
   loadTerms();
   loadSubjects();
