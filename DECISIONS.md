@@ -2825,3 +2825,53 @@ conflicts. Fixed by stripping spaces before parsing. Not fixed: `SYSTEM_CONTEXT`
 in `app/agent.py` tells the model start_time looks like '10:00 AM', which is
 wrong for Neon, so LLM-written time comparisons there may be off. Covered by
 `evals/test_schedule_filters.py`.
+
+---
+
+## Assistant chat survives page changes via sessionStorage (2026-09-20)
+
+Asking a question, opening another page and coming back wiped the conversation:
+the transcript lived only in the page's memory (the old code comment said "a
+reload starts fresh" on purpose). The owner wants it kept. `static/index.html`
+now saves the last 10 turns (question plus the full answer, capped at 8,000
+characters each) and the sent-history window to `sessionStorage` after each
+answered turn and redraws them, markdown rendered, on load.
+
+Chosen: `sessionStorage`, not `localStorage`. It survives navigation and reload
+within the tab but clears when the tab closes, so a shared or borrowed browser
+does not keep someone's questions, and a conversation from last week does not
+greet you. "New chat" clears it. Rejected: server-side sessions (adds state and
+storage to a deliberately stateless backend); localStorage (persists too long).
+
+Edge cases: leaving mid-reply cannot resume the stream, so the question is
+shown once with a "That reply was cut off when you left the page" note. Errors
+are not saved. The 👍/👎 bar is not re-attached to restored answers (a vote
+would need the original exchange and could be cast twice). If storage is blocked
+or full the chat simply does not survive navigation.
+
+---
+
+## Page transitions: cross-document View Transitions, fade-up fallback (2026-09-20)
+
+Moving between pages had no animation. Added to `static/theme-genz.css` (which
+every page except admin already loads): `@view-transition { navigation: auto; }`
+so Chrome, Edge and Safari 18.2+ animate between the separate HTML pages with
+no JavaScript. The old page fades out and lifts 6 px over 140 ms, the new one
+rises 14 px into place over 300 ms, and the sticky nav has its own
+`view-transition-name` so it stays still. Browsers without support (Firefox)
+get a plain 320 ms fade-up of the banner and content on load through
+`@supports not (view-transition-name: none)`. Everything is inside
+`prefers-reduced-motion: no-preference`, matching how the rest of the theme
+already treats motion.
+
+Chosen over intercepting link clicks in JavaScript to fade out before
+navigating (adds a delay to every click, breaks with modified clicks and the
+back button) and over turning the site into a single-page app (far too large
+for a page animation). The gentle rise was picked over a sideways slide or a
+blur/scale pop because it is the safest on slow phones.
+
+Caveat found while testing: the Chrome used for testing reports
+`prefers-reduced-motion: reduce` and a hidden tab, so the transition itself
+could not be observed there. The rule parsed correctly (`CSSViewTransitionRule`
+present) but the animation is untested on screen. A user whose OS has
+animation effects switched off will also see no animation, by design.
