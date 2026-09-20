@@ -7,8 +7,8 @@ against the database (SQLite locally, Postgres/Neon in production - see
 app/db.py), and returns a natural language answer.
 
 LLM provider is chosen automatically from whichever API key is set, in this
-order: GROQ_API_KEY (recommended - free, highest daily quota), GEMINI_API_KEY,
-OPENAI_API_KEY. See DECISIONS.md for why Groq is preferred.
+order: GROQ_API_KEY (recommended - free, highest daily quota), OPENAI_API_KEY,
+GEMINI_API_KEY. See DECISIONS.md for why Groq is preferred.
 
 Usage:
     python -m app.agent "Which CS courses have the most sections this fall?"
@@ -78,10 +78,23 @@ Tables:
   per-course (same across its sections), can be NULL. Course =
   (subject, course_number); section = one row (crn). Aggregate across
   sections unless asked about one specific section.
+  course_number is TEXT (3 digits, maybe a trailing letter: "492A"); never
+  compare it to a number (Postgres errors). Levels: 100-level = LIKE '1%';
+  "100- and 200-level" = LIKE '1%' OR LIKE '2%'. Course-level questions need
+  SELECT DISTINCT subject, course_number, course_label, not raw section rows.
+  enrollment_status: a word (Open, Closed, Open (Restricted), CrossListOpen...)
+  for terms with published registration data; for an unpublished term
+  (currently fall 2026) a raw code: 'A' = active/scheduled, 'P' = pending.
+  Codes say nothing about open seats, and no term has seat counts. For
+  open/closed/seats questions on such a term, say open/closed isn't published
+  yet (sections are scheduled, not confirmed open) and point to UIUC Course
+  Explorer - never answer "no sections are open" - and never show a bare A/P.
 - meetings(year, semester, subject, course_number, crn, meeting_type,
   days_of_week, start_time, end_time, building, room, instructor) - a
   section can have multiple rows (e.g. lecture + separate discussion). Join
-  to sections on (year, semester, subject, course_number, crn).
+  to sections on (year, semester, subject, course_number, crn). days_of_week
+  is day letters (M T W R F S U; R = Thursday), e.g. 'MWF'; "only Tuesdays and
+  Thursdays" = days_of_week = 'TR'. start_time is text like '10:00 AM'.
 - grade_distributions(year, term, year_term, subject, course_number,
   course_title, sched_type, primary_instructor, a_plus..f, w, students) -
   only a rolling window of terms, not full history. Join to sections on
@@ -92,8 +105,11 @@ Tables:
   loosely on course_number + fuzzy unit name.
 - gen_ed_categories(snapshot_year, snapshot_term, subject, course_number,
   course_title, acp, cs, hum, nat, qr, sbs) - each category column holds a
-  short code (e.g. "QR1") or NULL. One point-in-time snapshot, not
-  term-scoped. Join to sections by (subject, course_number).
+  short code or NULL: acp='ACP'; cs='WCC'|'US'|'NW'; hum='HP'|'LA';
+  nat='PS'|'LS'; qr='QR1'|'QR2'; sbs='SS'|'BSC'. Filter on the code (IS NOT
+  NULL for "any humanities"), never the category's long name. One
+  point-in-time snapshot, not term-scoped. Join to sections by (subject,
+  course_number).
 - prerequisites(subject, course_number, group_index, req_subject,
   req_course_number, relation, condition_text, raw_text) - parsed from the
   course description, best-effort. group_index buckets AND-ed requirement
@@ -102,7 +118,12 @@ Tables:
   required course; when both are NULL, condition_text holds a non-course
   requirement ("Consent of instructor"). relation is 'prereq' or
   'concurrent'. For "what does X unlock", filter req_subject/req_course_number.
-  If the structure looks off, quote raw_text instead.
+  If the structure looks off, quote raw_text instead. No rows for a course =
+  no prerequisites (NULL req_* is still a prerequisite, a non-course one). For
+  "courses with no prerequisites": SELECT DISTINCT s.subject, s.course_number,
+  s.course_label FROM sections s WHERE <filters> AND NOT EXISTS (SELECT 1 FROM
+  prerequisites p WHERE p.subject = s.subject AND p.course_number =
+  s.course_number) - one query, never scan the whole prerequisites table.
 - academic_calendar(year, semester, event_date, event_end_date, title,
   category, raw_date) - UIUC registrar dates per term. category is one of
   instruction/add/drop/withdraw/break/holiday/finals/grades/registration/
@@ -129,7 +150,16 @@ Tables:
 Rules:
 - semester/term lowercase ('fall'/'spring'/'summer'/'winter'); subject codes
   uppercase.
-- LIMIT unless the question asks for a count/aggregate.
+- LIMIT unless the question asks for a count/aggregate. Results are cut off at
+  a fixed size and re-sent every step: prefer COUNT/GROUP BY/DISTINCT and
+  select only the columns you will show.
+- Every filter the question names (subject, level, term, instructor) must be
+  in the WHERE clause. A "[Result truncated ...]" note means you have NOT seen
+  all rows: narrow the query; never present truncated rows as complete.
+- "Which instructor(s)..." questions (most, top, busiest) MUST include
+  instructor IS NOT NULL - unassigned sections would otherwise rank first.
+- If a query errors, fix it in ONE change; don't retry the same idea or fall
+  back to unrelated tables.
 - Empty result: say so plainly, don't guess - grade/TRE data may simply not
   be published yet for a term (real upstream lag).
 - teachers_ranked_excellent, about a specific named instructor: absence of a
@@ -181,6 +211,28 @@ Rules:
 """.strip()
 
 
+# A query result goes straight into the model's context and is re-sent on every
+# later agent step, so one sloppy "SELECT ... FROM prerequisites" (43k chars,
+# ~11k tokens) used to be paid for on each remaining iteration and could blow
+# the context window. Cap what a single tool call can hand back; the note tells
+# the model to narrow the query rather than page through it.
+MAX_QUERY_RESULT_CHARS = int(os.environ.get("MAX_QUERY_RESULT_CHARS", "6000"))
+
+
+class _CappedSQLDatabase(SQLDatabase):
+    def run(self, command, fetch="all", **kwargs):
+        result = super().run(command, fetch=fetch, **kwargs)
+        if isinstance(result, str) and len(result) > MAX_QUERY_RESULT_CHARS:
+            cut = result[:MAX_QUERY_RESULT_CHARS].rsplit("),", 1)[0] + ")]"
+            note = (
+                f"[Result truncated: {len(result):,} characters returned, only the first "
+                f"{len(cut):,} shown. Do not page through it - rewrite the query with a tighter "
+                "filter, DISTINCT, GROUP BY or COUNT.]"
+            )
+            return cut + "\n" + note
+        return result
+
+
 def _db_uri() -> str:
     """SQLAlchemy connection string for the agent's SQL tool.
 
@@ -203,16 +255,54 @@ def _db_uri() -> str:
     return f"sqlite:///{DB_PATH}"
 
 
-def _build_llm(streaming: bool = False):
+# Second Groq model tried when the primary hits a rate limit (429). qwen matched
+# the 120b on the eval subset and beat gpt-oss-20b; see DECISIONS.md 2026-09-20.
+DEFAULT_GROQ_FALLBACK = "qwen/qwen3.8-27b"
+
+
+def _groq_fallback_model(primary: str) -> str | None:
+    """The model to retry on after a Groq 429, or None if disabled / same model."""
+    fb = os.environ.get("GROQ_FALLBACK_MODEL", DEFAULT_GROQ_FALLBACK).strip()
+    if not fb or fb.lower() == "off" or fb == primary:
+        return None
+    return fb
+
+
+def _groq_primary_model() -> str:
+    return os.environ.get("GROQ_MODEL") or "openai/gpt-oss-120b"
+
+
+def _fallback_model_for(exc: Exception) -> str | None:
+    """If `exc` is a Groq rate-limit error, the model to retry on (else None)."""
+    try:
+        import groq
+    except ImportError:
+        return None
+    if not isinstance(exc, groq.RateLimitError):
+        return None
+    return _groq_fallback_model(_groq_primary_model())
+
+
+def _build_llm(streaming: bool = False, model: str | None = None, fallback: bool = True):
     """Pick the LLM provider. By default it's whichever API key is set, in
     order: GROQ_API_KEY (preferred - free; ~80-100 real questions/day in
     practice, bound by a 200K tokens/day cap more than the 1,000 requests/day
-    figure - see DECISIONS.md), then GEMINI_API_KEY, then OPENAI_API_KEY.
+    figure - see DECISIONS.md), then OPENAI_API_KEY, then GEMINI_API_KEY.
 
     Set LLM_PROVIDER (groq | gemini | openai) to force one regardless of which
     other keys are present - e.g. LLM_PROVIDER=openai to fall back to OpenAI
     while Groq's daily token budget is exhausted. Its own key must still be
-    set. Unset -> the auto-detect order above.
+    set. Unset -> the auto-detect order above (Groq, then OpenAI, then Gemini).
+
+    On Groq, a rate-limit error (429) on the primary model is retried on
+    GROQ_FALLBACK_MODEL (default qwen/qwen3.8-27b; "off" disables it). `model`
+    forces the Groq model name (used for that retry).
+
+    The model within a provider is an env var too: GROQ_MODEL (default
+    openai/gpt-oss-120b), OPENAI_MODEL (gpt-4o-mini), GEMINI_MODEL
+    (gemini-2.5-flash). Groq's 200K tokens/day cap is per model, so pointing
+    GROQ_MODEL at another hosted model (e.g. openai/gpt-oss-20b) gets a
+    separate daily budget on the same key.
 
     Imports are local to each branch so a Groq-only setup never needs the
     Gemini/OpenAI SDKs installed to run, and vice versa.
@@ -225,20 +315,34 @@ def _build_llm(streaming: bool = False):
     groq_key = os.environ.get("GROQ_API_KEY")
     if groq_key and forced in ("", "groq"):
         from langchain_groq import ChatGroq
-        return ChatGroq(model="openai/gpt-oss-120b", temperature=0, api_key=groq_key,
-                        streaming=streaming), "Groq"
-
-    gemini_key = os.environ.get("GEMINI_API_KEY")
-    if gemini_key and forced in ("", "gemini"):
-        from langchain_google_genai import ChatGoogleGenerativeAI
-        return ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0, google_api_key=gemini_key,
-                                      streaming=streaming), "Gemini"
+        name = model or _groq_primary_model()
+        primary = ChatGroq(model=name, temperature=0, api_key=groq_key, streaming=streaming)
+        # Groq's daily token cap is per model, so a 429 on the primary can be
+        # answered by a different model on the same key. This wrapper only
+        # suits callers that .invoke() the model (the SQL pipeline, RAG query
+        # expansion); create_sql_agent needs a plain model, so the agent path
+        # passes fallback=False and retries at ask() level instead.
+        backup_name = _groq_fallback_model(name) if fallback and not model else None
+        if backup_name:
+            import groq
+            backup = ChatGroq(model=backup_name, temperature=0, api_key=groq_key,
+                              streaming=streaming)
+            return (primary.with_fallbacks([backup], exceptions_to_handle=(groq.RateLimitError,)),
+                    "Groq")
+        return primary, "Groq"
 
     openai_key = os.environ.get("OPENAI_API_KEY")
     if openai_key and forced in ("", "openai"):
         from langchain_openai import ChatOpenAI
-        return ChatOpenAI(model="gpt-4o-mini", temperature=0, api_key=openai_key,
-                          streaming=streaming), "OpenAI"
+        return ChatOpenAI(model=os.environ.get("OPENAI_MODEL") or "gpt-4o-mini",
+                          temperature=0, api_key=openai_key, streaming=streaming), "OpenAI"
+
+    gemini_key = os.environ.get("GEMINI_API_KEY")
+    if gemini_key and forced in ("", "gemini"):
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        return ChatGoogleGenerativeAI(model=os.environ.get("GEMINI_MODEL") or "gemini-2.5-flash",
+                                      temperature=0, google_api_key=gemini_key,
+                                      streaming=streaming), "Gemini"
 
     if forced:
         raise EnvironmentError(
@@ -248,8 +352,8 @@ def _build_llm(streaming: bool = False):
         )
     raise EnvironmentError(
         "No LLM API key found. Set GROQ_API_KEY (recommended - free, get one at "
-        "console.groq.com) in a .env file in the project root, or GEMINI_API_KEY / "
-        "OPENAI_API_KEY as alternatives."
+        "console.groq.com) in a .env file in the project root, or OPENAI_API_KEY / "
+        "GEMINI_API_KEY as alternatives."
     )
 
 
@@ -385,26 +489,26 @@ def _available_terms_note() -> str:
     )
 
 
-def build_agent(verbose: bool = False, streaming: bool = False):
+def build_agent(verbose: bool = False, streaming: bool = False, model: str | None = None):
     if not db.is_postgres() and not DB_PATH.exists():
         raise FileNotFoundError(f"No database at {DB_PATH}. Run scraper.py first.")
 
     try:
-        llm, provider = _build_llm(streaming=streaming)
+        llm, provider = _build_llm(streaming=streaming, model=model, fallback=False)
     except EnvironmentError:
         raise
     except Exception as exc:
         raise RuntimeError(f"Couldn't initialize the LLM client: {exc}") from exc
 
     try:
-        sql_db = SQLDatabase.from_uri(_db_uri(), include_tables=INCLUDED_TABLES)
+        sql_db = _CappedSQLDatabase.from_uri(_db_uri(), include_tables=INCLUDED_TABLES)
     except Exception as exc:
         raise RuntimeError(f"Couldn't open the database: {exc}") from exc
 
     if db.is_postgres():
         # Query expansion must not stream into the answer, so give the tool a
         # dedicated non-streaming client when the agent itself is streaming.
-        tool_llm = llm if not streaming else _build_llm(streaming=False)[0]
+        tool_llm = llm if not streaming else _build_llm(streaming=False, model=model)[0]
         extra_tools = [_make_course_content_search_tool(tool_llm)]
     else:
         extra_tools = []
@@ -447,6 +551,22 @@ _TOOL_LABELS = {
 }
 
 
+AGENT_STOPPED_RAW = "Agent stopped due to max iterations."
+AGENT_STOPPED_FRIENDLY = (
+    "That question needed more steps than I can take in one go. "
+    "Try narrowing it, for example to one subject or level."
+)
+
+
+def friendly_stop(answer: str) -> str:
+    """LangChain's executor returns a raw developer string when it runs out of
+    iterations; swap in something a student can act on. The friendly text is an
+    ask_log error marker, so it is not counted against the user's rate limit."""
+    if answer and answer.strip().startswith(AGENT_STOPPED_RAW):
+        return AGENT_STOPPED_FRIENDLY
+    return answer
+
+
 def friendly_error(exc: Exception) -> str:
     """Map a provider/network/agent exception to a short plain-English line.
     Kept in sync with ask_log._ERROR_MARKERS so these get tagged `error` and
@@ -457,7 +577,7 @@ def friendly_error(exc: Exception) -> str:
         return "The LLM provider's rate limit was hit. Wait a bit and try again."
     if "authentication" in low or "api key" in low or "401" in msg:
         return ("The LLM provider rejected the API key. Double check GROQ_API_KEY / "
-                "GEMINI_API_KEY / OPENAI_API_KEY in your .env file.")
+                "OPENAI_API_KEY / GEMINI_API_KEY in your .env file.")
     if "timeout" in low or "timed out" in low:
         return "The request to the LLM provider timed out. Try again in a moment."
     return f"Something went wrong answering that question: {exc}"
@@ -528,7 +648,7 @@ def _sections_empty() -> bool:
 _SQL_PIPELINE_MODE = os.environ.get("SQL_PIPELINE", "").strip().lower()
 
 
-def ask(question: str, verbose: bool = False, history=None) -> str:
+def ask(question: str, verbose: bool = False, history=None, _model: str | None = None) -> str:
     if not question or not question.strip():
         return "Ask me something about the course data, e.g. \"Who teaches CS 225?\""
 
@@ -542,7 +662,7 @@ def ask(question: str, verbose: bool = False, history=None) -> str:
             return friendly_error(exc)
 
     try:
-        agent = build_agent(verbose=verbose)
+        agent = build_agent(verbose=verbose, model=_model)
     except (FileNotFoundError, EnvironmentError, RuntimeError) as exc:
         # Surface setup problems as a plain answer string rather than raising,
         # so callers (CLI, FastAPI route) always get something displayable.
@@ -561,15 +681,18 @@ def ask(question: str, verbose: bool = False, history=None) -> str:
             config={"callbacks": [cap]},
         )
     except Exception as exc:  # noqa: BLE001 - provider/network/agent errors all land here
+        backup = None if _model else _fallback_model_for(exc)
+        if backup:  # Groq 429 on the primary model: one retry on the fallback model
+            return ask(question, verbose=verbose, history=history, _model=backup)
         return friendly_error(exc)
 
-    answer = result.get("output", str(result))
+    answer = friendly_stop(result.get("output", str(result)))
     if classify_answer(answer) == "answered":
         answer += sources_footer(cap.queries, cap.rag_used, question)
     return answer
 
 
-async def astream_answer(question: str, history=None):
+async def astream_answer(question: str, history=None, _model: str | None = None):
     """Async generator yielding (kind, text) tuples for the /ask/stream route:
 
         ("status", label)  - the agent started a tool; show it as progress
@@ -585,7 +708,7 @@ async def astream_answer(question: str, history=None):
         return
 
     try:
-        agent = build_agent(streaming=True)
+        agent = build_agent(streaming=True, model=_model)
     except (FileNotFoundError, EnvironmentError, RuntimeError) as exc:
         yield "done", f"Can't answer that right now: {exc}"
         return
@@ -640,10 +763,19 @@ async def astream_answer(question: str, history=None):
                 elif isinstance(out, str):
                     final = out
     except Exception as exc:  # noqa: BLE001 - provider/network/agent errors
+        # A Groq 429 that arrives before any answer text was streamed can be
+        # retried invisibly on the fallback model; after text has gone out it
+        # can't, so that case falls through to the error message.
+        backup = None if (_model or streamed) else _fallback_model_for(exc)
+        if backup:
+            yield "status", "Busy, switching to a backup model…"
+            async for item in astream_answer(question, history, _model=backup):
+                yield item
+            return
         yield "done", friendly_error(exc)
         return
 
-    answer = final or "".join(streamed) or "I couldn't produce an answer for that."
+    answer = friendly_stop(final or "".join(streamed) or "I couldn't produce an answer for that.")
     if classify_answer(answer) == "answered":
         footer = sources_footer(cap.queries, cap.rag_used or rag_used, q)
         if footer:

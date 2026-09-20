@@ -79,6 +79,7 @@ _ERROR_MARKERS = (
     "timed out",
     "something went wrong answering",
     "can't answer that right now",
+    "needed more steps than i can take",
 )
 
 
