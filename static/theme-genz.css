@@ -431,29 +431,41 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 0.8; }
 
 
 /* ---------- Page transitions ---------- */
-/* Cross-document View Transitions (Chrome, Edge, Safari 18.2+): moving between
-   pages fades the old one out and lifts the new one in, while the sticky nav
-   stays put. Browsers without support just navigate as before, and get the
-   simple fade-up below instead. Skipped entirely for reduced motion. */
-@keyframes pt-out { to   { opacity: 0; transform: translateY(-6px); } }
-@keyframes pt-in  { from { opacity: 0; transform: translateY(14px); } }
+/* Cross-document View Transitions (Chrome/Edge 126+, Safari 18.2+). The banner
+   and nav are named so they stay on screen while the page content slides:
+   forward navigation slides the old content out left and the new in from the
+   right; back reverses it (page-transition.js supplies the direction as the
+   "forwards" / "backwards" transition type). Without type support it always
+   slides forward. Reduced motion keeps only a short crossfade, no movement.
+   Browsers without any support just navigate, and get the fade-up at the end. */
+@keyframes pt-out-left  { to   { opacity: 0; transform: translateX(-64px); } }
+@keyframes pt-in-right  { from { opacity: 0; transform: translateX(64px); } }
+@keyframes pt-out-right { to   { opacity: 0; transform: translateX(64px); } }
+@keyframes pt-in-left   { from { opacity: 0; transform: translateX(-64px); } }
+@keyframes pt-fade-out  { to   { opacity: 0; } }
+@keyframes pt-fade-in   { from { opacity: 0; } }
+@keyframes pt-rise      { from { opacity: 0; transform: translateY(14px); } }
 
-/* The opt-in is top level, as in Chrome's own docs, rather than inside a media
-   query; reduced motion is honoured by switching the animations off below. */
 @view-transition { navigation: auto; }
-.site-nav { view-transition-name: site-nav; }
-::view-transition-old(root) { animation: pt-out 140ms ease-in both; }
-::view-transition-new(root) { animation: pt-in 300ms cubic-bezier(0.22, 1, 0.36, 1) 60ms both; }
+header.banner { view-transition-name: site-banner; }
+.site-nav     { view-transition-name: site-nav; }
+
+::view-transition-old(root) { animation: pt-out-left 220ms cubic-bezier(0.4, 0, 1, 1) both; }
+::view-transition-new(root) { animation: pt-in-right 420ms cubic-bezier(0.22, 1, 0.36, 1) 80ms both; }
+html:active-view-transition-type(backwards)::view-transition-old(root) { animation-name: pt-out-right; }
+html:active-view-transition-type(backwards)::view-transition-new(root) { animation-name: pt-in-left; }
 ::view-transition-group(site-nav) { animation-duration: 0s; }
 
 @media (prefers-reduced-motion: reduce) {
-  ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) {
-    animation: none !important;
-  }
+  ::view-transition-old(root),
+  html:active-view-transition-type(backwards)::view-transition-old(root) { animation: pt-fade-out 160ms linear both; }
+  ::view-transition-new(root),
+  html:active-view-transition-type(backwards)::view-transition-new(root) { animation: pt-fade-in 240ms linear both; }
+  ::view-transition-group(site-banner) { animation-duration: 0s; }
 }
 
 @media (prefers-reduced-motion: no-preference) {
   @supports not (view-transition-name: none) {
-    header.banner, body > .wrap { animation: pt-in 320ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+    body > .wrap { animation: pt-rise 320ms cubic-bezier(0.22, 1, 0.36, 1) both; }
   }
 }

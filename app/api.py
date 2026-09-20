@@ -74,6 +74,13 @@ async def _add_security_headers(request: Request, call_next):
     response = await call_next(request)
     for k, v in _SECURITY_HEADERS.items():
         response.headers.setdefault(k, v)
+    # Site pages and their CSS/JS carry no Cache-Control from StaticFiles, so
+    # browsers cache them heuristically and keep showing the pre-deploy version.
+    # "no-cache" means "revalidate every time": StaticFiles sends an ETag, so an
+    # unchanged file costs a 304, and a changed one is picked up immediately.
+    path = request.url.path
+    if path == "/" or path.endswith((".html", ".css", ".js")):
+        response.headers.setdefault("Cache-Control", "no-cache")
     return response
 
 

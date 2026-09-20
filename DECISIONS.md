@@ -2886,3 +2886,58 @@ Chrome documents it, and reduced motion is honoured by turning the transition
 animations off (`animation: none`) instead of by not opting in. Still
 unverified on screen; the remaining suspects are an OS-level animations-off
 setting or a stale cached stylesheet (the server sends no Cache-Control header).
+
+---
+
+## Directional slide transitions, one brand across pages, and no more stale pages (2026-09-20)
+
+The owner still saw no page animation in production and noticed the "Illini
+Course Copilot" icon vanishing on every page but Home. Three separate causes
+were found and fixed.
+
+**1. The brand changed on every navigation.** Only `index.html` had the
+graduation-cap icon in its h1; the six other pages had a text-only link. All
+pages now carry the same icon, and `.banner h1 a` lays it out as an inline flex
+row.
+
+**2. Stale pages.** The server sent no `Cache-Control` header for HTML, CSS or
+JS, so browsers cached them heuristically and kept showing the pre-deploy
+version. Confirmed locally: the server had the new HTML while the browser tab
+still had the old one. Middleware in `app/api.py` now sends `no-cache` (meaning
+"revalidate every time"; `StaticFiles` provides an ETag, so an unchanged file is
+a cheap 304) for `/`, `.html`, `.css` and `.js`. API responses are untouched.
+Rejected: fingerprinted filenames (a build step this project does not have) and
+long max-age (recreates the problem).
+
+**3. Reduced motion.** The Chrome the assistant drives reports
+`prefers-reduced-motion: reduce` in every test, i.e. Windows "Animation effects"
+is off on the owner's machine. Everything motion-related was gated on
+`no-preference`, so for that setting the site showed no motion at all, and the
+previous commit made it explicit with `animation: none`. Respecting the setting
+is right for accessibility, so it stays, but reduced motion now gets a short
+crossfade (fades are the accepted safe alternative to movement) instead of
+nothing.
+
+**The transition itself**, after reading Chrome's cross-document View
+Transitions guide, CSS-Tricks' gotchas article and MDN: `@view-transition`
+opt-in on both pages; banner and nav get their own `view-transition-name` so they
+stay on screen while only the content slides; forward navigation slides the old
+content out to the left and the new in from the right (64 px plus fade, 220 ms
+out, 420 ms in), back reverses it. Direction comes from `static/page-transition.js`
+(a synchronous script in every page's `<head>`, because `pagereveal` fires
+before first paint): browser back/forward uses history indices, moves between the
+nav tabs use their nav order, anything else counts as forward. Unsupported
+browsers (Firefox has it behind a flag) keep the plain fade-up. Documented ways
+a transition silently fails, none of which apply here as far as I can tell: only
+one page opting in, cross-origin navigation, a new page taking more than 4
+seconds to become renderable, and a hidden tab.
+
+Rejected: intercepting clicks and swapping page bodies with JavaScript (a
+single-page app in disguise; every page has its own inline scripts to re-run) and
+a full-width 100% slide (feels heavy on a page this long). Not verified on
+screen: the test Chrome has reduced motion on and a hidden tab. What was tested
+is the direction logic (six navigation cases), the brand and layout, and the
+cache header.
+
+Sources: developer.chrome.com/docs/web-platform/view-transitions/cross-document,
+css-tricks.com/cross-document-view-transitions-part-1, MDN View Transition API.

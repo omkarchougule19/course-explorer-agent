@@ -79,6 +79,13 @@ if r.status_code == 200 and r.json():
 else:
     print("  (no local CS data; skipped the end-to-end check)")
 
+# Static pages must revalidate, or browsers show the pre-deploy version
+for path in ("/", "/style.css", "/theme-genz.css", "/page-transition.js", "/calendar.html"):
+    r = client.get(path)
+    check(f"{path} sends Cache-Control: no-cache", r.headers.get("cache-control") == "no-cache")
+r = client.get("/stats")
+check("API responses are not forced to no-cache", r.headers.get("cache-control") != "no-cache")
+
 print()
 if failures:
     print(f"{len(failures)} FAILED: {failures}")
