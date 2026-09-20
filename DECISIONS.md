@@ -2875,3 +2875,14 @@ Caveat found while testing: the Chrome used for testing reports
 could not be observed there. The rule parsed correctly (`CSSViewTransitionRule`
 present) but the animation is untested on screen. A user whose OS has
 animation effects switched off will also see no animation, by design.
+
+Follow-up, same day: the owner saw no page animation in production even though
+production was serving the new CSS (verified by fetching it: vibes, chat
+restore and the transition rules were all live). The `@view-transition` opt-in
+had been placed inside `@media (prefers-reduced-motion: no-preference)`, which
+could not be tested locally (the test Chrome reports reduced motion and a
+hidden tab, which disables view transitions). It now sits at the top level, as
+Chrome documents it, and reduced motion is honoured by turning the transition
+animations off (`animation: none`) instead of by not opting in. Still
+unverified on screen; the remaining suspects are an OS-level animations-off
+setting or a stale cached stylesheet (the server sends no Cache-Control header).
