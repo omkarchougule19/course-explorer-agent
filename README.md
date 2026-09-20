@@ -46,9 +46,12 @@ Five things that happened in this project, not things I read about.
    There the loop earned its place: invented references 31% → 6%, execution
    success 69% → 100%.
 3. **Rate limits are a design input.** The free Groq tier allows 8,000
-   tokens/min and one agent step costs about 6,100. I compressed the system
-   prompt and added a global daily cap that keys on nothing the client controls.
-   Per-IP limits are only friction.
+   tokens/min, and the daily cap is per model. One agent step costs about
+   6,100 tokens, so I compressed the prompt, added a global daily cap that keys
+   on nothing the client controls, and started budgeting eval runs like money:
+   a token counter, a smaller question set, and dropping an arm that could not
+   fire. Because the cap is per model, a second model on the same key is a
+   failover with its own budget.
 4. **"Works locally" is not "works in prod."** One SQL string had to run on
    SQLite and Postgres. A `%` inside a `LIKE` broke only on psycopg2, and a
    scraper "wall" only showed up against the live site.
@@ -57,21 +60,40 @@ Five things that happened in this project, not things I read about.
 
 ## Evals
 
-24 questions with known-correct SQL, scored with the Critic/Repair loop off vs.
-on, same model. The eval set has since grown to 29 questions; the numbers
-below are from the 24-question run.
+29 questions with known-correct SQL: in-scope, hallucination-bait, empty-data
+and out-of-scope refusals. Each runs with the Critic/Repair loop off (baseline)
+and on. I ran it on three open-weight models and two prompt configs. Groq's free
+tier caps each model at 200,000 tokens a day, which forced some runs onto
+smaller, deliberately chosen subsets, marked below.
 
-| config | metric | baseline | with loop |
+**Full schema in the prompt (what production uses)**
+
+| model | questions | answer-OK | hallucinated references |
 |---|---|---|---|
-| full schema, `gpt-oss-120b` | hallucinated references | 0% | 0% |
-| full schema, `gpt-oss-120b` | result-match (loose) | 92.3% | 84.6% *(first run)* |
-| terse schema, `gpt-4o-mini` | hallucinated references | 31% | 6% |
-| terse schema, `gpt-4o-mini` | execution success | 69% | 100% |
+| `gpt-oss-120b` | 11 (subset) | 91% | 0% |
+| `qwen3.8-27b` | 12 (same subset) | 92% | 0% |
+| `gpt-oss-20b` | 12 (same subset) | 67% | 0% |
+| `gpt-oss-20b` | all 29 | 79% baseline, 83% with loop | 0% |
 
-**Caveats, stated up front.** These are single runs on a small set. The 84.6%
-row is *before* the routing fixes that followed; the fixed version is
-predicted, not yet re-measured (a Groq daily token cap cut the re-run short).
-Methodology and every number: [`evals/RESULTS.md`](evals/RESULTS.md) and
+**Terse schema (table names only), a stress test for the loop**
+
+| model | questions | hallucinated refs, base → loop | execution success | answer-OK |
+|---|---|---|---|---|
+| `qwen3.8-27b` | 12 | 29% → **0%** | 83% → **100%** | 67% → **83%** |
+| `gpt-4o-mini` | 24 | 31% → **6%** | 69% → **100%** | n/a |
+
+**What it says.** With the full schema the loop never fired on any model: no
+invented columns, zero repairs, so it changes nothing. It earns its place when
+the generator is handicapped, which is the case that matters if the prompt is
+trimmed for cost or a smaller model is swapped in.
+
+**Caveats, stated up front.** These are single runs. The 12-question subset is
+biased toward questions that earlier runs got wrong, so absolute accuracy is
+understated; use it to compare models, not as a headline number. The 120b
+reference covers only questions it finished before its daily cap, and models
+are compared on overlapping, not identical, question sets. Latency isn't
+reported because retry back-off from rate limits swamps it. Methodology and
+every number: [`evals/RESULTS.md`](evals/RESULTS.md) and
 [`evals/FINDINGS.md`](evals/FINDINGS.md).
 
 ## Architecture
@@ -100,6 +122,7 @@ through the Generator → Critic → Repair loop in `app/sql_pipeline/`.
 | One query text, two databases (`app/db.py`) | Nobody needs Postgres to develop; placeholders and upserts are translated |
 | Self-hosted embeddings (`bge-small` via fastembed) | No API key, no rate limit, same vectors everywhere |
 | Provider-agnostic LLM (Groq → OpenAI → Gemini) | Swapping providers is an env var, not a code change |
+| Failover to a second Groq model on a 429 | Daily caps are per model, so the backup has its own budget; one retry, no loops |
 | Multi-query expansion + Reciprocal Rank Fusion | Wider recall than one embedding; enough material for a real summary |
 | Read-only DB role for the SQL tool | A jailbreak still can't run DDL/DML |
 | Global daily cap, per-IP limits, red-team pass | Budget backstop; findings in [`security_findings.md`](security_findings.md) |
@@ -122,7 +145,7 @@ Needs one LLM key in the environment (`GROQ_API_KEY`, `OPENAI_API_KEY`, or
 - Cross-listed courses (CS 440 / ECE 448) are separate rows, not deduplicated.
 - Enrollment status is a snapshot from the last sync, not live.
 - Scraping runs by hand; the deployed app serves whatever was last loaded.
-- The eval set is small (29 questions), so treat percentages as directional.
+- The eval set is small (29 questions) and some model runs cover a subset, so treat percentages as directional.
 - Some upstream datasets are empty for new terms; the agent says so instead of
   inventing data.
 

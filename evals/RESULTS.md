@@ -179,3 +179,41 @@ still returns empty. A caught reference, an imperfect repair.)
 - **Provider is a variable.** Run 1 is Groq, Run 2 is OpenAI. Within each
   run, baseline and critic use the same model — that comparison is clean.
   Cross-run comparison (Groq vs OpenAI) is not.
+
+
+## Run 3: other open-weight models, 2026-09-20
+
+Same harness, after the A+B+C routing fixes. Groq caps each model at 200,000
+tokens/day, so the runs were budgeted: `--ids` picks questions, the full-schema
+runs are baseline-only (the critic never fired there on any model, so its arm
+only doubled the cost), the terse-schema runs use both arms. The 12-question
+subset is q01, q03, q07, q10, q11, q13, q14-q18, q20: biased toward questions
+earlier runs got wrong, so absolute accuracy is understated.
+
+Full schema:
+
+| model | n | exec success | result-match | halluc. refs | answer-OK |
+|---|---|---|---|---|---|
+| gpt-oss-120b (Groq, q1-18 log lines; 11 of the 12 subset) | 11 | n/a | n/a | 0% | 10/11 = 91% |
+| qwen/qwen3.8-27b | 12 | 100% | 100% | 0% | 11/12 = 92% |
+| gpt-oss-20b (same 12) | 12 | 100% | 67% | 0% | 8/12 = 67% |
+| gpt-oss-20b, all 29 | 29 | 100% (q1-20) | ~78% base, ~83% loop | 0% | 23/29 = 79% base, 24/29 = 83% loop |
+
+Terse schema (table names only), qwen, 12 questions:
+
+| metric | baseline | with loop |
+|---|---|---|
+| execution success | 83.3% | 100% |
+| hallucinated references (final SQL) | 28.6% | 0% |
+| hallucinated references (first SQL) | 28.6% | 28.6% |
+| result-match (loose) | 83.3% | 83.3% |
+| answer-OK | 66.7% | 83.3% |
+| repairs triggered | 0 | 2 |
+
+Caveats. The 20b's 29-question row for chunk 3 (q21-q29) was tallied from log
+lines because that chunk crashed in `aggregate()` (since fixed, see
+`DECISIONS.md`). The 120b reference is from Groq log lines, not a results
+file, and the gpt-oss-20b terse run did not complete (its daily cap ran out
+after q4). qwen's remaining questions (q02, q04-q06, q08, q09, q12, q19,
+q21-q29) ran on the full schema until Groq's cap hit at q25; q04 was also
+rejected outright by qwen's 1,000 output-tokens-per-minute limit.
