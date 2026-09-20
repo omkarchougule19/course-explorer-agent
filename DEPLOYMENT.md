@@ -86,8 +86,8 @@ python -m app.sync_requests --list        # should list ~187 departments with a 
 | `DATABASE_URL` | **yes** | Neon connection string |
 | `DATABASE_URL_RO` | recommended | SELECT-only Neon role for the LLM agent's SQL tool (see §3.5). Falls back to `DATABASE_URL` when unset. |
 | `GROQ_API_KEY` | **yes** (for `/ask`) | LLM for the assistant |
-| `GEMINI_API_KEY` | no | fallback LLM, used only if `GROQ_API_KEY` is unset |
-| `OPENAI_API_KEY` | no | second fallback |
+| `OPENAI_API_KEY` | no | first fallback LLM, used only if `GROQ_API_KEY` is unset |
+| `GEMINI_API_KEY` | no | second fallback, used only if neither of the above is set |
 | `ADMIN_TOKEN` | no | required to use `GET /admin/ask-log`; without it the endpoint always 403s |
 | `ASK_RATE_PER_HOUR` | no (default 10) | per-IP assistant question cap / hour (friction only — the IP comes from a spoofable header) |
 | `ASK_RATE_PER_DAY` | no (default 60) | per-IP assistant question cap / day |
@@ -98,6 +98,8 @@ python -m app.sync_requests --list        # should list ~187 departments with a 
 | `ENABLE_DOCS` | no | set to any value to expose `/docs`, `/redoc`, `/openapi.json` (off by default) |
 | `RAG_MULTIQUERY` | no (default on) | multi-query expansion for `course_content_search`: one extra LLM call rewrites the topic and adds `RAG_SUBQUERIES` (3) facet queries, each searched `RAG_K_PER` (6) deep and Reciprocal-Rank-Fusion-merged to `RAG_K_RETURN` (10). Set to `0` to fall back to a single-query search. Only the semantic path pays the extra call. |
 | `LLM_PROVIDER` | no | force the LLM provider (`groq` \| `gemini` \| `openai`) regardless of which keys are set. Unset = auto-detect in that order. Its own key must still be present. |
+| `GROQ_MODEL` | no | Groq model name. Default `openai/gpt-oss-120b`. Groq's 200,000 tokens/day cap is per model, so a different model has its own budget on the same key. `OPENAI_MODEL` / `GEMINI_MODEL` do the same for those providers. |
+| `GROQ_FALLBACK_MODEL` | no | model retried after a Groq 429 (rate limit) on the primary. Default `qwen/qwen3.8-27b`; set `off` to disable. Applies to `/ask`, `/ask/stream` and the SQL pipeline. |
 | `ANSWER_CITATIONS` | no (default on) | append a deterministic "Sources: …" footer to every answered response (which datasets, how fresh). No extra LLM call. Set to `0` to disable. |
 
 ### 3.4 Post-deploy checks

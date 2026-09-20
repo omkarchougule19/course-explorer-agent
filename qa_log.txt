@@ -356,3 +356,257 @@ Scope: in-scope (RAG / course_content_search)
 A: (not answered - Groq daily token cap: "The LLM provider's rate limit was hit.")
 Verdict: incomplete
 Reason: Quota exhausted mid-batch. The pgvector RAG path was already validated twice earlier this session ("what courses cover machine learning", "find courses about climate change") - both returned real description matches. Retry this phrasing once the daily budget recovers.
+
+## Run: 2026-09-19 (6 in-scope, 2 out-of-scope) - vibe chip regression
+
+Q: Which CS courses this fall have a section that starts at 10 AM or later?
+Scope: in-scope
+A: Here are the CS courses this fall that have a section starting at 10 AM or later:
+
+| Course        | CRN    | Instructor                     |
+|---------------|--------|--------------------------------|
+| [CS 222](/?course=CS-222) | 80041  | Woodley, M                    |
+| [CS 233](/?course=CS-233) | 64513  | Herman, G                     |
+| [CS 233](/?course=CS-233) | 72276  | Herman, G                     |
+| [CS 307](/?course=CS-307) | 81931  | Robles Granda, P             |
+| [CS 307](/?course=CS-307) | 81931  | Robles Granda, P             |
+| [CS 410](/?course=CS-410) | 73825  | Zhai, C                       |
+| [CS 410](/?course=CS-410) | 67393  | Zhai, C                       |
+| [CS 410](/?course=CS-410) | 78820  | Zhai, C                       |
+| [CS 410](/?course=CS-410) | 78821  | Zhai, C                       |
+| [CS 412](/?course=CS-412) | 72359  | Tahboub, R                   |
+| [CS 412](/?course=CS-412) | 72359  | Tahboub, R                   |
+| [CS 412](/?course=CS-412) | 50492  | Tahboub, R                   |
+| [CS 412](/?course=CS-412) | 45752  | Tahboub, R                   |
+| [CS 412](/?course=CS-412) | 48711  | Tahboub, R                   |
+| [CS 412](/?course=CS-412) | 48711  | Tahboub, R                   |
+| [CS 415](/?course=CS-415) | 79897  | Shaffer, E                    |
+| [CS 415](/?course=CS-415) | 79897  | Shaffer, E                    |
+| [CS 415](/?course=CS-415) | 77100  | Shaffer, E                    |
+| [CS 415](/?course=CS-415) | 77099  | Shaffer, E                    |
+| [CS 415](/?course=CS-415) | 79899  | Shaffer, E                    |
+| [CS 415](/?course=CS-415) | 79899  | Shaffer, E                    |
+| [CS 421](/?course=CS-421) | 72203  | Gunter, E                     |
+| [CS 421](/?course=CS-421) | 72203  | Gunter, E                     |
+| [CS 421](/?course=CS-421) | 79365  | Gunter, E                     |
+| [CS 421](/?course=CS-421) | 79365  | Gunter, E                     |
+| [CS 421](/?course=CS-421) | 79366  | Gunter, E                     |
+| [CS 421](/?course=CS-421) | 79366  | Gunter, E                     |
+| [CS 437](/?course=CS-437) | 75719  | Caesar, M                     |
+| [CS 437](/?course=CS-437) | 75717  | Caesar, M                     |
+| [CS 437](/?course=CS-437) | 78710  | Caesar, M                     |
+| [CS 433](/?course=CS-433) | 79901  | Ghose, S                      |
+| [CS 433](/?course=CS-433) | 79901  | Ghose, S                      |
+| [CS 433](/?course=CS-433) | 36076  | Ghose, S                      |
+| [CS 433](/?course=CS-433) | 36076  | Ghose, S                      |
+| [CS 433](/?course=CS-433) | 36069  | Ghose, S                      |
+| [CS 433](/?course=CS-433) | 43363  | Ghose, S                      |
+| [CS 427](/?course=CS-427) | 50494  | Stoica, B                     |
+| [CS 427](/?course=CS-427) | 70960  | Stoica, B                     |
+| [CS 427](/?course=CS-427) | 36107  | Stoica, B                     |
+| [CS 427](/?course=CS-427) | 41594  | Stoica, B                     |
+| [CS 427](/?course=CS-427) | 36104  | Stoica, B                     |
+| [CS 425](/?course=CS-425) | 72128  | Ganesan, A                    |
+| [CS 425](/?course=CS-425) | 72128  | Ganesan, A                    |
+| [CS 425](/?course=CS-425) | 69747  | Ganesan, A                    |
+| [CS 425](/?course=CS-425) | 67394  | Ganesan, A                    |
+| [CS 425](/?course=CS-425) | 62170  | Ganesan, A                    |
+| [CS 425](/?course=CS-425) | 62170  | Ganesan, A                    |
+| [CS 450](/?course=CS-450) | 36016  | Solomonik, E                  |
+| [CS 450](/?course=CS-450) | 36020  | Solomonik, E                  |
+| [CS 460](/?course=CS-460) | 78444  | Luallen, M                    |
+| [CS 460](/?course=CS-460) | 78443  | Luallen, M                    |
+| [CS 445](/?course=CS-445) | 65087  | Wang, Y                       |
+| [CS 445](/?course=CS-445) | 69794  | Wang, Y                       |
+| [CS 445](/?course=CS-445) | 65086  | Wang, Y                       |
+| [CS 445](/?course=CS-445) | 69795  | Wang, Y                       |
+| [CS 445](/?course=CS-445) | 73794  | Wang, Y                       |
+| [CS 440](/?course=CS-440) | 81658  | Attali, A                     |
+| [CS 440](/?course=CS-440) | 81657  | Attali, A                     |
+| [CS 440](/?course=CS-440) | 63671  | Attali, A                     |
+| [CS 440](/?course=CS-440) | 36053  | Attali, A                     |
+| [CS 440](/?course=CS-440) | 81656  | Attali, A                     |
+| [CS 440](/?course=CS-440) | 67004  | Fleck, M                      |
+| [CS 440](/?course=CS-440) | 67003  | Fleck, M                      |
+| [CS 447](/?course=CS-447) | 80998  | Hockenmaier, J               |
+| [CS 447](/?course=CS-447) | 70473  | Hockenmaier, J               |
+| [CS 447](/?course=CS-447) | 63293  | Hockenmaier, J               |
+| [CS 447](/?course=CS-447) | 80983  | Hockenmaier, J               |
+| [CS 447](/?course=CS-447) | 63292  | Hockenmaier, J               |
+| [CS 441](/?course=CS-441) | 74468  | Hoiem, D                     |
+| [CS 441](/?course=CS-441) | 74467  | Hoiem, D                     |
+| [CS 441](/?course=CS-441) | 79903  | Morales Aguirre, M           |
+| [CS 441](/?course=CS-441) | 81001  | Morales Aguirre, M           |
+| [CS 441](/?course=CS-441) | 74471  | Morales Aguirre, M           |
+| [CS 441](/?course=CS-441) | 80997  | Morales Aguirre, M           |
+| [CS 441](/?course=CS-441) | 79904  | Morales Aguirre, M           |
+| [CS 464](/?course=CS-464) | 74739  | Cobb, C                      |
+| [CS 461](/?course=CS-461) | 69009  | Zhang, Y                     |
+| [CS 461](/?course=CS-461) | 72159  | Zhang, Y                     |
+| [CS 461](/?course=CS-461) | 49547  | Zhang, Y                     |
+| [CS 446](/?course=CS-446) | 46793  | Gui, L                       |
+| [CS 446](/?course=CS-446) | 80991  | Gui, L                       |
+| [CS 446](/?course=CS-446) | 46792  | Gui, L                       |
+| [CS 446](/?course=CS-446) | 81003  | Gui, L                       |
+| [CS 446](/?course=CS-446) | 60403  | Gui, L                       |
+| [CS 446](/?course=CS-446) | 77676  | Gui, L                       |
+| [CS 468](/?course=CS-468) | 67895  | Maslowska, E                 |
+| [CS 468](/?course=CS-468) | 81214  | Maslowska, E                 |
+| [CS 477](/?course=CS-477) | 64566  | Parthasarathy, M             |
+| [CS 477](/?course=CS-477) | 64565  | Parthasarathy, M             |
+| [CS 497](/?course=CS-497) | 72830  | None                         |
+| [CS 470](/?course=CS-470) | 81660  | Sundaram, H                  |
+| [CS 470](/?course=CS-470) | 81660  | Sundaram, H                  |
+| [CS 470](/?course=CS-470) | 77201  | Sundaram, H                  |
+| [CS 470](/?course=CS-470) | 77201  | Sundaram, H                  |
+| [CS 470](/?course=CS-470) | 77200  | Sundaram, H                  |
+| [CS 470](/?course=CS-470) | 77200  | Sundaram, H                  |
+| [CS 463](/?course=CS-463) | 49551  | Chandrasekaran, V            |
+| [CS 463](/?course=CS-463) | 80992  | Chandrasekaran, V            |
+| [CS 463](/?course=CS-463) | 49550  | Chandrasekaran, V            |
+| [CS 463](/?course=CS-463) | 80996  | Chandrasekaran, V            |
+| [CS 463](/?course=CS-463) | 77849  | Chandrasekaran, V            |
+| [CS 499](/?course=CS-499) | 10465  | None                         |
+| [CS 483](/?course=CS-483) | 58793  | Kindratenko, V               |
+| [CS 483](/?course=CS-483) | 73997  | Kindratenko, V               |
+| [CS 483](/?course=CS-483) | 73997  | Kindratenko, V               |
+| [CS 483](/?course=CS-483) | 80061  | Kindratenko, V               |
+| [CS 511](/?course=CS-511) | 50497  | Park, Y                      |
+| [CS 491](/?course=CS-491) | 54321  | Bashir, M                    |
+| [CS 491](/?course=CS-491) | 43827  | Amato, N                     |
+| [CS 500](/?course=CS-500) | 81760  | Cunningham, K                |
+| [CS 484](/?course=CS-484) | 81000  | Rauchwerger, L               |
+| [CS 484](/?course=CS-484) | 71093  | Rauchwerger, L               |
+| [CS 484](/?course=CS-484) | 80027  | Rauchwerger, L               |
+| [CS 484](/?course=CS-484) | 67876  | Rauchwerger, L               |
+| [CS 484](/?course=CS-484) | 67875  | Rauchwerger, L               |
+| [CS 475](/?course=CS-475) | 35895  | Viswanathan, M               |
+| [CS 475](/?course=CS-475) | 35895  | Viswanathan, M               |
+| [CS 475](/?course=CS-475) | 81125  | Viswanathan, M               |
+| [CS 475](/?course=CS-475) | 35887  | Viswanathan, M               |
+| [CS 475](/?course=CS-475) | 35887  | Viswanathan, M               |
+| [CS 545](/?course=CS-545) | 75562  | Kim, M                       |
+| [CS 556](/?course=CS-556) | 55575  | Olson, L                     |
+| [CS 521](/?course=CS-521) | 79800  | Misailovic, S                |
+| [CS 521](/?course=CS-521) | 79800  | Misailovic, S                |
+| [CS 521](/?course=CS-521) | 79799  | Misailovic, S                |
+| [CS 543](/?course=CS-543) | 37132  | Forsyth, D                   |
+| [CS 543](/?course=CS-543) | 81923  | Forsyth, D                   |
+| [CS 543](/?course=CS-543) | 76188  | Forsyth, D                   |
+| [CS 571](/?course=CS-571) | 33563  | Methuku, A                   |
+| [CS 562](/?course=CS-562) | 75418  | Liao, X                      |
+| [CS 563](/?course=CS-563) | 54776  | Bates, A                     |
+| [CS 563](/?course=CS-563) | 54597  | Bates, A                     |
+| [CS 581](/?course=CS-581) | 70702  | Warnow, T                    |
+| [CS 582](/?course=CS-582) | 75421  | Singh, R                     |
+| [CS 597](/?course=CS-597) | 76765  | None                         |
+| [CS 107](/?course=CS-107) | 71813  | Fagen-Ulmschneider, W        |
+| [CS 107](/?course=CS-107) | 79489  | Fagen-Ulmschneider, W        |
+| [CS 107](/?course=CS-107) | 71814  | None                         |
+| [CS 107](/?course=CS-107) | 71815  | None                         |
+| [CS 107](/?course=CS-107) | 71816  | None                         |
+| [CS 107](/?course=CS-107) | 78682  | Hermon, M                    |
+| [CS 107](/?course=CS-107) | 78686  | Jarrold, G                   |
+| [CS 107](/?course=CS-107) | 79505  | None                         |
+| [CS 107](/?course=CS-107) | 79507  | None                         |
+| [CS 107](/?course=CS-107) | 79506  | None                         |
+| [CS 591](/?course=CS-591) | 35980  | Lewis, C                     |
+| [CS 591](/?course=CS-591) | 58740  | Sha, L                       |
+| [CS 591](/?course=CS-591) | 35957  | Kloeckner, A                 |
+| [CS 591](/?course=CS-591) | 41977  | Kudaligama, V                |
+| [CS 591](/?course=CS-591) | 43833  | Yuan, W                      |
+| [CS 591](/?course=CS-591) | 35961  | Lazebnik, S                  |
+| [CS 591](/?course=CS-591) | 35951  | Beckman, M                   |
+| [CS 598](/?course=CS-598) | 69375  | Willis, C                    |
+| [CS 598](/?course=CS-598) | 50499  | Moses, W                     |
+| [CS 598](/?course=CS-598) | 49221  | Farivar, R                   |
+| [CS 598](/?course=CS-598) | 67236  | Farivar, R                   |
+| [CS 598](/?course=CS-598) | 54730  | Chandrasekharan, E           |
+| [CS 598](/?course=CS-598) | 67238  | Alabi, D                     |
+| [CS 598](/?course=CS-598) | 66319  | Willis, C                    |
+| [CS 598](/?course=CS-598) | 35992  | Mashfiqui Rabbi Shuvo, M     |
+| [CS 598](/?course=CS-598) | 45708  | Mashfiqui Rabbi Shuvo, M     |
+| [CS 598](/?course=CS-598) | 40106  | Sultana, S                   |
+| [CS 598](/?course=CS-598) | 57824  | Yan, F                       |
+| [CS 598](/?course=CS-598) | 69389  | Talati, N                    |
+| [CS 598](/?course=CS-598) | 36004  | Jabbarvand Behrouz, R        |
+| [CS 598](/?course=CS-598) | 36004  | Jabbarvand Behrouz, R        |
+| [CS 598](/?course=CS-598) | 36005  | Jabbarvand Behrouz, R        |
+| [CS 598](/?course=CS-598) | 36005  | Jabbarvand Behrouz, R        |
+| [CS 598](/?course=CS-598) | 49828  | Sterman, S                   |
+| [CS 598](/?course=CS-598) | 73072  | None                         |
+| [CS 598](/?course=CS-598) | 72098  | Fischer, P                   |
+| [CS 598](/?course=CS-598) | 70683  | Chronopoulou, A              |
+| [CS 598](/?course=CS-598) | 49197  | Khurana, D                   |
+| [CS 598](/?course=CS-598) | 35990  | Engelken, R                  |
+| [CS 598](/?course=CS-598) | 35990  | Engelken, R                  |
+
+This list includes the course number, CRN, and instructor for each section.
+
+---
+*Sources: UIUC Course Explorer (last sync 2026-09-17).*
+Verdict: unsatisfactory
+Reason: Answer is a long duplicated section-level table (repeated CRNs, ~176 rows) instead of a per-course list; DB has ~72-83 distinct CS courses with a 10AM+ meeting. Complete-ish but noisy, no synthesis; also mixes in grad courses. Reword chip e.g. 'Which CS 100/200-level courses have a lecture starting at 10 AM or later?'
+
+Q: Which 100- and 200-level courses have the highest average GPA?
+Scope: in-scope
+A: Agent stopped due to max iterations.
+
+---
+*Sources: grade distributions (wadefagen/datasets).*
+Verdict: unsatisfactory
+Reason: Hit 'max iterations' with no explanation; grade_distributions is empty locally (0 rows) so the correct answer is a plain 'no grade data yet'.
+
+Q: Which gen-ed courses have the highest average GPA?
+Scope: in-scope
+A: It appears that there are no entries in the grade distribution data for gen-ed courses, which means I cannot provide the average GPA for those courses at this time. This could be due to the data not being published yet for the relevant terms. If you have any other questions or need information on a different topic, feel free to ask!
+
+---
+*Sources: Gen Ed list (wadefagen/datasets); grade distributions (wadefagen/datasets).*
+Verdict: satisfactory
+Reason: Correctly says grade data is unavailable rather than fabricating (grade_distributions empty).
+
+Q: Which CS courses have open seats this fall?
+Scope: in-scope
+A: There are no CS courses with open seats this fall.
+
+---
+*Sources: UIUC Course Explorer (CS synced 2026-08-25).*
+Verdict: unsatisfactory
+Reason: Says no CS courses have open seats, but DB has 498 CS fall 2026 sections with enrollment_status 'A' and 8 'P'. Wrong; likely misreading status codes (no seat counts exist).
+
+Q: Who teaches CS 225 in fall 2026?
+Scope: in-scope
+A: In fall 2026, CS 225 is taught by the following instructors:
+
+- [Beckman, M](/instructor.html?name=Beckman%2C%20M)
+- [Solomon, B](/instructor.html?name=Solomon%2C%20B)
+
+There are multiple sections, and some sections do not have an assigned instructor.
+
+---
+*Sources: UIUC Course Explorer (CS synced 2026-08-25).*
+Verdict: satisfactory
+Reason: Beckman, M and Solomon, B match DB.
+
+Q: How many credit hours is CS 374?
+Scope: in-scope
+A: CS 374 is worth 4 credit hours.
+
+---
+*Sources: UIUC Course Explorer (CS synced 2026-08-25).*
+Verdict: satisfactory
+Reason: 4 hours matches DB.
+
+Q: What is the capital of France?
+Scope: out-of-scope
+A: I'm unable to provide information on general knowledge or trivia, including the capital of France. However, I can assist you with questions related to the UIUC course catalog, such as course offerings, instructors, or academic calendar dates. Please let me know how I can help!
+Verdict: satisfactory
+Reason: Declined, no fabrication.
+
+Q: Write me a Python sorting algorithm.
+Scope: out-of-scope
+A: I'm unable to assist with coding requests, including writing a Python sorting algorithm. However, I can help you with information about courses, instructors, and academic data from the UIUC course catalog. Please let me know if you have any questions related to that!
+Verdict: satisfactory
+Reason: Declined, no code written.
+

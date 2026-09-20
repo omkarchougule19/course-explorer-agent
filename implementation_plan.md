@@ -226,3 +226,214 @@ We will modify the codebase to support **both SQLite and PostgreSQL** dynamicall
 3. Access the deployed Render URL and perform search and AI queries to verify data loading.
 4. Ask a structured question ("who teaches CS 225") and confirm the SQL tool is used.
 5. Ask a content question ("what courses cover machine learning") and confirm the vector search tool is used and returns relevant courses.
+
+
+---
+
+## Open issues: resolution plan (2026-09-19)
+
+Written after the Gen Z UI refresh and the assistant fixes (iteration cap,
+`enrollment_status` codes, prompt gaps). Nothing below is started. The *why*
+behind what already shipped is in `DECISIONS.md` ("Gen Z refresh" and
+"Assistant fixes" sections, both dated 2026-09-19). Status values: `todo`,
+`blocked` (needs something outside the code), `user` (needs the owner).
+
+Suggested order: 3 and 3b first (they decide whether the assistant fixes hold and stay fast in production), then 2, then 4-7
+(assistant quality), then 8-11 (data, UI, structure), then 12-13 (housekeeping).
+
+### 1. OpenAI key exposure — `closed` (owner decision, 2026-09-19)
+- **What happened:** the `OPENAI_API_KEY` line of the gitignored `.env` was
+  printed into a Claude Code session transcript on 2026-09-19.
+- **Decision:** no rotation. The key is a local-only fallback; production runs
+  on `GROQ_API_KEY`, already set in the Render dashboard (`render.yaml` lists
+  `OPENAI_API_KEY` only as an optional, unsynced fallback, and the app prefers
+  Groq whenever its key is present). Risk accepted: the key is still valid and
+  sits in that transcript, so revisit if the transcript is ever shared.
+- **Follow-on:** the local `.env` has the Groq line commented out (the daily
+  cap was hit on 2026-09-10), so local runs use OpenAI while production uses
+  Groq. See item 3.
+
+### 2. Commit the pending work in reviewable pieces — `todo`, wait for go-ahead
+- **Problem:** roughly 20 files are uncommitted (UI refresh, assistant fixes,
+  evals, code-critic agent, `qa_log.txt`). One giant commit would be
+  unreviewable and hard to revert.
+- **Plan:** three commits, none pushed until approved. (a) `app/agent.py`,
+  `app/ask_log.py`, `evals/*`: assistant fixes plus gold rows q25-q29 and
+  `test_agent_guards.py`. (b) `static/*` and `.claude/agents/code-critic.md`: UI
+  refresh. (c) `DECISIONS.md`, `implementation_plan.md`, `qa_log.txt`. Run the
+  six offline evals and `node --check` on the JS first, and run `code-critic`
+  once more on the final diff. Leave `plan.txt` alone (it is the user's
+  untracked note).
+- **Done when:** three commits exist locally and the working tree is clean
+  apart from `plan.txt`.
+
+### 3. Re-verify the assistant fixes on the production model — `partly done 2026-09-19`, continue
+- **Done so far:** local `.env` now uses Groq (`openai/gpt-oss-120b`, the
+  production model) and `_build_llm()` prefers Groq, then OpenAI, then Gemini.
+  Five QA questions were re-run once on Groq after trimming the prompt: no
+  prerequisites, humanities gen-ed, top CS instructor and 400-level CS courses
+  answered correctly (the no-prerequisites list matched the gold query exactly);
+  "open sections this fall" gave the right "not published" answer on the first
+  run and hit a rate limit on the second. That is one run per question, not a
+  pass rate.
+- **Still to do:**
+  1. Run the gold set with `evals.run --arms prod --db env --provider groq`
+     and `--provider openai` and a repeat count (add `--repeats N`, default 1),
+     reporting per-question pass rate. Spend Groq tokens at a quiet time and use
+     `--limit` (an eval run draws on the same daily budget as students).
+  2. Compare providers; if Groq is worse on a specific pattern, add the
+     matching prompt rule.
+  3. Consider `SQL_PIPELINE=critic` in production: the Critic/Repair loop was
+     built for this failure (dropped filters, wrong columns). Decide from the
+     repeated-run numbers and record it in `DECISIONS.md`.
+- **Done when:** per-question pass rates over at least 3 repeats on Groq are in
+  `evals/RESULTS.md` and the default provider/mode is chosen from them.
+
+### 3b. Groq free-tier per-minute token limit throttles the assistant — `todo`, found 2026-09-19
+- **Problem:** Groq's on-demand tier for `openai/gpt-oss-120b` returned
+  "TPM limit 8000, used 4120, requested 6111". One agent step sends about
+  6,100 tokens (the ~2,550-token system prompt plus tool schemas, question and
+  earlier tool results), so a second step inside the same minute is refused and
+  LangChain waits and retries. Observed latencies for one question ranged from
+  4 s to 154 s, and one question ended in "rate limit was hit". Anything that
+  needs 2+ steps, or two students asking within a minute, is exposed. My
+  first prompt additions made it worse (system prompt +816 tokens, about +40%);
+  they were compressed to +547.
+- **Plan (in order of effort):**
+  1. Slim the system prompt further without changing behaviour: the
+     `academic_calendar` paragraph, the RAG-tool paragraph and the formatting
+     rules are the longest; target under 2,000 tokens total, verified against the
+     gold set so no answer regresses.
+  2. Cut steps: drop `sql_db_list_tables`, `sql_db_schema` and
+     `sql_db_query_checker` from the toolset (also fixes plan item 5), so a normal
+     question is one query call plus the answer.
+  3. Runtime failover: if Groq returns a 429, retry the same question once on
+     the next configured provider (OpenAI) instead of showing "rate limit was
+     hit". This is only useful in production if `OPENAI_API_KEY` is set there,
+     which costs money; the owner decides. Record the decision in `DECISIONS.md`.
+  4. Check whether upgrading Groq to the Dev tier is cheaper than any of the
+     above (higher TPM, pay per token).
+- **Done when:** three consecutive multi-step questions complete in under 30 s
+  each on Groq with no 429, or the chosen failover is in place.
+
+### 4. Evals run against the wrong database by default — `todo`
+- **Problem:** `evals/run.py` defaults to `--db sqlite` (local `data/courses.db`,
+  14,714 sections) while the live app reads Neon (19,848 sections, different
+  fall-2026 data). Numbers from the default run do not describe what students
+  get. The new gold rows were only spot-checked against Neon by hand.
+- **Plan:** make `--db env` the default (fall back to sqlite only if
+  `DATABASE_URL` is unset), print which database was used at the top of every
+  results file, and run the full 29-row set once on Neon. Note: `app/db.py`'s
+  `execute()` treats `%` as a parameter marker on Postgres, so gold SQL with
+  `LIKE '1%'` needs `%%` there (or `substr()`); handle it in the harness rather
+  than rewriting the gold queries.
+- **Done when:** the full run completes on Neon and its summary names the
+  database.
+
+### 5. Malformed instructor links and ignored tool rules — `todo`
+- **Problem:** the model sometimes writes `https://instructor.html?name=...`
+  instead of `/instructor.html?name=...` (broken link), and sometimes calls
+  `sql_db_list_tables` / `sql_db_schema` despite the prompt saying not to,
+  costing a step each.
+- **Plan:** stop relying on the prompt. (a) Remove those two tools (and
+  `sql_db_query_checker`) from the agent's tool list in `build_agent()`; the
+  schema is already in the prompt. (b) Add a small post-processor for the final
+  answer that rewrites `](https://instructor.html` and `](https://?course=` to
+  the site-relative form, with a unit test in `test_agent_guards.py`.
+- **Done when:** a 10-question sample never shows those tool calls, and the
+  link test passes.
+
+### 6. Long, noisy table answers ("No 8ams") — `todo`
+- **Problem:** the late-start question returns about 176 raw meeting rows with
+  repeated courses and CRN "N/A" (it queried `meetings` without joining
+  `sections`). Correct but unhelpful.
+- **Plan:** add a prompt recipe: for "which courses start after X", group by
+  course (one earliest qualifying meeting each), join `meetings` to `sections`
+  on the five-column key so CRN and instructor exist, and show a count plus the
+  first ~15 with "N more". Add a gold row for it. Optionally reword the chip
+  once the answer is tidy.
+- **Done when:** the chip's answer fits on one screen and has CRNs.
+
+### 7. Verify the `P` status label and the "only Tue/Thu" meaning — `blocked` on a data sample
+- **Problem:** `P` is labelled "Pending" in the UI and prompt by inference from
+  UIUC's `sectionStatusCode`; not confirmed. Separately, "meets only on
+  Tuesdays and Thursdays" was not verified at course level (a course can have a
+  lecture on TR and a discussion on another day).
+- **Plan:** pull one raw section XML for a `P` section (the scraper already
+  fetches them) and read the code's meaning from UIUC's schema or docs; fix the
+  wording if wrong. For Tue/Thu, decide the definition (every meeting TR vs.
+  lecture TR), write the SQL, and add it as gold row q30.
+- **Done when:** the label is confirmed or corrected and q30 exists.
+
+### 8. Grade and instructor-ranking data are empty — `blocked` on upstream
+- **Problem:** `grade_distributions` and `teachers_ranked_excellent` have 0 rows
+  in Neon, so GPA questions and the Grade History tab correctly say "no data".
+  The GPA chips were removed for this reason.
+- **Plan:** check whether the upstream datasets (the sources behind
+  `load_grades.py` and `load_tre.py`) currently publish data. If so, run the
+  loaders locally against Neon (writes only happen from the local machine, per
+  `DEPLOYMENT.md`), then restore the "GPA boosters" chip and add gold rows. If
+  upstream is empty, leave as is and add a short "not published yet" note to the
+  Grade History tab so it does not look broken.
+- **Done when:** either grade rows exist and the chip is back, or the tab
+  explains the gap.
+
+### 9. Panels stay hidden after a hard scroll jump — `todo`
+- **Problem:** with motion on, jumping straight past below-the-fold panels
+  (Home/End, anchor links) leaves them at `opacity: 0` until scrolled back into
+  view, because the IntersectionObserver never sees them cross its threshold.
+- **Plan:** in `motion.js`, add a passive `scroll` listener (throttled with
+  `requestAnimationFrame`) that marks any `.reveal` element whose top is above
+  the viewport bottom as `.in`, plus a 3 s fallback timer that marks the rest.
+  Test over CDP: load, `scrollTo(0, scrollHeight)`, assert no
+  `.reveal:not(.in)` remains above the fold.
+- **Done when:** the CDP check passes with motion enabled.
+
+### 10. Duplicated theme tokens and copy-pasted nav — `todo`
+- **Problem:** dark-mode tokens are defined in both `style.css` and
+  `theme-genz.css`; the six-link nav (now with icons and short labels) is
+  copy-pasted into 7 pages, so any nav change touches 7 files. The code critic
+  ranked this the highest-value structural cleanup.
+- **Plan:** (a) move the final token values into `style.css`'s `:root` and dark
+  blocks and reduce `theme-genz.css` to skin and motion rules; check both themes
+  visually on every page. (b) Generate the nav from one source: a small build
+  step (`scripts/build_pages.py`) that injects `static/partials/nav.html` into
+  each page (no runtime cost, works without JS), rather than a template
+  engine. Add a check to the offline evals that every page has identical nav
+  markup.
+- **Done when:** one place defines tokens, one place defines the nav, and the
+  consistency check passes.
+
+### 11. Chip set and small UI polish — `todo`
+- **Problem:** "Gen-ed finder" nearly duplicates the default "QR gen-ed" chip,
+  and the phone chip row hides its scrollbar, so the swipe hint relies on the
+  clipped last chip.
+- **Plan:** replace "Gen-ed finder" with a distinct answerable question (for
+  example earliest class time for a named course, once item 6 lands); add a
+  subtle fade on the right edge of the chip row on phones. Re-run the phone-width
+  check afterwards.
+- **Done when:** no duplicate chips and the fade renders at 390px and 320px.
+
+### 12. Keep the browser checks so they can be re-run — `todo`
+- **Problem:** motion and phone-width behaviour were verified by hand over the
+  DevTools protocol on 2026-09-19; nothing re-runs it.
+- **Plan:** save those scripts as `evals/ui_smoke.py`: reveal, stagger, shake,
+  ripple, confetti, spotlight, no horizontal overflow at 390 and 320, and
+  reduced-motion disabling each effect. It needs Chrome and a running server,
+  so run it manually before UI commits rather than in CI.
+- **Done when:** `python -m evals.ui_smoke` prints all checks passing with a
+  server on `:8765`.
+
+### 13. Housekeeping — `todo`
+- Line endings: git warns "LF will be replaced by CRLF" on nearly every file.
+  Add a `.gitattributes` (`* text=auto eol=lf`) so diffs stay clean.
+- `qa_log.txt` grows with every QA run; decide whether it stays tracked or is
+  gitignored.
+- `admin.html` was deliberately left out of the refresh; re-check it visually
+  once the tokens are consolidated (item 10), since it shares `style.css`.
+
+### 3c. Evaluate alternative Groq models, then decide on failover — `todo`, 2026-09-20
+- Model name is now an env var (`GROQ_MODEL`, `OPENAI_MODEL`, `GEMINI_MODEL`); `python -m evals.run --provider groq --model openai/gpt-oss-20b -y` scores a candidate on its own daily Groq budget.
+- Candidates: `openai/gpt-oss-20b`, `qwen/qwen3.8-27b`. Note: prod, dev and evals share one Groq key, so eval runs eat production budget.
+- Then: 429 failover from 3b, and trimming `SYSTEM_CONTEXT` (about 2,550 tokens, sent every step). Decide later.
+- **2026-09-20 update:** 429 failover to `GROQ_FALLBACK_MODEL` (default qwen/qwen3.8-27b) is implemented (see `DECISIONS.md`); still open: measure qwen's per-minute limit and its full-set accuracy.

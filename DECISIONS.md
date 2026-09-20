@@ -2449,3 +2449,345 @@ cosmetic issue): the model sometimes wraps a CRN in a Markdown link with
 a placeholder `#` href (e.g. `[35917](#)`) even though the Rule never
 told it to link CRN - harmless (clicking it does nothing) but reads like
 a broken link.
+
+
+---
+
+## Gen Z refresh: layered theme file, dark-first, motion kept cheap (2026-09-19)
+
+The user wanted the site to feel less like a university portal and more
+"cool for Gen Z": dynamic elements, shakes and twists, a less formal look.
+Decisions made while building it:
+
+**Layered `theme-genz.css` instead of rewriting `style.css`.** `style.css`
+already owns layout and every component; the refresh is a re-skin (tokens,
+fonts, radius, gradients) plus motion. A second stylesheet loaded after it
+keeps the diff reviewable and makes the whole look reversible by removing one
+`<link>`. Cost: a few dark-mode rules had to be deleted from `style.css`
+(banner gradient) and the dark tokens now exist in both files. Rejected:
+editing `style.css` in place (huge noisy diff, easy to regress the layout
+work the user already reviewed). Follow-up worth doing: fold the tokens back
+into `style.css` once the look is settled, so there is one theme source.
+
+**Dark by default.** The user picked "dark-first, Illini orange pop". Every
+page's head script now sets `data-theme` to the stored choice, else `dark`,
+before first paint. This deliberately ignores the OS light/dark preference for
+first-time visitors; the toggle still works and is remembered. Rejected: keeping
+OS-preference as the default (the light look is much less distinctive).
+
+**Palette dialled down after review.** First pass used high-contrast
+orange/pink/violet gradients; the user found the contrast too strong. The
+banner, accent stripes, buttons and glows now use closer-in-tone stops (one
+`--stripe` and one `--btn-grad` variable so it stays consistent). Button gradient
+stops are checked so white text stays >= 4.5:1 at both ends (`#c4431a` to
+`#c23a6b`; the first attempt's `#d4531c` measured 4.16:1 and was darkened, and
+the light theme's `--orange`, which is also used as text, is `#c2410c`). Hover
+darkens buttons rather than lightening them for the same reason.
+
+**Performance: no `backdrop-filter` on panels, no fixed background, no noise
+layer.** The first build put a blur on every panel and KPI over a fixed
+gradient plus an SVG-noise overlay. In the browser the tab stopped responding
+to screenshots, and the code critic flagged it as the main scroll/hover cost.
+Removed; `backdrop-filter` stays only on the small fixed nav bar. The cursor
+spotlight writes `--mx`/`--my` once per animation frame and skips tables. An
+`@property` registration to stop those inheriting was tried and dropped: a
+non-inheriting property would also be invisible to the `::before` glow that
+reads it.
+
+**Motion is progressive enhancement and respects reduced motion.** All
+movement is in `motion.js` / `theme-genz.css`; with JS off the site is just
+flatter. `prefers-reduced-motion` disables reveals, shake, ripple, confetti,
+hover lifts and the typing bounce (shake falls back to an outline flash).
+Party mode (easter egg) animates only the stat cards; an earlier hue-rotate on the
+full-width banner was dropped as too heavy for low-end phones. Confetti is rare on purpose: first assistant answer per page load, a thumbs-up,
+adding a section to the schedule, and the easter egg.
+
+**File structure.** `motion.js` (spotlight, ripple, reveal, stagger, confetti,
+toast, shake, easter eggs), `share-card.js` (PNG course card, only loaded on
+pages with the course quick-view), `theme-genz.css`. Names describe contents
+rather than a mood. The mobile bottom tab bar's icons and short labels are in
+the HTML of each page rather than injected by JS (no layout shift, works
+without JS); the cost is that the nav is still copy-pasted across the 7 public
+pages, which is a known duplication. `admin.html` is deliberately left out of
+the refresh (no theme file, no head-script change): it is internal and not
+worth the risk. The old `.dots` typing animation was removed from `style.css`
+when the bouncing dots replaced it.
+
+**Suggestion chips reuse the assistant instead of new filters.** The chips
+under "Pick a mood" ("No 8ams", "Busiest profs", "Gen-ed finder", markup class
+`topic-chips`) just submit a ready-made question. A real filter would need new
+backend params (meeting times live in a separate table) for a few buttons; the
+agent already answers these. Rejected: new `/sections` query params.
+
+The first draft had "GPA boosters", "Gen-ed bangers" (by GPA) and "Open seats".
+QA against the assistant (2026-09-19) showed they would advertise questions it
+cannot answer, so they were replaced with ones it demonstrably answers:
+`grade_distributions` is empty in the database this was tested against, so
+GPA questions return "no data" or hit the iteration cap; "open seats" was
+answered wrongly ("no CS sections open") because `enrollment_status` holds
+codes (`A` 498 rows, `P` 8 for CS fall 2026), not the word "Open", and the
+agent does not map them. Those are assistant bugs, not UI ones; they were fixed
+in the next section. Other assistant problems seen while testing: "which
+courses have no prerequisites" hits "Agent stopped due to max iterations";
+"meet only on Tuesdays and Thursdays" overflows the model context (136k tokens);
+"busiest profs" includes a `None` instructor row (121 unassigned sections).
+
+**Share card is client-side.** The card is drawn on a `<canvas>` and shared
+through the native share sheet where available, else downloaded. Rejected:
+server-side image rendering (new dependency and endpoint for a nice-to-have).
+
+**Code critic subagent.** Added `.claude/agents/code-critic.md`, a read-only
+reviewer for efficiency, structure, naming and best practices, and ran it
+against this change; most of its findings are reflected above.
+
+
+---
+
+## Assistant fixes: iteration cap, enrollment_status codes, and prompt gaps (2026-09-19)
+
+Triggered by QA of the suggestion chips (see the previous section). Everything
+below was reproduced against the live Neon database before changing anything.
+
+**What "Agent stopped due to max iterations" really was.** `build_agent()` caps
+the LangChain agent at `max_iterations=6` to bound token spend. For "which CS
+100/200-level courses have no prerequisites" the model burned that budget on
+avoidable failures, in this order: (1) it wrote `course_number BETWEEN 100 AND
+299`, but `course_number` is TEXT (it can be "492A"), so Postgres rejected it
+with "operator does not exist: text >= integer", twice; (2) it misread the
+`prerequisites` table (NULL `req_*` columns mean a non-course condition, not
+"no prerequisite") and ran `SELECT ... FROM prerequisites` with no filter, which
+returned about 43,000 characters (roughly 11k tokens) both times; (3) every one
+of those tool results is re-sent to the model on each later step, so the
+context grew fast and it never reached a final answer; (4) it also spent a step
+on `sql_db_query_checker`, which the prompt forbids. Runs were flaky: some
+squeaked out an answer on step 7-8, others hit the cap and returned the raw
+developer string to the student. The same missing rule explains the separate
+failure where "meet only on Tuesdays and Thursdays" overflowed the model's
+128k-token context (136k tokens): unbounded query results piled up.
+
+Fixes, in `app/agent.py`:
+- The prompt now states that `course_number` is TEXT and gives the prefix
+  pattern for levels (`LIKE '1%' OR LIKE '2%'`), says to use DISTINCT for
+  course-level questions, and gives the anti-join recipe for "no prerequisites"
+  (`NOT EXISTS` over `prerequisites`). It also says every filter named in the
+  question must be in the WHERE clause (one run dropped `subject='CS'` and
+  answered from the wrong rows).
+- `_CappedSQLDatabase` truncates any single query result to
+  `MAX_QUERY_RESULT_CHARS` (6000, env-overridable) on a whole-row boundary and
+  appends a note telling the model to narrow the query. This bounds the worst
+  case for every question, not just this one. Rejected: raising
+  `max_iterations` (it hides the cause and raises the token bill of every
+  looping question) and truncating in the API layer (too late; the tokens are
+  already spent).
+- `friendly_stop()` replaces the raw cap string with "That question needed more
+  steps than I can take in one go. Try narrowing it...", and that text is an
+  `ask_log` error marker so it is not counted against the student's rate limit
+  (the raw string used to be logged as a normal answer).
+- Result on the failing question: 2 tool calls instead of 7-8, and the answer
+  matches the gold query exactly (CS 100, 102, 107, 199, 266) on repeated runs.
+  An earlier attempt with truncation but without the "keep every filter" rule
+  answered CS 101 and CS 222 - wrong - which is why that rule exists.
+
+**enrollment_status.** For terms whose registration data is published the column
+holds words (Open, Closed, Open (Restricted), CrossListOpen, CrossListOpen
+(Restricted)). Fall 2026 is not published yet, so `scraper.py` falls back to
+`sectionStatusCode`, and the column holds `A` (6,160 rows) and `P` (29 rows).
+Those codes mean "scheduled" / "pending", not seat availability; no term has
+seat counts. The agent used to filter `= 'Open'`, get nothing, and answer "no
+CS sections are open", which was wrong. The prompt now documents both shapes
+and requires saying that open/closed isn't published for such a term. The
+results table shows `A` as "Scheduled" and `P` as "Pending" with a tooltip.
+The label for `P` ("pending") is inferred from UIUC's `sectionStatusCode`
+field, not confirmed against their documentation.
+
+**Smaller prompt gaps found on the way.** Gen-ed columns hold codes (`hum` is
+'HP' or 'LA', `sbs` 'SS'/'BSC', `qr` 'QR1'/'QR2', ...), not category names, so
+"humanities" queries returned nothing; instructor rankings must exclude NULL
+instructors (121 unassigned fall CS sections ranked first); `days_of_week` is a
+letter string ('TR'), so "only Tuesdays and Thursdays" is equality, not LIKE.
+
+**Not fixed.** Grade data is empty in the live database as well
+(`grade_distributions` and `teachers_ranked_excellent` have 0 rows), so GPA
+questions correctly answer "no data" and the GPA chips stay out. The model
+sometimes writes a malformed instructor link (`https://instructor.html?...`
+instead of `/instructor.html?...`), and occasionally ignores the "don't call
+list_tables/schema" rule; both are model-compliance issues, not fixed here.
+`gpt-4o-mini` is currently the provider (Groq's daily cap was hit on 2026-09-10,
+see `.env`), so run-to-run variation is real: the fixes reduce it, they do not
+make answers deterministic.
+
+**Evals.** Added five rows to `evals/eval_set.jsonl` (q25-q29): no-prerequisite
+courses, a 400-level filter on TEXT `course_number`, open-sections-for-an-unpublished-term
+(expects a "not published" answer), an ENGL humanities gen-ed lookup, and a top
+instructor ranking that must skip NULLs. Gold SQL was checked to run on Neon.
+`evals/test_agent_guards.py` covers the cap message, its rate-limit tagging and
+the result truncation offline.
+
+## UI validation done with real browser emulation (2026-09-19)
+
+Earlier notes said motion and phone widths were unverified because the review
+browser had reduced-motion on and could not shrink its viewport. Both were
+re-checked by driving headless Chrome over the DevTools protocol with
+`prefers-reduced-motion: no-preference` and real 390px and 320px device
+metrics: scroll reveals, table-row stagger, shake, ripple, confetti (appears on
+add-to-schedule and removes itself), cursor spotlight and the logo easter egg
+all fire; no horizontal overflow at 390 or 320 on the index, departments and
+schedule pages; every mobile nav label fits. Tap targets that measured 18-24px
+(theme toggle, department list, "New chat") were raised to 40px on phones. One
+known quirk: a hard scroll jump (Home/End) leaves panels the jump skipped over
+hidden until they are scrolled back into view.
+
+
+---
+
+## LLM provider order: Groq, then OpenAI, then Gemini (2026-09-19)
+
+The owner asked for Groq first and OpenAI second, and for local development to
+use Groq like production does. `_build_llm()` in `app/agent.py` now checks
+`GROQ_API_KEY`, then `OPENAI_API_KEY`, then `GEMINI_API_KEY` (previously Gemini
+was second). `LLM_PROVIDER` still forces one. This is by which key is present,
+not automatic failover when Groq errors. The local `.env` had the Groq line
+commented out since 2026-09-10 (daily cap); it is active again, so local runs
+and production use the same model (`openai/gpt-oss-120b`).
+`DEPLOYMENT.md`, `render.yaml` and the README were updated to the new order.
+The 2026-09-03-era entry above that lists Gemini second is left as history.
+Rejected for now: runtime failover on a Groq 429 (it only helps in production
+if an OpenAI key is deployed, which costs money; tracked in the plan as 3b).
+
+Finding while testing on Groq: the free on-demand tier allows 8,000 tokens per
+minute for this model and one agent step sends about 6,100, so multi-step
+questions are throttled (4 s to 154 s per question, one outright rate-limit
+failure). The system prompt additions from the assistant fixes cost +816
+tokens; they were compressed to +547. Tracked in `implementation_plan.md` 3b.
+
+
+---
+
+## README restructured as a portfolio piece (2026-09-19)
+
+The README was a 417-line spec sheet. The owner wants it to work as a portfolio
+project for general recruiters with a focus on AI Engineer / Forward-Deployed
+Engineer roles, to show learning without announcing it, and to have a more
+concise structure. It is now about 130 lines: a one-paragraph story up front, a
+"What it does" list, a "What I learned" section made of concrete things that
+happened (each is a bug or measurement, not a claim), the eval table with its
+caveats, the architecture diagram, and a short table of engineering choices.
+
+The critic loop's negative result on the full schema leads the story on
+purpose. The owner approved saying it plainly, and an honest negative result,
+plus the ablation that showed where the loop does help, is a stronger signal
+than a clean win. The eval table labels the 84.6% row as pre-fix and says the
+fixed numbers are predicted, not re-measured, because the Groq daily token cap
+cut the confirmation run short on 2026-09-19.
+
+Nothing was deleted. The old README moved intact to `docs/REFERENCE.md` (scraper
+flags, API surface, data model, guardrails, repo layout) and the new README
+links to it. Rejected: keeping one long file with collapsed `<details>` blocks
+(recruiters still see a wall of text), and dropping the reference material
+(it is useful to anyone who runs the project).
+
+---
+
+## Model name is an env var; the Groq key is shared (2026-09-20)
+
+Groq's free tier caps 200,000 tokens/day per model, not per key. The owner
+confirmed that production, local development and the eval/QA runs all use the
+same Groq key, so an eval run spends the budget real users need (the
+2026-09-19 eval run used about 198k tokens by question 18). Live Groq catalog
+on 2026-09-20 (queried, not assumed): openai/gpt-oss-120b, openai/gpt-oss-20b,
+qwen/qwen3.8-27b, groq/compound; the Llama models the project started on are gone.
+
+`_build_llm()` in `app/agent.py` now reads `GROQ_MODEL`, `OPENAI_MODEL` and
+`GEMINI_MODEL`, defaulting to the previous hardcoded names, so behavior is
+unchanged unless one is set. `evals/run.py` gained `--model` (needs
+`--provider`) and `--skip N`. This lets evals and dev point at a different Groq
+model with its own daily budget, and lets candidate models be scored with the
+existing harness. Nothing is switched yet: `openai/gpt-oss-120b` stays the
+default because it is the only model with measured results (0% hallucinated
+references on the full schema).
+
+Deferred by the owner: automatic runtime failover on a Groq 429 (plan item 3b)
+and any decision to move the production model. Rejected for now: a new
+"take whatever is available" auto-selection over the model list, since it would
+silently change which model answers users without an eval behind the choice.
+
+---
+
+## gpt-oss-20b evaluated on the full schema; it stays a dev/eval fallback only (2026-09-20)
+
+Ran the existing eval on `openai/gpt-oss-20b` (Groq), full schema, both arms,
+all 29 questions, in three chunks of 10/10/9. Answer-OK: baseline 23/29 (79%),
+critic 24/29 (83%). The 120b's comparable figures are 93% baseline / 90% critic,
+but those mix models (q1-18 on Groq gpt-oss-120b, q19-29 on OpenAI gpt-4o-mini
+because Groq's cap hit), so the comparison is indicative, not exact. Hallucinated
+references were 0% on the 20b, repairs triggered 0 times: the loop was again a
+no-op. What differed was reliability: the 20b returned a Groq 400
+`tool_use_failed` once (it tried a tool call when tool choice was off) and wrote
+Postgres-only SQL (`DISTINCT ON`) against SQLite, and it failed two in-scope
+questions the 120b answered.
+
+The terse-schema variant could not run: the 20b's own daily cap is also 200,000
+tokens (confirmed by Groq's 429 text), and the full-schema run used it up, so
+only q1-q4 of the terse run are valid (3/4 baseline, 4/4 critic, too few to
+mean anything). Decision: keep `openai/gpt-oss-120b` as the production default;
+use the 20b only where a separate daily budget matters more than accuracy.
+Also fixed `evals/run.py`: an errored question built a partial record that
+lacked `attempts`, so `aggregate()` raised `KeyError` and the whole chunk wrote
+no results file. Errors now go through `_record()`.
+
+---
+
+## qwen/qwen3.8-27b evaluated on a 12-question subset, both schemas (2026-09-20)
+
+Budget-limited run (Groq caps 200k tokens/day per model): 12 questions chosen
+failure-biased (6 in-scope incl. the 20b's misses q10/q11, 5 hallucination-bait
+incl. the 120b's miss q17, 1 empty-data), full schema baseline-only (the critic
+never fired on the full schema for any model, so its arm only doubled the cost)
+and terse schema both arms. Added `--ids` and provider-reported token counting
+to the harness. Total qwen spend about 110k tokens for the 12-question run plus
+19k for a 2-question probe. Because the subset is failure-biased, absolute
+accuracy is lower than on a random set; use it to compare models and arms, not
+as a headline accuracy number. Results and conclusions are in the chat report
+for this date and in evals/results/ (four qwen run files at 20260920T033102Z to
+T034415Z).
+
+---
+
+## 429 failover to qwen on the same Groq key (2026-09-20)
+
+The owner asked for the qwen code changes after the eval showed
+`qwen/qwen3.8-27b` matching gpt-oss-120b on the 12-question subset (full schema
+answer-OK 91.7% vs 90.9%, result-match 100%) and beating gpt-oss-20b (66.7%).
+When a Groq call to the primary model fails with `groq.RateLimitError`, the
+same request is retried once on `GROQ_FALLBACK_MODEL` (default
+`qwen/qwen3.8-27b`, `off` disables it). Because Groq's daily token cap is per
+model, the fallback has its own budget on the same key.
+
+Two mechanisms, because `create_sql_agent` rejects a LangChain
+`with_fallbacks` wrapper (its toolkit requires a real `BaseLanguageModel`;
+confirmed by a failing test): the production agent path (`ask()` and
+`astream_answer()`) catches the 429 and rebuilds the agent on the fallback
+model; the SQL pipeline and RAG query expansion use `with_fallbacks` directly.
+The streaming route only retries if no answer text has been sent yet (the
+client would otherwise see a mixed answer), and emits a "Busy, switching to a
+backup model" status. Exactly one retry: if the fallback also 429s the user gets
+the usual friendly error, so a double outage can't loop or double-spend.
+
+Not done, and why: this does not fix the per-minute limit as such (the
+fallback has its own per-minute allowance, which helps, but qwen's TPM was not
+measured), and it does not make qwen the primary. A 12-question,
+failure-biased, single-run sample is enough to justify it as a backup that
+replaces an error message, not to replace the 120b. Covered by
+`evals/test_llm_failover.py` (offline, fake models).
+
+Follow-up finding, same day: a run of the remaining questions on qwen returned a
+429 on q04 that was not a daily-cap error: "Request too large for model
+`qwen/qwen3.8-27b` ... on output tokens per minute (OTPM): Limit 1000,
+Requested 1108". So qwen's free-tier output allowance is about 1,000 tokens per
+minute, and a single request whose expected output exceeds that is rejected
+outright. As a fallback it will therefore serve roughly one answer per minute and
+can still refuse some requests. That is still better than the error message users
+get today when the 120b is capped, but it is a low-traffic safety net, not extra
+capacity. Rejected for now: setting a low `max_tokens` on the fallback client to
+dodge that rejection, since it could truncate answers and it is not yet known how
+Groq computes "expected output" for this model.
