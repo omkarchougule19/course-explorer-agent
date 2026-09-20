@@ -19,8 +19,26 @@ import re
 _FENCE_RE = re.compile(r"^```(?:sql)?\s*|\s*```$", re.IGNORECASE | re.MULTILINE)
 
 
+# Running total of tokens the provider reports for calls made through
+# ask_text, so the eval harness can measure what each question costs against a
+# daily token cap. reset_tokens() before a question, take_tokens() after.
+_tokens_used = 0
+
+
+def reset_tokens() -> None:
+    global _tokens_used
+    _tokens_used = 0
+
+
+def take_tokens() -> int:
+    return _tokens_used
+
+
 def ask_text(llm, prompt: str) -> str:
+    global _tokens_used
     resp = llm.invoke(prompt)
+    usage = getattr(resp, "usage_metadata", None) or {}
+    _tokens_used += int(usage.get("total_tokens") or 0)
     text = getattr(resp, "content", resp)
     if isinstance(text, list):
         # List-of-parts content: dict parts carry {"text": ...}; some providers

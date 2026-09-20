@@ -69,8 +69,14 @@ def _prepare_env(provider: str | None, use_sqlite: bool) -> None:
 # Data
 # --------------------------------------------------------------------------
 
-def load_set(limit: int | None) -> list[dict]:
+def load_set(limit: int | None, skip: int = 0, ids: list[str] | None = None) -> list[dict]:
     items = [json.loads(line) for line in SET_PATH.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if ids:
+        unknown = set(ids) - {i["id"] for i in items}
+        if unknown:
+            raise SystemExit(f"unknown question id(s): {sorted(unknown)}")
+        items = [i for i in items if i["id"] in ids]
+    items = items[skip:]
     return items[:limit] if limit else items
 
 
@@ -100,18 +106,21 @@ def _record(arm: str, answer: str, t0: float, **over) -> dict:
     the rest default to the 'nothing happened' values score() expects."""
     rec = {"arm": arm, "answer": answer, "outcome": "answered", "final_sql": None,
            "first_sql": None, "attempts": 0, "exec_error": None, "rows": None,
-           "trace": [], "latency_ms": int((time.monotonic() - t0) * 1000)}
+           "trace": [], "latency_ms": int((time.monotonic() - t0) * 1000), "tokens": 0}
     rec.update(over)
     return rec
 
 
 def run_pipeline_arm(item: dict, mode: str) -> dict:
     from app.sql_pipeline import run_pipeline
+    from app.sql_pipeline._llm import reset_tokens, take_tokens
     t0 = time.monotonic()
+    reset_tokens()
     r = run_pipeline(item["question"], mode=mode)
     return _record(mode, r.answer, t0, outcome=r.outcome, final_sql=r.sql,
                    first_sql=r.first_sql, attempts=r.attempts,
-                   exec_error=r.exec_error, rows=r.rows, trace=r.trace)
+                   exec_error=r.exec_error, rows=r.rows, trace=r.trace,
+                   tokens=take_tokens())
 
 
 def run_prod_arm(item: dict) -> dict:
@@ -255,6 +264,8 @@ def aggregate(arm: str, recs: list[dict]) -> dict:
         "no_data_handled": mean([r["answer_ok"] for r in nodata]),
         "avg_latency_ms": int(mean([r["latency_ms"] for r in recs]) or 0),
         "avg_repairs": mean([r["attempts"] for r in recs]),
+        "total_tokens": sum(r.get("tokens") or 0 for r in recs),
+        "avg_tokens": int(mean([r.get("tokens") or 0 for r in recs]) or 0),
     }
 
 
@@ -272,6 +283,7 @@ _METRIC_ROWS = [
     ("answer_ok_overall", "   Answer-OK overall"),
     ("refusal_rate_out_of_scope", "   Refusal rate (out-of-scope)"),
     ("no_data_handled", "   'No data' handled correctly"),
+    ("total_tokens", "   Total tokens (provider-reported)"),
 ]
 
 
@@ -380,6 +392,13 @@ def main() -> int:
     ap.add_argument("--arms", default="baseline,critic",
                     help="comma-separated: baseline,critic,prod (default: baseline,critic)")
     ap.add_argument("--limit", type=int, default=None, help="only the first N questions")
+    ap.add_argument("--ids", default=None,
+                    help="comma-separated question ids to run, e.g. q01,q17,q25 (applied before --skip/--limit)")
+    ap.add_argument("--skip", type=int, default=0,
+                    help="skip the first N questions (resume after an interrupted run)")
+    ap.add_argument("--model", default=None,
+                    help="model name for the chosen provider (sets GROQ_MODEL / OPENAI_MODEL / "
+                         "GEMINI_MODEL); Groq's daily cap is per model, so this also picks the budget")
     ap.add_argument("--provider", choices=["groq", "gemini", "openai"], default=None,
                     help="force LLM provider (clears the other provider keys)")
     ap.add_argument("--db", choices=["sqlite", "env"], default="sqlite",
@@ -402,12 +421,19 @@ def main() -> int:
         return 2
 
     _prepare_env(args.provider, use_sqlite=(args.db == "sqlite"))
+    if args.model:
+        if not args.provider:
+            print("--model needs --provider (which provider's model to set)", file=sys.stderr)
+            return 2
+        os.environ[{"groq": "GROQ_MODEL", "openai": "OPENAI_MODEL",
+                    "gemini": "GEMINI_MODEL"}[args.provider]] = args.model
 
     from app import db as _db  # after env prep
-    items = load_set(args.limit)
+    ids = [x.strip() for x in args.ids.split(",") if x.strip()] if args.ids else None
+    items = load_set(args.limit, args.skip, ids)
     est_per_arm = {"baseline": 2, "critic": 4, "prod": 5}
     est = sum(est_per_arm.get(a, 3) for a in arms) * len(items)
-    provider_label = args.provider or "auto (from env keys)"
+    provider_label = (args.provider or "auto (from env keys)") + (f" / {args.model}" if args.model else "")
     db_label = "postgres/env" if _db.is_postgres() else "sqlite (local snapshot)"
 
     print(f"Arms:      {', '.join(arms)}")
@@ -440,9 +466,10 @@ def main() -> int:
                 s = score(item, rec)
             except Exception as exc:  # noqa: BLE001 - one bad question shouldn't kill the run
                 print(f"    {arm}: ERRORED {exc!r}")
-                s = score(item, {"arm": arm, "answer": f"[harness error] {exc}",
-                                 "outcome": "failed", "exec_error": str(exc),
-                                 "trace": [], "latency_ms": 0})
+                # _record fills every key aggregate() reads; a hand-built dict
+                # missing "attempts" used to crash the whole run at the end.
+                s = score(item, _record(arm, f"[harness error] {exc}", time.monotonic(),
+                                        outcome="failed", exec_error=str(exc)))
             scored[arm].append(s)
             flag = "ok " if s["answer_ok"] else "MISS"
             extra = f" repair={s['attempts']}" if s.get("attempts") else ""
