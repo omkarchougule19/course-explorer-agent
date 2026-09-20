@@ -3,12 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<script>try{var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+<script>var t;try{t=localStorage.getItem('theme');}catch(e){}document.documentElement.setAttribute('data-theme',t||'dark');</script>
 <title>Illini Course Copilot</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Roboto:wght@300;400;500;600;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Inter:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/theme-genz.css">
 </head>
 <body>
 
@@ -18,18 +19,18 @@
       <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 10 12 5 2 10l10 5 10-5Z"/><path d="M6 12v5c0 1 2 3 6 3s6-2 6-3v-5"/><path d="M22 10v6"/></svg>
       Illini Course Copilot
     </h1>
-    <p class="subtitle">Browse UIUC course sections and ask about them in plain English. The data is a periodic snapshot, not a live registrar feed.</p>
+    <p class="subtitle">Find classes, check profs, dodge the 8 AMs. Ask in plain English. Data is a periodic snapshot, not a live registrar feed.</p>
   </div>
 </header>
 
 <nav class="site-nav">
   <div class="wrap">
-    <a href="/" class="active">Home</a>
-    <a href="/departments.html">Departments</a>
-    <a href="/calendar.html">Calendar</a>
-    <a href="/schedule.html">Schedule<span class="schedule-badge" id="schedule-badge" hidden>0</span></a>
-    <a href="/freshness.html">Data Freshness</a>
-    <a href="/about.html">How It Works</a>
+    <a href="/" class="active"><svg class="icon nav-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg><span class="nav-full">Home</span><span class="nav-short">Home</span></a>
+    <a href="/departments.html"><svg class="icon nav-ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg><span class="nav-full">Departments</span><span class="nav-short">Depts</span></a>
+    <a href="/calendar.html"><svg class="icon nav-ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg><span class="nav-full">Calendar</span><span class="nav-short">Events</span></a>
+    <a href="/schedule.html"><svg class="icon nav-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg><span class="nav-full">Schedule</span><span class="nav-short">Plan</span><span class="schedule-badge" id="schedule-badge" hidden>0</span></a>
+    <a href="/freshness.html"><svg class="icon nav-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg><span class="nav-full">Data Freshness</span><span class="nav-short">Fresh</span></a>
+    <a href="/about.html"><svg class="icon nav-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg><span class="nav-full">How It Works</span><span class="nav-short">How</span></a>
     <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Toggle dark mode">
       <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
     </button>
@@ -53,11 +54,11 @@
 
   <section class="panel ask-hero">
     <h2>Ask the Course Assistant <button type="button" class="link-btn" id="new-chat" hidden>New chat</button></h2>
-    <p class="ask-lead">Ask about courses, sections, instructors, or gen-eds. Follow-ups work — it remembers the last few turns. Answers come from the latest snapshot of each department, not a live feed.</p>
+    <p class="ask-lead">Ask about courses, sections, instructors, or gen-eds. Follow-ups work.</p>
     <div class="usage-note" id="usage-note">
       <div class="usage-note-text">
         <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
-        <span>This project is under active development and runs on a small, shared free LLM budget. If the daily limit below is reached, the assistant may stop answering for a while — try again later. Browsing, search, prerequisites, and grade history below always keep working regardless.</span>
+        <span>Under active development, on a small shared free LLM budget. If the daily limit is reached the assistant pauses; browsing, search, prerequisites, and grade history keep working.</span>
       </div>
       <div class="usage-bar-row" id="usage-bar-row" hidden>
         <div class="usage-bar"><div class="usage-bar-fill" id="usage-bar-fill"></div></div>
@@ -71,12 +72,18 @@
         Send
       </button>
     </form>
-    <p class="chips-label" id="chips-label" hidden>What everyone's stressing about this week</p>
+    <p class="chips-label" id="chips-label" hidden><span class="sticker">🔥 Trending</span> What everyone's stressing about this week</p>
     <div class="chips" id="chips">
       <button type="button" class="chip">Who teaches CS 225 this fall?</button>
       <button type="button" class="chip">Which courses satisfy a QR gen-ed?</button>
       <button type="button" class="chip">What does STAT 400 cover?</button>
       <button type="button" class="chip">Find courses about machine learning</button>
+    </div>
+    <p class="chips-label"><span class="sticker">✨ Vibes</span> Pick a mood</p>
+    <div class="chips topic-chips" id="topic-chips">
+      <button type="button" class="chip" data-q="Which CS 100- and 200-level courses have a lecture starting at 10 AM or later?">😴 No 8ams</button>
+      <button type="button" class="chip" data-q="Which instructors teach the most CS sections this fall?">👑 Busiest profs</button>
+      <button type="button" class="chip" data-q="Which courses satisfy the Quantitative Reasoning gen-ed?">🎯 Gen-ed finder</button>
     </div>
     <div class="scrollback" id="scrollback" aria-live="polite">
       <div class="line line-sys" id="sb-placeholder">Your conversation will appear here.</div>
@@ -122,7 +129,7 @@
           </div>
           <button type="submit">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-            Run Query
+            Search
           </button>
         </div>
       </form>
@@ -167,6 +174,8 @@
 <script src="/citations.js"></script>
 <script src="/course-results.js"></script>
 <script src="/theme.js"></script>
+<script src="/motion.js" defer></script>
+<script src="/share-card.js" defer></script>
 <script>
   const $ = (id) => document.getElementById(id);
   const REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -180,7 +189,7 @@
   const SEARCH_EMPTY =
     '<div class="empty-state">' +
     '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>' +
-    'Choose a subject, term, or instructor above and run the query.</div>';
+    'Pick a subject, term, or instructor above, then hit Search.</div>';
 
   async function getJSON(url) {
     const res = await fetch(url);
@@ -305,7 +314,7 @@
     containerEl: $('browse-panel'),
     courseDetailEl: $('course-detail'),
     syncUrl: true,
-    emptyMessage: 'No sections match those filters. Try clearing the instructor field or choosing a different subject.',
+    emptyMessage: 'Nothing matched 👀 Try a different subject, or clear the instructor field.',
   });
 
   $('browse-form').addEventListener('submit', async (e) => {
@@ -328,6 +337,7 @@
     try {
       const rows = await getJSON('/sections?' + params.toString());
       browseResults.render(rows);
+      if (!rows.length && window.Motion) Motion.shake($('results-wrap').firstElementChild);
     } catch (err) {
       $('results-wrap').removeAttribute('aria-busy');
       $('results-wrap').innerHTML = `<p class="empty-state">Query failed: ${esc(err.message)}</p>`;
@@ -388,6 +398,7 @@
         if (!res.ok || !body.ok) throw new Error('save failed');
         btn.classList.add('voted');
         if (which === 'down') btn.classList.add('down');
+        else if (window.Motion) Motion.confetti(Motion.centerOf(btn), 28);
       } catch (e) {
         note.hidden = false;
         up.disabled = down.disabled = false;
@@ -447,11 +458,18 @@
     $('ask-form').requestSubmit();
   });
 
+  $('topic-chips').addEventListener('click', (e) => {
+    const chip = e.target.closest('.chip');
+    if (!chip || $('ask-input').disabled) return;   // a reply is still streaming
+    $('ask-input').value = chip.dataset.q;
+    $('ask-form').requestSubmit();
+  });
+
   $('ask-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const input = $('ask-input');
     const question = input.value.trim();
-    if (!question) return;
+    if (!question) { if (window.Motion) Motion.shake(input); return; }
     input.value = '';
     input.disabled = true;
     const chipsEl = $('chips');
@@ -461,7 +479,8 @@
     addLine(question, 'line-q');
     const answerLine = addLine('', 'line-a');
     answerLine.setAttribute('aria-busy', 'true');
-    let status = addLine('Thinking', 'line-sys dots');
+    let status = addLine('', 'line-sys');
+    status.innerHTML = '<span class="st-text">Checking the catalog</span><span class="bounce" aria-hidden="true"><i></i><i></i><i></i></span>';
 
     let raw = '', streaming = false, settled = false;
     const scroll = () => { $('scrollback').scrollTop = $('scrollback').scrollHeight; };
@@ -482,6 +501,7 @@
         if (!asError) {
           recordTurn(question, answer);
           attachFeedback(answerLine, question, answer);
+          if (window.Motion) Motion.celebrateOnce('first-answer', answerLine);
         }
       }
       scroll();
@@ -516,7 +536,7 @@
         buf += decoder.decode(value, { stream: true });
         buf = drainSSE(buf, (name, data) => {
           if (name === 'status') {
-            if (!streaming && status) status.textContent = data;
+            if (!streaming && status) status.querySelector('.st-text').textContent = data;
           } else if (name === 'token') {
             if (!streaming) { streaming = true; if (status) { status.remove(); status = null; } }
             raw += data;
@@ -573,7 +593,7 @@
   // failed save just shows a note. `reason` distinguishes "too long" and
   // "daily limit" from a generic error.
   const FEEDBACK_NOTES = {
-    ok: 'Thanks — got it.',
+    ok: 'Thanks, got it 🙌',
     too_long: 'That’s a bit long — trim it under 2000 characters.',
     rate_limited: 'You’ve sent a few already today. Try again tomorrow.',
     empty: 'Write something first.',
@@ -589,6 +609,7 @@
     if (!message) {
       note.textContent = FEEDBACK_NOTES.empty;
       note.hidden = false;
+      if (window.Motion) Motion.shake(box);
       return;
     }
     btn.disabled = true;
@@ -639,7 +660,7 @@
     try {
       const rows = await getJSON(`/sections?subject=${encodeURIComponent(subject)}&course_number=${encodeURIComponent(number)}&limit=1`);
       const row = rows[0];
-      browseResults.openCourseDetail(subject, number, row ? row.description : '', row ? row.year : null, row ? row.semester : '');
+      browseResults.openCourseDetail(subject, number, row ? row.description : '', row ? row.year : null, row ? row.semester : '', row ? row.course_label : '');
     } catch (e) { /* unknown/bad course in the link - leave the page as-is */ }
   }
 

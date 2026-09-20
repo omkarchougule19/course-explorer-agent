@@ -28,6 +28,13 @@
     return body;
   }
 
+  // Raw section status codes (see the assistant's data notes): shown as words,
+  // with the caveat that seat availability isn't published for those terms yet.
+  var STATUS_CODES = {
+    A: { text: 'Scheduled', hint: 'Section is scheduled. Open/closed status is not published for this term yet.' },
+    P: { text: 'Pending', hint: 'Section is pending. Open/closed status is not published for this term yet.' },
+  };
+
   function courseKey(subject, course) { return subject + '|' + course; }
 
   // Per /prereqs: groups are AND-ed together (each rendered as its own
@@ -65,6 +72,7 @@
     var courseCache = {};  // "SUBJ|123" -> { prereqs?: {...}, grades?: {...} }
     var openCourseKey = null;
     var openCourseDescription = '';
+    var openCourseLabel = '';
     var openCourseYear = null;
     var openCourseSemester = '';
     var openTab = 'overview';
@@ -94,7 +102,14 @@
         var statusCell = '—';
         if (statusRaw) {
           var cls = /open/i.test(statusRaw) ? 'pill-open' : /closed/i.test(statusRaw) ? 'pill-closed' : '';
-          statusCell = cls ? '<span class="pill ' + cls + '">' + esc(statusRaw) + '</span>' : esc(statusRaw);
+          var codeLabel = STATUS_CODES[statusRaw];
+          if (codeLabel) {
+            // Terms whose registration data isn't published yet carry a raw
+            // status code, which says nothing about open seats.
+            statusCell = '<span title="' + esc(codeLabel.hint) + '">' + esc(codeLabel.text) + '</span>';
+          } else {
+            statusCell = cls ? '<span class="pill ' + cls + '">' + esc(statusRaw) + '</span>' : esc(statusRaw);
+          }
         }
         var subj = esc(row.subject || '');
         var num = esc(row.course_number || '');
@@ -102,12 +117,12 @@
         var added = crn && global.ScheduleStore && global.ScheduleStore.has(row.crn);
         var addBtn = crn
           ? '<button type="button" class="sched-add-btn' + (added ? ' added' : '') + '" '
-            + 'data-crn="' + crn + '" data-year="' + (row.year || '') + '" data-semester="' + esc(row.semester || '') + '" '
+            + 'data-crn="' + crn + '" data-year="' + esc(row.year || '') + '" data-semester="' + esc(row.semester || '') + '" '
             + 'data-subject="' + subj + '" data-course="' + num + '" data-course-label="' + esc(row.course_label || '') + '" '
             + 'data-section="' + esc(row.section_name || '') + '" data-instructor="' + esc(row.instructor || '') + '" '
             + 'data-credit="' + esc(row.credit_hours || '') + '">' + (added ? 'Added' : 'Add') + '</button>'
           : '';
-        html += '<tr class="course-row" data-subject="' + subj + '" data-course="' + num + '" data-year="' + (row.year || '') + '" data-semester="' + esc(row.semester || '') + '" data-description="' + esc(row.description || '') + '"' + titleAttr + '>'
+        html += '<tr class="course-row" data-subject="' + subj + '" data-course="' + num + '" data-year="' + esc(row.year || '') + '" data-semester="' + esc(row.semester || '') + '" data-description="' + esc(row.description || '') + '"' + titleAttr + '>'
           + '<td>' + (subj || '—') + '</td>'
           + '<td class="num">' + (num || '—') + '</td>'
           + '<td>' + (row.course_label ? '<span class="course-name-cell">' + esc(row.course_label) + '</span>' : '—') + '</td>'
@@ -191,7 +206,7 @@
         var ghtml = '<table><thead><tr><th>Term</th><th>Instructor</th><th>Students</th><th>Avg GPA</th></tr></thead><tbody>';
         gdata.trend.forEach(function (t) {
           ghtml += '<tr><td>' + esc(t.year_term || '—') + '</td><td>' + instructorLink(t.primary_instructor) + '</td>'
-            + '<td class="num">' + esc(t.students != null ? t.students : '—') + '</td><td class="num">' + (t.average_gpa != null ? t.average_gpa : '—') + '</td></tr>';
+            + '<td class="num">' + esc(t.students != null ? t.students : '—') + '</td><td class="num">' + (t.average_gpa != null ? esc(t.average_gpa) : '—') + '</td></tr>';
         });
         ghtml += '</tbody></table>';
         if (global.Citations) ghtml += global.Citations.line(global.Citations.link(global.Citations.GRADES_URL, 'wadefagen/datasets'));
@@ -206,7 +221,7 @@
       if (syncUrl) history.replaceState(null, '', location.pathname);
     }
 
-    function openCourseDetail(subject, course, description, year, semester) {
+    function openCourseDetail(subject, course, description, year, semester, label) {
       var key = courseKey(subject, course);
       if (openCourseKey === key && !courseDetailEl.hidden) {
         closeCourseDetail();
@@ -214,19 +229,28 @@
       }
       openCourseKey = key;
       openCourseDescription = description || '';
+      // A results-table row already shows the course name; a link opened by
+      // code (chat answer, ?course=) passes it in instead.
+      if (!label) {
+        var nameCell = wrapEl.querySelector('tr.course-row[data-subject="' + CSS.escape(subject) + '"][data-course="' + CSS.escape(course) + '"] .course-name-cell');
+        label = nameCell ? nameCell.textContent : '';
+      }
+      openCourseLabel = label || '';
       openCourseYear = year || null;
       openCourseSemester = semester || '';
       openTab = 'overview';
       wrapEl.querySelectorAll('tr.course-row.open').forEach(function (r) { r.classList.remove('open'); });
-      wrapEl.querySelectorAll('tr.course-row[data-subject="' + subject + '"][data-course="' + course + '"]')
+      wrapEl.querySelectorAll('tr.course-row[data-subject="' + CSS.escape(subject) + '"][data-course="' + CSS.escape(course) + '"]')
         .forEach(function (r) { r.classList.add('open'); });
       if (syncUrl) history.replaceState(null, '', '?course=' + encodeURIComponent(subject) + '-' + encodeURIComponent(course));
 
       courseDetailEl.hidden = false;
       courseDetailEl.innerHTML =
         '<div class="course-detail-head">'
-        + '<h3>' + esc(subject) + ' ' + esc(course) + '</h3>'
+        + '<h3>' + esc(subject) + ' ' + esc(course)
+        + (openCourseLabel ? '<span class="course-detail-title">' + esc(openCourseLabel) + '</span>' : '') + '</h3>'
         + '<div class="course-detail-actions">'
+        + (global.ShareCard ? '<button type="button" class="course-detail-card">Share card</button>' : '')
         + (syncUrl ? '<button type="button" class="course-detail-share">Copy Link</button>' : '')
         + '<button type="button" class="course-detail-close">Close</button>'
         + '</div></div>'
@@ -263,11 +287,24 @@
           });
           addBtn.classList.add('added');
           addBtn.textContent = 'Added';
+          if (global.Motion) global.Motion.confetti(global.Motion.centerOf(addBtn), 36);
         }
         return;
       }
 
       if (e.target.closest('.course-detail-close')) { closeCourseDetail(); return; }
+
+      var cardBtn = e.target.closest('.course-detail-card');
+      if (cardBtn && openCourseKey) {
+        var cp = openCourseKey.split('|');
+        global.ShareCard.course({
+          code: cp[0] + ' ' + cp[1],
+          title: openCourseLabel,
+          desc: openCourseDescription,
+          url: location.origin + '/?course=' + encodeURIComponent(cp[0]) + '-' + encodeURIComponent(cp[1]),
+        });
+        return;
+      }
 
       var shareBtn = e.target.closest('.course-detail-share');
       if (shareBtn) {

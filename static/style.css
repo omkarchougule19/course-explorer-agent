@@ -747,12 +747,6 @@ tbody tr.course-row:hover .course-name-cell { border-bottom-color: var(--link); 
 }
 .line-a.md .chat-table td { white-space: normal; }
 
-.dots::after { content: ""; animation: dots 1.2s steps(4, end) infinite; }
-@keyframes dots {
-  0% { content: ""; } 25% { content: "."; } 50% { content: ".."; }
-  75% { content: "..."; } 100% { content: ""; }
-}
-
 .ask-form { display: flex; gap: var(--s2); }
 .ask-form input { flex: 1; }
 
@@ -944,7 +938,6 @@ footer .disclaimer {
 
 @media (prefers-reduced-motion: reduce) {
   .sk-line { animation: none; background: #e7ebf1; }
-  .dots::after { animation: none; content: "..."; }
 }
 
 /* ---------- Answer feedback (index.html) ---------- */
@@ -1205,19 +1198,9 @@ td .cell-clip.open { white-space: normal; overflow: visible; }
   --ink-2: #b9c2cf;
   --muted: #8892a0;
 }
-/* The base .banner gradient mixes hardcoded dark-navy stops with var(--blue)
-   in the middle - fine when --blue is dark, but --blue becomes a light blue
-   in dark mode, which would put a bright band between two dark stops. Give
-   dark mode its own all-dark gradient instead. */
-:root[data-theme="dark"] .banner {
-  background: linear-gradient(150deg, #1a2c47 0%, #0f1d33 55%, #060d1a 100%);
-}
 :root[data-theme="dark"] thead th { background: var(--bg-2); }
 :root[data-theme="dark"] .kpi { box-shadow: none; }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .banner {
-    background: linear-gradient(150deg, #1a2c47 0%, #0f1d33 55%, #060d1a 100%);
-  }
   :root:not([data-theme="light"]) thead th { background: var(--bg-2); }
   :root:not([data-theme="light"]) .kpi { box-shadow: none; }
 }
