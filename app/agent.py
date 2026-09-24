@@ -26,8 +26,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 from langchain_community.utilities import SQLDatabase
 from langchain_community.agent_toolkits import create_sql_agent
+from sqlalchemy.exc import SQLAlchemyError
 
-from app import db
+from app import db, sql_guard
 from app.db import DB_PATH
 
 # Load variables from a .env file in the project root (if present) into the
@@ -219,8 +220,20 @@ Rules:
 MAX_QUERY_RESULT_CHARS = int(os.environ.get("MAX_QUERY_RESULT_CHARS", "6000"))
 
 
+class _GuardRejected(SQLAlchemyError):
+    """A statement refused by sql_guard before execution."""
+
+
 class _CappedSQLDatabase(SQLDatabase):
     def run(self, command, fetch="all", **kwargs):
+        # Every model-written statement passes the structural guard before it
+        # executes (see app/sql_guard.py). The allowlist is this instance's own
+        # include_tables. The error subclasses SQLAlchemyError so the toolkit's
+        # run_no_throw hands the reason back to the model as a tool error.
+        if isinstance(command, str):
+            reason = sql_guard.check_select(command, self.dialect, self.get_usable_table_names())
+            if reason:
+                raise _GuardRejected(f"Query rejected: {reason}")
         result = super().run(command, fetch=fetch, **kwargs)
         if isinstance(result, str) and len(result) > MAX_QUERY_RESULT_CHARS:
             cut = result[:MAX_QUERY_RESULT_CHARS].rsplit("),", 1)[0] + ")]"
@@ -236,16 +249,17 @@ class _CappedSQLDatabase(SQLDatabase):
 def _db_uri() -> str:
     """SQLAlchemy connection string for the agent's SQL tool.
 
-    Prefers DATABASE_URL_RO if set - point that at a Postgres role with only
-    SELECT granted, so a prompt-injection that gets past SYSTEM_CONTEXT still
-    can't run DDL/DML (the LangChain toolkit has no statement allowlist). See
-    DEPLOYMENT.md for creating that role. Falls back to DATABASE_URL, then the
-    local SQLite file.
+    db.readonly_database_url(): DATABASE_URL_RO (a role with SELECT on only
+    the INCLUDED_TABLES - DEPLOYMENT.md §3.5) if set, else DATABASE_URL, else
+    the local SQLite file. On Render a missing DATABASE_URL_RO raises instead
+    of falling back to the owner role. Whatever the role, build_agent() also
+    makes the engine read-only (sql_guard.readonly_engine) and every
+    statement passes sql_guard.check_select first.
 
     Neon/most Postgres providers hand out `postgres://` or bare
     `postgresql://` URLs; SQLAlchemy's psycopg2 dialect needs the explicit
     `postgresql+psycopg2://` form."""
-    database_url = os.environ.get("DATABASE_URL_RO") or os.environ.get("DATABASE_URL")
+    database_url = db.readonly_database_url()
     if database_url:
         if database_url.startswith("postgres://"):
             database_url = "postgresql://" + database_url[len("postgres://"):]
@@ -501,7 +515,9 @@ def build_agent(verbose: bool = False, streaming: bool = False, model: str | Non
         raise RuntimeError(f"Couldn't initialize the LLM client: {exc}") from exc
 
     try:
-        sql_db = _CappedSQLDatabase.from_uri(_db_uri(), include_tables=INCLUDED_TABLES)
+        from sqlalchemy import create_engine
+        engine = sql_guard.readonly_engine(create_engine(_db_uri()))
+        sql_db = _CappedSQLDatabase(engine, include_tables=INCLUDED_TABLES)
     except Exception as exc:
         raise RuntimeError(f"Couldn't open the database: {exc}") from exc
 

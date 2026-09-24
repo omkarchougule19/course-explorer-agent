@@ -117,28 +117,58 @@ Ask the Agent, and Department Data panels should all populate.
 
 ### 3.5 Read-only role for the assistant
 
-The `/ask` agent generates and runs SQL. Its scope guard is a prompt
-(`SYSTEM_CONTEXT`), and LangChain's SQL toolkit has no statement allowlist -
-so a prompt-injection that gets past the guard could in principle run
-`DROP` / `UPDATE`. Close that off with a database role that can only read.
+The `/ask` agent (and the opt-in `SQL_PIPELINE`) generates and runs SQL.
+Three independent layers keep that SQL read-only and scoped:
 
-In the Neon SQL editor (or `psql`), against your database:
+1. the prompt (`SYSTEM_CONTEXT`);
+2. `app/sql_guard.py`: every statement is parsed with sqlglot before it
+   runs, and anything but a single SELECT over the catalog tables is
+   rejected. That covers writes and DDL, data-modifying CTEs, `SELECT INTO`,
+   `FOR UPDATE`, the `ask_log` / feedback tables, `pg_catalog`, and
+   functions like `pg_sleep`. It also runs every statement in a
+   `READ ONLY` transaction with a `statement_timeout`
+   (`SQL_STATEMENT_TIMEOUT_MS`, default 8000);
+3. a database role that can only read the catalog tables (this section).
+
+In the Neon SQL editor (or `psql`), as the owner role, against your database:
 
 ```sql
 CREATE ROLE app_ro LOGIN PASSWORD 'choose-a-strong-password';
 GRANT CONNECT ON DATABASE neondb TO app_ro;      -- your db name
 GRANT USAGE ON SCHEMA public TO app_ro;
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO app_ro;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO app_ro;
+-- Only the tables the assistant may query (app/agent.py INCLUDED_TABLES).
+-- Deliberately NOT ask_log / answer_feedback / site_feedback / sync_requests:
+-- those hold other users' IPs and questions.
+GRANT SELECT ON sections, meetings, grade_distributions,
+    teachers_ranked_excellent, gen_ed_categories, prerequisites,
+    academic_calendar TO app_ro;
+ALTER ROLE app_ro SET default_transaction_read_only = on;
+ALTER ROLE app_ro SET statement_timeout = '8s';
 ```
+
+**If you created `app_ro` with the earlier recipe** (`GRANT SELECT ON ALL
+TABLES` + `ALTER DEFAULT PRIVILEGES`), first undo that blanket grant, then
+run the `GRANT SELECT ON sections, ...` and `ALTER ROLE` lines above:
+
+```sql
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE SELECT ON TABLES FROM app_ro;
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM app_ro;
+```
+
+Check: connected as `app_ro`, `SELECT 1 FROM ask_log LIMIT 1` must fail with
+"permission denied".
 
 Then set `DATABASE_URL_RO` in Render to that role's connection string
 (same host/db as `DATABASE_URL`, different user/password). The app uses it
-for the agent's SQL tool only; every write path (migration, embeddings,
-`sync_requests`, `ask_log`) keeps using the full-privilege `DATABASE_URL`.
+for LLM-written SQL only; every write path (migration, embeddings,
+`sync_requests`, `ask_log`) and the RAG tool keep using `DATABASE_URL`.
 
-Leaving `DATABASE_URL_RO` unset is supported - the agent then shares
-`DATABASE_URL` and you're relying on the prompt guard alone.
+**On Render, `DATABASE_URL_RO` is required.** If it's unset while `RENDER`
+is set, the assistant answers "Can't answer that right now" instead of
+silently running model-written SQL as the owner role. Setting
+`ALLOW_RW_AGENT_DB=1` bypasses this as a temporary opt-out; layers 1 and 2
+still apply. Locally, an unset `DATABASE_URL_RO` falls back to
+`DATABASE_URL` as before.
 
 ---
 

@@ -28,10 +28,10 @@ services:
       # first deploy.
       - key: DATABASE_URL
         sync: false
-      # Recommended. A Neon role with only SELECT granted - the LLM agent's
-      # SQL tool uses this if set, so a jailbreak can't run DDL/DML. See
-      # DEPLOYMENT.md "Read-only role for the assistant". Falls back to
-      # DATABASE_URL when unset.
+      # Required for /ask. A Neon role with SELECT on only the catalog
+      # tables - all LLM-written SQL runs as this role. See DEPLOYMENT.md
+      # "Read-only role for the assistant". If unset on Render, the assistant
+      # refuses to answer unless ALLOW_RW_AGENT_DB is set (temporary opt-out).
       - key: DATABASE_URL_RO
         sync: false
       # Required for the /ask assistant. Free key from console.groq.com.

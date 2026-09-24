@@ -106,6 +106,40 @@ def get_connection(db_path: Optional[Path] = None) -> Connection:
     return Connection(raw, "sqlite")
 
 
+def readonly_database_url() -> Optional[str]:
+    """The Postgres URL for running LLM-written SQL: DATABASE_URL_RO (a
+    SELECT-only role, see DEPLOYMENT.md §3.5) if set, else DATABASE_URL, else
+    None (SQLite). On Render (RENDER is set) a missing DATABASE_URL_RO is a
+    hard error rather than a silent fall-back to the owner role, unless
+    ALLOW_RW_AGENT_DB is set as a deliberate, temporary opt-out."""
+    ro = os.environ.get("DATABASE_URL_RO")
+    if ro:
+        return ro
+    rw = os.environ.get("DATABASE_URL")
+    if rw and os.environ.get("RENDER") and not os.environ.get("ALLOW_RW_AGENT_DB"):
+        raise RuntimeError("the assistant's read-only database role is not configured")
+    return rw
+
+
+def get_readonly_connection(statement_timeout_ms: int = 8000) -> Connection:
+    """A connection for running LLM-written SQL. Postgres: connects with
+    readonly_database_url() and opens the transaction READ ONLY with a
+    statement_timeout (both SET LOCAL-scoped, so they hold through Neon's
+    transaction-mode pooler; closing without commit rolls back). SQLite: the
+    file opened with mode=ro."""
+    database_url = readonly_database_url()
+    if database_url:
+        import psycopg2
+        conn = Connection(psycopg2.connect(database_url.replace("+psycopg2", "", 1)), "postgres")
+        conn.execute("SET TRANSACTION READ ONLY")
+        conn.execute(f"SET LOCAL statement_timeout = {int(statement_timeout_ms):d}")
+        return conn
+
+    raw = sqlite3.connect(f"{DB_PATH.as_uri()}?mode=ro", uri=True)
+    raw.row_factory = sqlite3.Row
+    return Connection(raw, "sqlite")
+
+
 def existing_columns(conn: Connection, table: str) -> set:
     """Column names currently on `table`. Used for the "ALTER TABLE ADD
     COLUMN if missing" migration pattern - replaces SQLite's PRAGMA

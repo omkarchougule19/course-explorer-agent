@@ -40,7 +40,7 @@ from typing import Any, Literal, Optional, TypedDict
 from langgraph.graph import END, StateGraph
 
 from app import agent as agent_mod
-from app import db
+from app import db, sql_guard
 from app.sql_pipeline import catalog as catalog_mod
 from app.sql_pipeline.critique import Critique, critique, static_schema_check
 from app.sql_pipeline.steps import generate, repair, synthesize
@@ -115,16 +115,16 @@ def _intent_mode() -> str:
 
 
 def _run_sql(sql: str, limit: int = 200) -> tuple[Optional[list[dict]], Optional[str]]:
-    """(rows, error). Only a single SELECT is allowed through - the Generator
-    is prompted for that, and anything else is refused here rather than
-    executed."""
+    """(rows, error). Only a single read-only SELECT over INCLUDED_TABLES is
+    allowed through (sql_guard.check_select - parsed, so a data-modifying CTE
+    can't slip past a prefix check), and it runs on a read-only,
+    statement-timed-out connection that uses DATABASE_URL_RO when set."""
     stripped = sql.strip().rstrip(";").strip()
-    low = stripped.lower()
-    if not low.startswith(("select", "with")):
-        return None, "only SELECT queries are allowed"
-    if ";" in stripped:
-        return None, "multiple statements are not allowed"
-    conn = db.get_connection()
+    reason = sql_guard.check_select(
+        stripped, "postgres" if db.is_postgres() else "sqlite", agent_mod.INCLUDED_TABLES)
+    if reason:
+        return None, reason
+    conn = db.get_readonly_connection(sql_guard.STATEMENT_TIMEOUT_MS)
     try:
         cur = conn.execute(stripped)
         fetched = cur.fetchmany(limit)
