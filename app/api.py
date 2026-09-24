@@ -91,6 +91,66 @@ async def _add_security_headers(request: Request, call_next):
     return response
 
 
+# Largest request body accepted, in bytes. The biggest legitimate one is an
+# /ask/feedback POST (one answer + a 3-turn clipped history) - a few KB -
+# so 256 KB is generous. Without a cap, FastAPI reads the whole body into
+# memory before any field-length check runs, so a handful of huge POSTs
+# could exhaust a small instance's RAM.
+MAX_BODY_BYTES = int(os.environ.get("MAX_BODY_BYTES", str(256 * 1024)))
+
+
+class _BodySizeLimit:
+    """Pure-ASGI guard: 413 for any request body over MAX_BODY_BYTES. A
+    declared Content-Length is rejected up front; a chunked body is read
+    (at most MAX_BODY_BYTES of it) and then replayed to the app, so an
+    oversized one is refused before the app ever parses it."""
+
+    def __init__(self, app):
+        self.app = app
+
+    @staticmethod
+    async def _too_large(send):
+        body = json.dumps({"detail": f"Request body too large (limit {MAX_BODY_BYTES} bytes)"}).encode()
+        await send({"type": "http.response.start", "status": 413,
+                    "headers": [(b"content-type", b"application/json"),
+                                (b"content-length", str(len(body)).encode())]})
+        await send({"type": "http.response.body", "body": body})
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope["method"] in ("GET", "HEAD", "OPTIONS"):
+            return await self.app(scope, receive, send)
+        declared = dict(scope["headers"]).get(b"content-length")
+        if declared is not None and (not declared.isdigit() or int(declared) > MAX_BODY_BYTES):
+            return await self._too_large(send)
+
+        chunks, size = [], 0
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+            chunk = message.get("body", b"")
+            size += len(chunk)
+            if size > MAX_BODY_BYTES:
+                return await self._too_large(send)
+            chunks.append(chunk)
+            if not message.get("more_body"):
+                break
+
+        body, replayed = b"".join(chunks), False
+
+        async def replay():
+            nonlocal replayed
+            if not replayed:
+                replayed = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            return await receive()  # afterwards, pass through (e.g. http.disconnect)
+
+        return await self.app(scope, replay, send)
+
+
+app.add_middleware(_BodySizeLimit)
+
+
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     # Last-resort safety net. Log the real error server-side; return a generic

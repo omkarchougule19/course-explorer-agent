@@ -228,6 +228,25 @@ for page in sorted(static_dir.glob("*.html")):
     check(f"{page.name}: no inline scripts/handlers, all script files exist",
           not inline and not handlers and not missing)
 
+# 8. request body size cap
+huge = '{"message": "' + "x" * (api.MAX_BODY_BYTES + 10) + '"}'
+r = client.post("/feedback", content=huge, headers={"content-type": "application/json"})
+check(f"oversized body with Content-Length -> 413 (got {r.status_code})", r.status_code == 413)
+
+
+def chunked():
+    yield b'{"message": "'
+    for _ in range(40):
+        yield b"x" * 10_000
+    yield b'"}'
+
+
+r = client.post("/feedback", content=chunked(), headers={"content-type": "application/json"})
+check(f"oversized chunked body -> 413 (got {r.status_code})", r.status_code == 413)
+r = client.post("/feedback", json={"message": "the search is great", "page": "/"},
+                headers={"x-forwarded-for": "7.7.7.7"})
+check(f"normal body still accepted (got {r.status_code} {r.json()})", r.status_code == 200 and r.json()["ok"])
+
 client.__exit__(None, None, None)
 print(f"\n{'all checks passed' if not failures else str(len(failures)) + ' FAILED'}")
 raise SystemExit(1 if failures else 0)
