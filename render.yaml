@@ -48,7 +48,7 @@ services:
       - key: ADMIN_TOKEN
         sync: false
       # Optional guardrail tuning for /ask (see app/ask_log.py). Defaults:
-      # per-IP 10/hour and 40/day, a shared 250/day cap across all clients
+      # per-IP 10/hour and 60/day, a shared 250/day cap across all clients
       # (the real budget backstop - per-IP keys on a spoofable header), and a
       # 500-char question cap.
       - key: ASK_RATE_PER_HOUR

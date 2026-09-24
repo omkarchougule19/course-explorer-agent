@@ -197,6 +197,8 @@ theoretically possible):
    `grade_distributions` - no new table).
 
 Full detail for each lives in `.claude/plans/tingly-tumbling-valley.md`.
+*(Correction 2026-09-24: that plan file isn't in the repository and no copy
+survives; `implementation_plan.md` is the plan of record.)*
 
 ## Scope cut: 5-term rolling window instead of full history
 
@@ -1290,7 +1292,8 @@ day's provider budget alone.
   about abuse.
 
 Docs synced: `DEPLOYMENT.md` env table + guardrails section, and the
-`## /ask guardrails + activity log` bullet above.
+`## /ask guardrails + activity log` bullet above. *(Correction 2026-09-24:
+`render.yaml`'s env-var comment still said 40/day; fixed then.)*
 
 ## Admin dashboard for assistant usage + query history (2026-09-01)
 
@@ -1462,6 +1465,12 @@ both need that artifact. So the new path makes each stage its own node:
 - **repair.py** - one LLM call: question + rejected SQL + the Critic's
   feedback + the real column list -> corrected SQL. The 2-attempt cap and the
   explicit-failure fallback live in `graph.py`, not here.
+
+*(Correction 2026-09-24: there is no `generate.py` or `repair.py`. The
+generate, repair and synthesize steps all live in `app/sql_pipeline/steps.py`;
+the package also has `critique.py`, `graph.py`, `catalog.py` (the live
+schema), `schema_text.py` (full vs terse schema text) and `_llm.py` (the
+plain-text LLM call helper).)*
 - **graph.py** - the LangGraph state machine. `generate -> critic -> (execute
   | repair -> critic | fail)`; an execution error re-enters `repair` too;
   after `MAX_REPAIRS = 2` the pipeline returns an explicit "I couldn't
@@ -1708,7 +1717,12 @@ Two separate problems surfaced during an anonymity/risk pass:
 visitor sees it: `static/index.html`, `static/freshness.html`,
 `static/admin.html`, `app/api.py` (FastAPI `title`/`description`, the
 `/api` `service` field), `render.yaml` (service name, which is also the
-`onrender.com` subdomain), and the README title/intro. `docs/PROJECT_BIBLE.html`
+`onrender.com` subdomain), and the README title/intro. *(Correction
+2026-09-24: the live Render service was not created from, or synced with,
+this blueprint - it is still named `course-explorer-agent` and served at
+`course-explorer-agent.onrender.com`. Only `render.yaml` says
+`illini-course-copilot`; changing the real subdomain means renaming the
+service in the Render dashboard.)* `docs/PROJECT_BIBLE.html`
 and `docs/architecture.html` were left alone - `app/api.py` only mounts
 `static/` publicly (`StaticFiles(directory=STATIC_DIR, ...)`), so `docs/` is
 never served and isn't part of the app's public brand surface.
@@ -2824,7 +2838,9 @@ conflict checker (`/schedule/conflicts`) has been silently reporting no
 conflicts. Fixed by stripping spaces before parsing. Not fixed: `SYSTEM_CONTEXT`
 in `app/agent.py` tells the model start_time looks like '10:00 AM', which is
 wrong for Neon, so LLM-written time comparisons there may be off. Covered by
-`evals/test_schedule_filters.py`.
+`evals/test_schedule_filters.py`. *(Fixed 2026-09-24 - see "SYSTEM_CONTEXT
+rewritten and measured": the prompt now gives a minutes-after-midnight
+expression; the old text comparison undercounted 263 vs 334.)*
 
 ---
 
