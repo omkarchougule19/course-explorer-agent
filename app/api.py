@@ -53,8 +53,11 @@ app = FastAPI(
     openapi_url="/openapi.json" if _DOCS_ON else None,
 )
 
-# Baseline security headers on every response. CSP allows the page's own
-# inline <script>/<style> and the Google Fonts it loads; nothing else.
+# Baseline security headers on every response. Scripts: same-origin files
+# only - no inline <script> or on*= handlers anywhere in static/ (each page's
+# code lives in <page>-page.js, the theme bootstrap in theme-init.js), so an
+# injected <script> is blocked even if an escaping bug ever lets one through.
+# Styles still allow inline, plus the Google Fonts stylesheet.
 _SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -62,7 +65,7 @@ _SECURITY_HEADERS = {
     "Strict-Transport-Security": "max-age=63072000; includeSubDomains",
     "Content-Security-Policy": (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline'; "
+        "script-src 'self'; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "font-src https://fonts.gstatic.com; "
         "img-src 'self' data:; "
@@ -685,13 +688,15 @@ def post_site_feedback(payload: SiteFeedbackRequest, request: Request):
     return {"ok": status == "ok", "reason": status}
 
 
-def require_admin(request: Request, token: Optional[str] = None) -> None:
+def require_admin(request: Request) -> None:
     """FastAPI dependency gating every /admin/* route. Needs ADMIN_TOKEN set on
-    the server AND supplied via ?token= or the X-Admin-Token header. Always
-    raises the same 403 on any failure (unset, missing, or wrong) so the
-    response never reveals whether the token is configured."""
+    the server AND supplied in the X-Admin-Token header - header only, never
+    a ?token= query parameter, since URLs land in proxy/access logs and
+    browser history. Always raises the same 403 on any failure (unset,
+    missing, or wrong) so the response never reveals whether the token is
+    configured."""
     expected = os.environ.get("ADMIN_TOKEN")
-    supplied = token or request.headers.get("x-admin-token")
+    supplied = request.headers.get("x-admin-token")
     if not expected or not supplied or not hmac.compare_digest(supplied, expected):
         raise HTTPException(status_code=403, detail="Forbidden")
 

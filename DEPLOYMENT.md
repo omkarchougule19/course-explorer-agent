@@ -383,12 +383,15 @@ the token is configured:
 | `POST /admin/site-feedback/{id}/reviewed` | stamp `reviewed_at` on one site-feedback row |
 
 ```bash
-curl "https://<your-app>.onrender.com/admin/ask-log?token=$ADMIN_TOKEN&limit=100"
-curl "https://<your-app>.onrender.com/admin/ask-log?token=$ADMIN_TOKEN&outcome=refused"
-curl "https://<your-app>.onrender.com/admin/ask-log?token=$ADMIN_TOKEN&ip=1.2.3.4"
-curl "https://<your-app>.onrender.com/admin/ask-stats?token=$ADMIN_TOKEN"
-curl "https://<your-app>.onrender.com/admin/feedback?token=$ADMIN_TOKEN&vote=down&reviewed=0"
-curl "https://<your-app>.onrender.com/admin/site-feedback?token=$ADMIN_TOKEN&reviewed=0"
+# The token goes in the X-Admin-Token header only; a ?token= query
+# parameter is not accepted (URLs end up in access logs and history).
+H="X-Admin-Token: $ADMIN_TOKEN"
+curl -H "$H" "https://<your-app>.onrender.com/admin/ask-log?limit=100"
+curl -H "$H" "https://<your-app>.onrender.com/admin/ask-log?outcome=refused"
+curl -H "$H" "https://<your-app>.onrender.com/admin/ask-log?ip=1.2.3.4"
+curl -H "$H" "https://<your-app>.onrender.com/admin/ask-stats"
+curl -H "$H" "https://<your-app>.onrender.com/admin/feedback?vote=down&reviewed=0"
+curl -H "$H" "https://<your-app>.onrender.com/admin/site-feedback?reviewed=0"
 ```
 
 Or straight from Neon:
@@ -442,6 +445,6 @@ users). Browse and Department Data are unaffected — they never call the LLM.
 | `/ask` always says the provider rate limit was hit | Groq's 200K tokens/day is spent. Resets daily. |
 | `course_content_search` never fires / semantic questions give SQL-only answers | `course_embeddings` is empty on Neon — run `python -m app.backfill_embeddings` locally. |
 | `grade_distributions` / `teachers_ranked_excellent` queries return nothing | Upstream hasn't published for the term. Expected. |
-| `/admin/*` (dashboard, ask-log, ask-stats, feedback…) always returns 403 | `ADMIN_TOKEN` isn't set on the server, or the `?token=` / `X-Admin-Token` you sent doesn't match it. (Every failure 403s rather than 404s on purpose, so the response doesn't reveal whether the token is configured.) |
+| `/admin/*` (dashboard, ask-log, ask-stats, feedback…) always returns 403 | `ADMIN_TOKEN` isn't set on the server, or the `X-Admin-Token` header you sent doesn't match it (a `?token=` query parameter is ignored). (Every failure 403s rather than 404s on purpose, so the response doesn't reveal whether the token is configured.) |
 | `/admin.html` loads but panels say "Couldn't load" / show the token gate | The page shell is public; the panels need `ADMIN_TOKEN`. Enter it in the gate. A slow first load right after idle is Neon + Render waking — retry. |
 | `/docs` returns 404 | Expected — set `ENABLE_DOCS` to turn it on. |

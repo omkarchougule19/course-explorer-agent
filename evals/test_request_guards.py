@@ -204,6 +204,30 @@ r = client.post("/ask/feedback", json={"vote": "up", "question": "q", "answer": 
                 headers={"x-forwarded-for": "8.8.8.8"}).json()
 check("a new IP is still refused once the global cap is reached", r["ok"] is False)
 
+# 6. admin token is header-only
+os.environ["ADMIN_TOKEN"] = "t0ken-for-tests"
+check("admin accepts the X-Admin-Token header",
+      client.get("/admin/ask-stats", headers={"x-admin-token": "t0ken-for-tests"}).status_code == 200)
+check("admin rejects ?token= in the URL",
+      client.get("/admin/ask-stats?token=t0ken-for-tests").status_code == 403)
+os.environ.pop("ADMIN_TOKEN")
+
+# 7. CSP forbids inline scripts, and no page needs one
+import re  # noqa: E402
+
+csp = client.get("/").headers.get("content-security-policy", "")
+script_src = next((d for d in csp.split(";") if d.strip().startswith("script-src")), "")
+check(f"script-src is same-origin only ({script_src.strip()})", script_src.split() == ["script-src", "'self'"])
+static_dir = Path(api.STATIC_DIR)
+for page in sorted(static_dir.glob("*.html")):
+    html = page.read_text(encoding="utf-8")
+    inline = re.findall(r"<script(?![^>]*\bsrc=)[^>]*>", html)
+    handlers = re.findall(r"\son[a-z]+\s*=", html)
+    srcs = re.findall(r'<script src="/([^"]+)"', html)
+    missing = [s for s in srcs if not (static_dir / s).exists()]
+    check(f"{page.name}: no inline scripts/handlers, all script files exist",
+          not inline and not handlers and not missing)
+
 client.__exit__(None, None, None)
 print(f"\n{'all checks passed' if not failures else str(len(failures)) + ' FAILED'}")
 raise SystemExit(1 if failures else 0)

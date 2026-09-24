@@ -8,13 +8,16 @@
   // The public, human-facing UIUC course explorer (courses.illinois.edu),
   // as opposed to the XML API this app's scraper reads - see
   // app/scraper.py's BASE_URL/CATALOG_BASE_URL and its Referer header.
+  // Every segment is DB-sourced, so each is percent-encoded - a stored value
+  // can't add path segments or break out of the href it lands in.
   function courseExplorerUrl(year, semester, subject, courseNumber) {
     var url = 'https://courses.illinois.edu/schedule';
+    var seg = function (v) { return '/' + encodeURIComponent(String(v)); };
     if (year && semester) {
-      url += '/' + year + '/' + semester;
+      url += seg(year) + seg(semester);
       if (subject) {
-        url += '/' + subject;
-        if (courseNumber) url += '/' + courseNumber;
+        url += seg(subject);
+        if (courseNumber) url += seg(courseNumber);
       }
     }
     return url;
@@ -28,7 +31,8 @@
   // just not guaranteed for an arbitrary past term.
   function registrarCalendarUrl(year, semester) {
     if (!year || !semester) return 'https://registrar.illinois.edu/';
-    return 'https://registrar.illinois.edu/' + semester + '-' + year + '-academic-calendar/';
+    return 'https://registrar.illinois.edu/' + encodeURIComponent(String(semester)) + '-'
+      + encodeURIComponent(String(year)) + '-academic-calendar/';
   }
 
   var GRADES_URL = 'https://github.com/wadefagen/datasets';
@@ -57,8 +61,12 @@
     return '<p class="citation">Source: ' + html + '</p>';
   }
 
+  // Attribute-escapes the URL as a last line of defence; `text` is always a
+  // fixed label from the calling page, never data.
   function link(url, text) {
-    return '<a href="' + url + '" target="_blank" rel="noopener">' + text + '</a>';
+    var href = String(url).replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return '<a href="' + href + '" target="_blank" rel="noopener">' + text + '</a>';
   }
 
   global.Citations = {

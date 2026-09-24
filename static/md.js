@@ -28,9 +28,10 @@
   // innerHTML: a scheme like "javascript:" is never allowed through, link
   // text is already-escaped by the time this runs, and the href itself
   // passes through unescaped only because escapeHtml() already ran on the
-  // whole line before inline() sees it.
+  // whole line before inline() sees it. A same-site path must not start
+  // with "//" or "/\" - browsers read both as a link to another host.
   function linkify(escaped) {
-    return escaped.replace(/\[([^\[\]\n]+)\]\((\/[^\s()]*|https:\/\/[^\s()]+)\)/g, function (m, text, url) {
+    return escaped.replace(/\[([^\[\]\n]+)\]\((\/(?![\/\\])[^\s()]*|https:\/\/[^\s()]+)\)/g, function (m, text, url) {
       var external = /^https:\/\//.test(url);
       return '<a href="' + url + '"' + (external ? ' target="_blank" rel="noopener noreferrer"' : '') + '>' + text + '</a>';
     });

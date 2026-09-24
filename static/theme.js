@@ -1,7 +1,8 @@
 // theme.js — dark-mode toggle, shared across pages. Avoiding a flash of the
-// wrong theme on load happens earlier, via a tiny inline script in each
-// page's <head> that sets data-theme from localStorage before first paint;
-// this file only wires up the toggle button's click behavior.
+// wrong theme on load happens earlier, via theme-init.js, loaded
+// synchronously in each page's <head> to set data-theme from localStorage
+// before first paint; this file only wires up the toggle button's click
+// behavior.
 (function () {
   function current() {
     var attr = document.documentElement.getAttribute('data-theme');

@@ -1,0 +1,593 @@
+// index-page.js - page script for index.html, moved out of the HTML so the CSP can
+// forbid inline scripts (script-src 'self'). Loaded at the same spot
+// the inline block was, as a classic synchronous script, so execution
+// order and globals are unchanged.
+  const $ = (id) => document.getElementById(id);
+  const REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // HTML-escape any DB-sourced value that goes into an innerHTML string.
+  // (md.js escapes agent answers itself.)
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+
+  const SEARCH_EMPTY =
+    '<div class="empty-state">' +
+    '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>' +
+    'Pick a subject, term, or instructor above, then hit Search.</div>';
+
+  async function getJSON(url) {
+    const res = await fetch(url);
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = new Error(body.detail || `Request failed (${res.status})`);
+      err.status = res.status;
+      throw err;
+    }
+    return body;
+  }
+
+  // Count a number up from 0 for a bit of life on load.
+  function countUp(el, target) {
+    if (REDUCED || !Number.isFinite(target)) { el.textContent = target; return; }
+    const dur = 650, t0 = performance.now();
+    const tick = (now) => {
+      const p = Math.min(1, (now - t0) / dur);
+      const eased = 1 - Math.pow(1 - p, 3);
+      el.textContent = Math.round(target * eased).toLocaleString();
+      if (p < 1) requestAnimationFrame(tick);
+      else el.textContent = target.toLocaleString();
+    };
+    requestAnimationFrame(tick);
+  }
+
+  function showSkeleton(wrap, rows = 6) {
+    wrap.setAttribute('aria-busy', 'true');
+    wrap.innerHTML = '<div class="skeleton">'
+      + Array.from({ length: rows }, () => '<div class="sk-line"></div>').join('')
+      + '</div>';
+  }
+
+  async function loadStats() {
+    try {
+      const stats = await getJSON('/stats');
+      countUp($('stat-sections'), stats.total_sections);
+      countUp($('stat-courses'), stats.distinct_courses);
+      countUp($('stat-subjects'), stats.distinct_subjects);
+      const terms = stats.terms_covered || [];
+      $('stat-terms').textContent = terms.length;
+      $('stat-terms-sub').textContent = terms.join(' · ');
+      $('stat-terms-sub').title = terms.join(', ');
+      if (stats.total_sections === 0) $('empty-note').classList.add('show');
+    } catch (e) {
+      $('empty-note').textContent = e.message.includes('Database not found')
+        ? 'No database yet. Run the scraper first, then reload this page.'
+        : `Can't reach the API: ${e.message}`;
+      $('empty-note').classList.add('show');
+    }
+  }
+
+  // ---- Trending suggested-question chips ---------------------------------
+  // Reframes real usage into generic templates rather than ever showing a
+  // student's actual typed question - see ask_log.trending_courses().
+  // Leaves the last chip (a topic search, not a course lookup) alone for
+  // variety, and falls back to the static defaults already in the markup
+  // if there isn't enough trending data yet.
+  const CHIP_TEMPLATES = [
+    (c) => `Is ${c} as rough as people say?`,
+    (c) => `What sections does ${c} have left?`,
+    (c) => `What's the prerequisite for ${c}?`,
+  ];
+  async function loadTrendingChips() {
+    try {
+      const data = await getJSON('/ask/trending');
+      const courses = data.courses || [];
+      if (!courses.length) return;
+      const buttons = [...$('chips').querySelectorAll('.chip')].slice(0, -1);
+      courses.slice(0, buttons.length).forEach((course, i) => {
+        buttons[i].textContent = CHIP_TEMPLATES[i % CHIP_TEMPLATES.length](course);
+      });
+      $('chips-label').hidden = false;
+    } catch (e) { /* keep the static defaults already in the markup */ }
+  }
+
+  async function loadAskSummary() {
+    try {
+      const data = await getJSON('/ask/summary');
+      countUp($('stat-visitors'), data.unique_7d);
+      const used = Number(data.global_calls_24h) || 0;
+      const limit = Number(data.global_limit) || 0;
+      if (limit > 0) {
+        const pct = Math.min(100, Math.round((used / limit) * 100));
+        const fill = $('usage-bar-fill');
+        fill.style.width = pct + '%';
+        fill.classList.toggle('high', pct >= 85);
+        $('usage-text').textContent = `${used} / ${limit} questions answered today`;
+        $('usage-bar-row').hidden = false;
+      }
+    } catch (e) { /* leave the tile at —, usage bar stays hidden */ }
+  }
+
+  async function loadFreshness() {
+    try {
+      const data = await getJSON('/freshness');
+      const rows = data.freshness || [];
+      if (!rows.length) { $('stat-updated').textContent = 'no data'; return; }
+      const mostRecent = rows.reduce((a, b) => (a.last_updated > b.last_updated ? a : b));
+      $('stat-updated').textContent = formatRelativeTime(mostRecent.last_updated);
+      $('stat-updated-sub').textContent = `${mostRecent.subject}, ${mostRecent.semester} ${mostRecent.year}`;
+    } catch (e) {
+      $('stat-updated').textContent = 'n/a';
+    }
+  }
+
+  async function loadSubjects() {
+    try {
+      const data = await getJSON('/subjects');
+      const select = $('f-subject');
+      for (const subj of data.subjects) {
+        const opt = document.createElement('option');
+        opt.value = subj; opt.textContent = subj;
+        select.appendChild(opt);
+      }
+    } catch (e) { /* empty-state note already covers this */ }
+  }
+
+  // ---- Course results table + quick view (shared with departments.html) --
+  const browseResults = CourseResults.create({
+    wrapEl: $('results-wrap'),
+    containerEl: $('browse-panel'),
+    courseDetailEl: $('course-detail'),
+    syncUrl: true,
+    emptyMessage: 'Nothing matched 👀 Try a different subject, or clear the instructor field.',
+  });
+
+  // Vibe chips toggle on/off; with a subject picked they re-run the search at
+  // once, otherwise they wait and the hint says why.
+  $('vibes').addEventListener('click', (e) => {
+    const chip = e.target.closest('.vibe');
+    if (!chip) return;
+    chip.setAttribute('aria-pressed', chip.getAttribute('aria-pressed') === 'true' ? 'false' : 'true');
+    if ($('f-subject').value.trim()) $('browse-form').requestSubmit();
+    else $('vibe-hint').hidden = false;
+  });
+
+  $('browse-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const params = new URLSearchParams();
+    const term = $('f-term').value.trim();
+    const subject = $('f-subject').value.trim();
+    const level = $('f-level').value.trim();
+    const course = $('f-course').value.trim();
+    const instructor = $('f-instructor').value.trim();
+    const limit = $('f-limit').value.trim();
+    if (term) { const [y, s] = term.split('|'); params.set('year', y); params.set('semester', s); }
+    if (subject) params.set('subject', subject);
+    if (level) params.set('level', level);
+    if (course) params.set('course_number', course);
+    if (instructor) params.set('instructor', instructor);
+    if (limit) params.set('limit', limit);
+    // Pressed vibes are schedule sub-filters; the API needs a subject for them.
+    const pressed = [...document.querySelectorAll('#vibes .vibe[aria-pressed="true"]')];
+    $('vibe-hint').hidden = !(pressed.length && !subject);
+    if (subject) pressed.forEach((b) => params.set(b.dataset.param, b.dataset.value));
+
+    showSkeleton($('results-wrap'));
+    try {
+      const rows = await getJSON('/sections?' + params.toString());
+      browseResults.render(rows);
+      if (!rows.length && window.Motion) Motion.shake($('results-wrap').firstElementChild);
+    } catch (err) {
+      $('results-wrap').removeAttribute('aria-busy');
+      $('results-wrap').innerHTML = `<p class="empty-state">Query failed: ${esc(err.message)}</p>`;
+      document.querySelector('.row-hint').hidden = true;
+    }
+  });
+
+  function addLine(text, cls) {
+    const scrollback = $('scrollback');
+    const div = document.createElement('div');
+    div.className = 'line ' + cls;
+    div.textContent = text;
+    scrollback.appendChild(div);
+    scrollback.scrollTop = scrollback.scrollHeight;
+    return div;
+  }
+
+  const THUMB_UP =
+    '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10v12"/>' +
+    '<path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/></svg>';
+  const THUMB_DOWN =
+    '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M17 14V2"/>' +
+    '<path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/></svg>';
+
+  // Thumbs up/down under a settled answer. On a vote we POST the question,
+  // the answer text, and the recent windowed history (which already includes
+  // this turn, since recordTurn ran first) so a downvote captures the whole
+  // exchange for the biweekly review queue. Best-effort: a failed save just
+  // shows a note and leaves the buttons live.
+  function attachFeedback(afterEl, q, a) {
+    const bar = document.createElement('div');
+    bar.className = 'feedback';
+    bar.innerHTML =
+      '<span class="fb-label">Helpful?</span>' +
+      '<button type="button" class="fb-up" aria-label="Helpful">' + THUMB_UP + '</button>' +
+      '<button type="button" class="fb-down" aria-label="Not helpful">' + THUMB_DOWN + '</button>' +
+      '<span class="fb-note" hidden>couldn’t save that</span>';
+    afterEl.insertAdjacentElement('afterend', bar);
+    $('scrollback').scrollTop = $('scrollback').scrollHeight;
+
+    const up = bar.querySelector('.fb-up');
+    const down = bar.querySelector('.fb-down');
+    const note = bar.querySelector('.fb-note');
+
+    const vote = async (which, btn) => {
+      up.disabled = down.disabled = true;
+      note.hidden = true;
+      try {
+        const res = await fetch('/ask/feedback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            vote: which, question: q, answer: a,
+            history: chatHistory.slice(-HISTORY_TURNS_SENT),
+          }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok || !body.ok) throw new Error('save failed');
+        btn.classList.add('voted');
+        if (which === 'down') btn.classList.add('down');
+        else if (window.Motion) Motion.confetti(Motion.centerOf(btn), 28);
+      } catch (e) {
+        note.hidden = false;
+        up.disabled = down.disabled = false;
+      }
+    };
+    up.addEventListener('click', () => vote('up', up));
+    down.addEventListener('click', () => vote('down', down));
+  }
+
+  // Parse complete SSE frames from `buffer`, fire onEvent(name, data) for
+  // each, return the unconsumed tail.
+  function drainSSE(buffer, onEvent) {
+    let sep;
+    while ((sep = buffer.indexOf('\n\n')) !== -1) {
+      const frame = buffer.slice(0, sep);
+      buffer = buffer.slice(sep + 2);
+      let name = 'message', data = '';
+      for (const raw of frame.split('\n')) {
+        if (raw.startsWith('event:')) name = raw.slice(6).trim();
+        else if (raw.startsWith('data:')) data += raw.slice(5).trim();
+      }
+      if (!data) continue;
+      let parsed;
+      try { parsed = JSON.parse(data); } catch { parsed = data; }
+      onEvent(name, parsed);
+    }
+    return buffer;
+  }
+
+  // Windowed conversation memory: the browser keeps the transcript and
+  // sends the last few turns back so follow-ups ("who teaches it?") resolve.
+  // Server re-trims. The transcript also lives in sessionStorage, so it
+  // survives moving to another page and back (or a reload) within the tab;
+  // "New chat" or closing the tab clears it.
+  let chatHistory = [];
+  let transcript = [];          // full answers, for redrawing the chat on return
+  let pendingQuestion = null;   // asked but not yet answered (the page was left mid-reply)
+  const HISTORY_TURNS_SENT = 3;
+  const HISTORY_TURNS_KEPT = 10;
+  const HISTORY_ANSWER_CLIP = 600;
+  const CHAT_KEY = 'illini-chat-v1';
+  const TRANSCRIPT_ANSWER_CAP = 8000;
+
+  function saveChat() {
+    try {
+      if (!transcript.length && !pendingQuestion) sessionStorage.removeItem(CHAT_KEY);
+      else sessionStorage.setItem(CHAT_KEY, JSON.stringify({ transcript, chatHistory, pendingQuestion }));
+    } catch (e) { /* storage blocked or full: the chat just won't survive navigation */ }
+  }
+
+  function recordTurn(q, a) {
+    chatHistory.push({ q, a: String(a || '').slice(0, HISTORY_ANSWER_CLIP) });
+    if (chatHistory.length > HISTORY_TURNS_KEPT) chatHistory = chatHistory.slice(-HISTORY_TURNS_KEPT);
+    transcript.push({ q, a: String(a || '').slice(0, TRANSCRIPT_ANSWER_CAP) });
+    if (transcript.length > HISTORY_TURNS_KEPT) transcript = transcript.slice(-HISTORY_TURNS_KEPT);
+    pendingQuestion = null;
+    saveChat();
+    $('new-chat').hidden = false;
+  }
+
+  // Redraw a saved conversation into the (empty) scrollback.
+  function restoreChat() {
+    let saved;
+    try { saved = JSON.parse(sessionStorage.getItem(CHAT_KEY) || 'null'); } catch (e) { return; }
+    if (!saved || (!(saved.transcript || []).length && !saved.pendingQuestion)) return;
+    transcript = Array.isArray(saved.transcript) ? saved.transcript : [];
+    chatHistory = Array.isArray(saved.chatHistory) ? saved.chatHistory : [];
+    $('sb-placeholder')?.remove();
+    $('chips').style.display = 'none';
+    for (const t of transcript) {
+      addLine(t.q, 'line-q');
+      const a = addLine('', 'line-a md');
+      a.innerHTML = window.renderMarkdown(t.a);
+    }
+    if (saved.pendingQuestion) {
+      addLine(saved.pendingQuestion, 'line-q');
+      addLine('That reply was cut off when you left the page. Ask again to retry.', 'line-sys');
+    }
+    pendingQuestion = null;
+    saveChat();   // the interrupted question is shown once, not on every visit
+    $('new-chat').hidden = false;
+  }
+
+  $('new-chat').addEventListener('click', () => {
+    chatHistory = [];
+    transcript = [];
+    pendingQuestion = null;
+    saveChat();
+    $('new-chat').hidden = true;
+    $('chips').style.display = '';
+    $('scrollback').innerHTML =
+      '<div class="line line-sys" id="sb-placeholder">Your conversation will appear here.</div>';
+    $('ask-input').focus();
+  });
+
+  $('chips').addEventListener('click', (e) => {
+    const chip = e.target.closest('.chip');
+    if (!chip) return;
+    $('ask-input').value = chip.textContent;
+    $('ask-form').requestSubmit();
+  });
+
+  $('ask-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const input = $('ask-input');
+    const question = input.value.trim();
+    if (!question) { if (window.Motion) Motion.shake(input); return; }
+    input.value = '';
+    input.disabled = true;
+    const chipsEl = $('chips');
+    if (chipsEl) chipsEl.style.display = 'none';
+    $('sb-placeholder')?.remove();
+
+    pendingQuestion = question;
+    saveChat();
+    addLine(question, 'line-q');
+    const answerLine = addLine('', 'line-a');
+    answerLine.setAttribute('aria-busy', 'true');
+    let status = addLine('', 'line-sys');
+    status.innerHTML = '<span class="st-text">Checking the catalog</span><span class="bounce" aria-hidden="true"><i></i><i></i><i></i></span>';
+
+    let raw = '', streaming = false, settled = false;
+    const scroll = () => { $('scrollback').scrollTop = $('scrollback').scrollHeight; };
+
+    const settle = (finalText, asError) => {
+      if (settled) return;
+      settled = true;
+      if (asError) { pendingQuestion = null; saveChat(); }   // shown as an error, not "cut off"
+      if (status) { status.remove(); status = null; }
+      answerLine.removeAttribute('aria-busy');
+      const text = (finalText != null && finalText !== '') ? finalText : raw;
+      if (asError && !text) {
+        answerLine.className = 'line line-sys';
+        answerLine.textContent = 'The assistant failed to answer. Try again shortly.';
+      } else {
+        answerLine.className = 'line line-a md';
+        const answer = text || 'I couldn’t produce an answer for that.';
+        answerLine.innerHTML = window.renderMarkdown(answer);
+        if (!asError) {
+          recordTurn(question, answer);
+          attachFeedback(answerLine, question, answer);
+          if (window.Motion) Motion.celebrateOnce('first-answer', answerLine);
+        }
+      }
+      scroll();
+      input.disabled = false;
+      input.focus();
+    };
+
+    try {
+      const res = await fetch('/ask/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question, history: chatHistory.slice(-HISTORY_TURNS_SENT) }),
+      });
+
+      if (!res.ok || !res.body) {
+        const body = await res.json().catch(() => ({}));
+        if (status) { status.remove(); status = null; }
+        answerLine.removeAttribute('aria-busy');
+        answerLine.className = 'line line-sys';
+        answerLine.textContent = body.detail || `Request failed (${res.status})`;
+        settled = true;
+        pendingQuestion = null; saveChat();
+        input.disabled = false; input.focus();
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        buf = drainSSE(buf, (name, data) => {
+          if (name === 'status') {
+            if (!streaming && status) status.querySelector('.st-text').textContent = data;
+          } else if (name === 'token') {
+            if (!streaming) { streaming = true; if (status) { status.remove(); status = null; } }
+            raw += data;
+            answerLine.textContent = raw;
+            scroll();
+          } else if (name === 'done') {
+            settle(data, false);
+          } else if (name === 'error') {
+            settle(data, true);
+          }
+        });
+      }
+      settle(raw, false);
+    } catch (err) {
+      if (status) { status.remove(); status = null; }
+      answerLine.removeAttribute('aria-busy');
+      if (!raw) {
+        answerLine.className = 'line line-sys';
+        answerLine.textContent = 'Connection lost — is the API server still running?';
+        settled = true;
+        pendingQuestion = null; saveChat();
+      } else {
+        settle(raw, false);
+      }
+      input.disabled = false; input.focus();
+    }
+  });
+
+  // ---- Term selector ----------------------------------------------------
+  const CURRENT_TERM = 'fall 2026';  // keep in sync with app/terms.py
+
+  async function loadTerms() {
+    try {
+      const stats = await getJSON('/stats');
+      const select = $('f-term');
+      const order = { spring: 0, summer: 1, fall: 2 };
+      const terms = (stats.terms_covered || []).slice().sort((a, b) => {
+        const [sa, ya] = a.split(' '), [sb, yb] = b.split(' ');
+        return (yb - ya) || (order[sb] - order[sa]);
+      });
+      for (const t of terms) {
+        const [sem, yr] = t.split(' ');
+        const opt = document.createElement('option');
+        opt.value = `${yr}|${sem}`;
+        opt.textContent = t;
+        if (t === CURRENT_TERM) opt.selected = true;
+        select.appendChild(opt);
+      }
+    } catch (e) { /* stays "All terms" */ }
+  }
+
+  // ---- Site feedback box -------------------------------------------------
+  // Free-text feedback, unrelated to the assistant. POSTs to /feedback, which
+  // is public and best-effort: it returns {ok, reason} and never 5xx, so a
+  // failed save just shows a note. `reason` distinguishes "too long" and
+  // "daily limit" from a generic error.
+  const FEEDBACK_NOTES = {
+    ok: 'Thanks, got it 🙌',
+    too_long: 'That’s a bit long — trim it under 2000 characters.',
+    rate_limited: 'You’ve sent a few already today. Try again tomorrow.',
+    empty: 'Write something first.',
+    error: 'Couldn’t save that — try again in a moment.',
+  };
+
+  $('feedback-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const box = $('feedback-message');
+    const btn = $('feedback-send');
+    const note = $('feedback-note');
+    const message = box.value.trim();
+    if (!message) {
+      note.textContent = FEEDBACK_NOTES.empty;
+      note.hidden = false;
+      if (window.Motion) Motion.shake(box);
+      return;
+    }
+    btn.disabled = true;
+    note.hidden = true;
+    let reason = 'error';
+    try {
+      const res = await fetch('/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message, page: location.pathname }),
+      });
+      const body = await res.json().catch(() => ({}));
+      reason = body.reason || (body.ok ? 'ok' : 'error');
+    } catch (err) {
+      reason = 'error';
+    }
+    note.textContent = FEEDBACK_NOTES[reason] || FEEDBACK_NOTES.error;
+    note.classList.toggle('ok', reason === 'ok');
+    note.hidden = false;
+    if (reason === 'ok') box.value = '';
+    btn.disabled = false;
+  });
+
+  // Footer "Send feedback" jumps to the box and focuses it, with a brief
+  // highlight so it's obvious where you landed.
+  $('footer-feedback').addEventListener('click', () => {
+    const panel = $('feedback-panel');
+    panel.scrollIntoView({ behavior: REDUCED ? 'auto' : 'smooth', block: 'center' });
+    panel.classList.remove('flash');
+    void panel.offsetWidth;  // restart the animation
+    panel.classList.add('flash');
+    $('feedback-message').focus({ preventScroll: true });
+  });
+
+  $('results-wrap').innerHTML = SEARCH_EMPTY;
+  document.querySelector('.row-hint').hidden = true;
+  // ---- Sharable course links (?course=SUBJ-123) -------------------------
+  // openCourseDetail() itself keeps the URL in sync (history.replaceState)
+  // while a course panel is open. This one function opens a course by its
+  // "SUBJ-NUM" code, fetching section info first since a link (whether the
+  // incoming page URL, or a course link the AI chat renders inline in an
+  // answer) only ever carries the code, not the full row.
+  async function openCourseByCode(course) {
+    const dash = course.lastIndexOf('-');
+    if (dash < 1) return;
+    const subject = course.slice(0, dash).toUpperCase();
+    const number = course.slice(dash + 1);
+    try {
+      const rows = await getJSON(`/sections?subject=${encodeURIComponent(subject)}&course_number=${encodeURIComponent(number)}&limit=1`);
+      const row = rows[0];
+      browseResults.openCourseDetail(subject, number, row ? row.description : '', row ? row.year : null, row ? row.semester : '', row ? row.course_label : '');
+    } catch (e) { /* unknown/bad course in the link - leave the page as-is */ }
+  }
+
+  async function openSharedCourseFromURL() {
+    const course = new URLSearchParams(location.search).get('course');
+    if (course) await openCourseByCode(course);
+  }
+
+  // A course link the AI chat renders (e.g. "[CS 225](/?course=CS-225)")
+  // is a real <a href> - state (the whole chat transcript, unpersisted by
+  // design) was getting wiped because a plain left-click just navigated
+  // the page instead of opening the course in place, the way clicking a
+  // results-table row already does. Intercept it the same way, anywhere
+  // on the page, and leave modified clicks (new tab, etc.) alone.
+  document.addEventListener('click', (e) => {
+    if (e.defaultPrevented || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+    const a = e.target.closest('a[href]');
+    if (!a) return;
+    let url;
+    try { url = new URL(a.href, location.href); } catch (err) { return; }
+    if (url.origin !== location.origin || url.pathname !== '/') return;
+    const course = url.searchParams.get('course');
+    if (!course) return;
+    e.preventDefault();
+    openCourseByCode(course);
+  });
+
+  // ---- Mobile "jump to Ask" FAB ------------------------------------------
+  // Shown only past the ask-hero's own bottom edge, so it's never floating
+  // over the assistant it's meant to get you back to.
+  const askHeroEl = document.querySelector('.ask-hero');
+  const fab = $('mobile-ask-fab');
+  if (askHeroEl && fab) {
+    document.addEventListener('scroll', () => {
+      fab.hidden = window.scrollY < askHeroEl.offsetTop + askHeroEl.offsetHeight;
+    }, { passive: true });
+    fab.addEventListener('click', () => {
+      askHeroEl.scrollIntoView({ behavior: REDUCED ? 'auto' : 'smooth', block: 'start' });
+      setTimeout(() => $('ask-input').focus(), REDUCED ? 0 : 400);
+    });
+  }
+
+  restoreChat();
+  loadStats();
+  loadTerms();
+  loadSubjects();
+  loadFreshness();
+  loadAskSummary();
+  loadTrendingChips();
+  openSharedCourseFromURL();
