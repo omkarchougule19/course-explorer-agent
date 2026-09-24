@@ -208,7 +208,7 @@
       $('t-sfr').textContent = sf.unreviewed;
       $('t-sf').textContent = `${sf.total} total`;
 
-      const order = ['answered', 'refused', 'rate_limited', 'global_limited', 'too_long', 'error'];
+      const order = ['answered', 'refused', 'pending', 'rate_limited', 'global_limited', 'too_long', 'error'];
       const a = s.outcomes_24h || {}, b = s.outcomes_all || {};
       $('outcomes').innerHTML = order.map((k) =>
         `<div><dt>${k} <span style="opacity:.6">(24h)</span></dt><dd>${a[k] || 0}</dd></div>` +

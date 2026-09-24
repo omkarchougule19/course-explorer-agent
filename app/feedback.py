@@ -21,11 +21,14 @@ browser (there's no server-side answer id) - fine because it only feeds a
 human review queue, is length-capped here, and is HTML-escaped by the
 dashboard on render.
 
-Writes have no auth. Reads are via GET /admin/feedback, gated on ADMIN_TOKEN.
+Writes have no auth, so new rows are capped per client IP and globally per
+24 h (ANSWER_FEEDBACK_PER_IP_DAY, default 50; ANSWER_FEEDBACK_GLOBAL_DAY,
+default 2000). Reads are via GET /admin/feedback, gated on ADMIN_TOKEN.
 """
 
 import json
-from datetime import datetime, timezone
+import os
+from datetime import datetime, timedelta, timezone
 
 from app import db
 
@@ -37,6 +40,10 @@ _HISTORY_TURNS = 6
 _HIST_A_MAX = 800
 
 _VALID_VOTES = ("up", "down")
+# New rows per trailing 24 h (re-votes don't count): per client IP, and for
+# everyone together - see _over_caps.
+_PER_IP_DAY = int(os.environ.get("ANSWER_FEEDBACK_PER_IP_DAY", "50"))
+_GLOBAL_DAY = int(os.environ.get("ANSWER_FEEDBACK_GLOBAL_DAY", "2000"))
 
 
 def init_table(conn: db.Connection) -> None:
@@ -55,6 +62,9 @@ def init_table(conn: db.Connection) -> None:
         """
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_answer_feedback_ts ON answer_feedback(ts)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_answer_feedback_ip ON answer_feedback(client_ip, ts)"
+    )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_answer_feedback_review "
         "ON answer_feedback(vote, reviewed_at)"
@@ -83,12 +93,33 @@ def _clean_history(history) -> "str | None":
     return json.dumps(turns) if turns else None
 
 
+def _over_caps(conn: db.Connection, client_ip: str) -> bool:
+    """True once this IP has left ANSWER_FEEDBACK_PER_IP_DAY new rows in the
+    trailing 24 h, or everyone together ANSWER_FEEDBACK_GLOBAL_DAY. The per-IP
+    key is the spoofable first X-Forwarded-For hop, so it's friction; the
+    global cap is the real bound on table growth from an unauthenticated
+    POST (each row can carry ~5 KB of text plus a history snapshot)."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(timespec="seconds")
+    if client_ip and client_ip != "unknown":
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM answer_feedback WHERE client_ip = ? AND ts >= ?",
+            (client_ip, cutoff),
+        ).fetchone()
+        if (int(row["n"]) if row else 0) >= _PER_IP_DAY:
+            return True
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM answer_feedback WHERE ts >= ?", (cutoff,),
+    ).fetchone()
+    return (int(row["n"]) if row else 0) >= _GLOBAL_DAY
+
+
 def record(conn: db.Connection, client_ip: str, vote: str, question: str,
            answer: str, history=None) -> bool:
     """Insert (replacing any prior vote for the same client_ip + question +
-    answer) one feedback row. Returns False if `vote` isn't 'up'/'down' or the
-    question/answer is empty; True on a successful write. Downvotes keep the
-    history snapshot; upvotes don't need it."""
+    answer) one feedback row. Returns False if `vote` isn't 'up'/'down', the
+    question/answer is empty, or a new row would exceed the caps (see
+    _over_caps); True on a successful write. Downvotes keep the history
+    snapshot; upvotes don't need it."""
     vote = (vote or "").strip().lower()
     question = (question or "").strip()[:_Q_MAX]
     answer = (answer or "").strip()[:_A_MAX]
@@ -96,6 +127,15 @@ def record(conn: db.Connection, client_ip: str, vote: str, question: str,
         return False
 
     history_json = _clean_history(history) if vote == "down" else None
+
+    # Re-voting the same answer replaces its row, so it never counts against
+    # the caps - only a genuinely new row does.
+    revote = conn.execute(
+        "SELECT 1 FROM answer_feedback WHERE client_ip = ? AND question = ? AND answer = ?",
+        (client_ip, question, answer),
+    ).fetchone()
+    if not revote and _over_caps(conn, client_ip):
+        return False
 
     # De-dupe by DELETE-then-INSERT rather than an upsert: the "same feedback"
     # key (client_ip, question, answer) isn't a table constraint - client_ip

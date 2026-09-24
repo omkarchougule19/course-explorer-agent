@@ -244,14 +244,15 @@ def _build_graph(llm, catalog: dict, dialect: str):
         crit = state.get("last_critique")
         if not why and crit:
             why = crit.feedback
+        # `why` can be raw database error text - it stays in the trace (and
+        # PipelineResult.exec_error) for the evals, never in the answer.
         msg = (
             "I couldn't produce a query I'm confident is correct for that "
             f"question after {state.get('attempts', 0)} repair attempt(s), so "
-            "I'd rather not give a possibly-wrong answer. "
+            "I'd rather not give a possibly-wrong answer. Try rephrasing it, "
+            "or narrowing it to one subject or term."
         )
-        if why:
-            msg += f"The last problem was: {why}"
-        return {"outcome": "failed", "answer": msg.strip(),
+        return {"outcome": "failed", "answer": msg,
                 "trace": state["trace"] + [{"step": "finalize", "used": "failure", "why": why}]}
 
     # -- routing --

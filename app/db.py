@@ -111,12 +111,18 @@ def readonly_database_url() -> Optional[str]:
     SELECT-only role, see DEPLOYMENT.md §3.5) if set, else DATABASE_URL, else
     None (SQLite). On Render (RENDER is set) a missing DATABASE_URL_RO is a
     hard error rather than a silent fall-back to the owner role, unless
-    ALLOW_RW_AGENT_DB is set as a deliberate, temporary opt-out."""
+    ALLOW_RW_AGENT_DB is set as a deliberate, temporary opt-out.
+
+    DATABASE_URL decides the backend (is_postgres()), so with it unset this
+    is None even if DATABASE_URL_RO is set - otherwise SQLite-mode code
+    (the local fallback, tests) would find itself talking to Postgres."""
+    rw = os.environ.get("DATABASE_URL")
+    if not rw:
+        return None
     ro = os.environ.get("DATABASE_URL_RO")
     if ro:
         return ro
-    rw = os.environ.get("DATABASE_URL")
-    if rw and os.environ.get("RENDER") and not os.environ.get("ALLOW_RW_AGENT_DB"):
+    if os.environ.get("RENDER") and not os.environ.get("ALLOW_RW_AGENT_DB"):
         raise RuntimeError("the assistant's read-only database role is not configured")
     return rw
 

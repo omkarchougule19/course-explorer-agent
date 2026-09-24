@@ -13,6 +13,7 @@ Docs:
 import hmac
 import json
 import os
+import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -21,9 +22,12 @@ from typing import Literal, Optional
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Path as PathParam
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.background import BackgroundTask
+from starlette.concurrency import run_in_threadpool
 
 from app import db
 from app import sync_requests as sync_reqs
@@ -137,7 +141,10 @@ def get_conn():
     try:
         conn = db.get_connection()
     except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Couldn't open database: {exc}")
+        # The driver's text can carry the host, role or even the URL - log it,
+        # don't return it.
+        print(f"[db-open-failed] {exc!r}", flush=True)
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable. Try again shortly.")
     try:
         yield conn
     finally:
@@ -153,6 +160,27 @@ def run_query(conn: db.Connection, query: str, params: list):
     except Exception as exc:
         print(f"[query-failed] {exc!r}", flush=True)
         raise HTTPException(status_code=500, detail="Query failed")
+
+
+# Shared bounds for the public read routes' inputs, so a junk value gets a
+# clean 422 up front instead of an oversized/odd query (or a driver error)
+# further down. Only values the data can actually hold pass.
+_SEMESTERS = ("fall", "spring", "summer", "winter")
+_MAX_CRNS = 50   # same cap as ConflictCheckRequest; a real schedule is a handful
+
+
+def _year_q():
+    return Query(default=None, ge=2000, le=2100)
+
+
+def _semester(raw: Optional[str]) -> Optional[str]:
+    """Lowercased semester, None if unset, 422 if it isn't a real term name."""
+    if not raw:
+        return None
+    s = raw.strip().lower()
+    if s not in _SEMESTERS:
+        raise HTTPException(status_code=422, detail=f"semester must be one of: {', '.join(_SEMESTERS)}")
+    return s
 
 
 class SectionOut(BaseModel):
@@ -179,8 +207,9 @@ def api_info():
 
 
 @app.get("/subjects")
-def get_subjects(year: Optional[int] = None, semester: Optional[str] = None):
+def get_subjects(year: Optional[int] = _year_q(), semester: Optional[str] = Query(default=None, max_length=10)):
     """List every subject code present in the dataset, optionally filtered by term."""
+    semester = _semester(semester)
     query = "SELECT DISTINCT subject FROM sections"
     params: list = []
     clauses = []
@@ -200,8 +229,10 @@ def get_subjects(year: Optional[int] = None, semester: Optional[str] = None):
 
 
 @app.get("/courses/{subject}")
-def get_courses(subject: str, year: Optional[int] = None, semester: Optional[str] = None):
+def get_courses(subject: str = PathParam(max_length=12), year: Optional[int] = _year_q(),
+                semester: Optional[str] = Query(default=None, max_length=10)):
     """List distinct courses under a subject, with section counts."""
+    semester = _semester(semester)
     if not subject or not subject.strip():
         raise HTTPException(status_code=400, detail="subject is required")
 
@@ -276,20 +307,21 @@ def _meetings_fit(meetings: list[dict], starts_after, ends_before, no_days: set)
 
 @app.get("/sections", response_model=list[SectionOut])
 def get_sections(
-    subject: Optional[str] = None,
-    course_number: Optional[str] = None,
-    year: Optional[int] = None,
-    semester: Optional[str] = None,
-    instructor: Optional[str] = None,
-    level: Optional[str] = Query(default=None, description="undergrad | 400level | grad"),
-    starts_after: Optional[str] = Query(default=None, description="HH:MM (24h); drop sections with a meeting that starts earlier, e.g. 09:00 for 'no 8 AMs'"),
-    ends_before: Optional[str] = Query(default=None, description="HH:MM (24h); drop sections with a meeting that ends later, e.g. 17:00"),
+    subject: Optional[str] = Query(default=None, max_length=12),
+    course_number: Optional[str] = Query(default=None, max_length=10),
+    year: Optional[int] = _year_q(),
+    semester: Optional[str] = Query(default=None, max_length=10),
+    instructor: Optional[str] = Query(default=None, max_length=100),
+    level: Optional[str] = Query(default=None, max_length=10, description="undergrad | 400level | grad"),
+    starts_after: Optional[str] = Query(default=None, max_length=5, description="HH:MM (24h); drop sections with a meeting that starts earlier, e.g. 09:00 for 'no 8 AMs'"),
+    ends_before: Optional[str] = Query(default=None, max_length=5, description="HH:MM (24h); drop sections with a meeting that ends later, e.g. 17:00"),
     no_days: Optional[str] = Query(default=None, max_length=7, description="day letters to avoid (M T W R F S U), e.g. F for no Fridays"),
     limit: int = Query(default=100, le=1000, ge=1),
 ):
     """Query individual sections with optional filters. `starts_after`,
     `ends_before` and `no_days` are schedule filters over each section's
     meeting times; they need a `subject` (the meeting lookup is per subject)."""
+    semester = _semester(semester)
     t_after = _parse_hhmm(starts_after, "starts_after")
     t_before = _parse_hhmm(ends_before, "ends_before")
     avoid = {c for c in (no_days or "").upper() if c in "MTWRFSU"}
@@ -426,28 +458,69 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def _ask_precheck(question: str, ip: str) -> Optional[tuple[int, str]]:
+# At most this many assistant questions run at once, per process. Each holds
+# a worker (and, for /ask/stream, an open connection) for tens of seconds, so
+# without a ceiling a burst could pin every thread before the daily caps
+# matter. Past the ceiling a request gets a fast 503, not a queue slot.
+_ASK_MAX_CONCURRENT = int(os.environ.get("ASK_MAX_CONCURRENT", "4"))
+_ask_slots = threading.BoundedSemaphore(_ASK_MAX_CONCURRENT)
+_BUSY = "The assistant is busy with other questions right now. Try again in a few seconds."
+
+
+class _SlotRelease:
+    """Release one _ask_slots permit exactly once, whichever of several
+    cleanup paths (generator finally, response background task, error path)
+    gets there first."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._done = False
+
+    def __call__(self):
+        with self._lock:
+            if self._done:
+                return
+            self._done = True
+        _ask_slots.release()
+
+
+def _ask_precheck(question: str, ip: str) -> tuple[Optional[tuple[int, str]], Optional[int]]:
     """Run the pre-LLM guardrails shared by /ask and /ask/stream: length cap,
-    shared daily cap, per-IP rate limit. Records the blocking outcome to
-    ask_log and returns (status_code, detail) if blocked, else None. See
-    app/ask_log.py and DECISIONS.md for the rationale."""
+    shared daily cap, per-IP rate limit. Returns ((status_code, detail), None)
+    if blocked - the blocking outcome is logged - else (None, row_id), where
+    row_id is the `pending` ask_log row reserved for this call; the caller
+    must ask_log.finish() it. Reserving before checking is what makes the
+    caps hold under concurrency (see ask_log.reserve). See app/ask_log.py and
+    DECISIONS.md for the rationale."""
     with get_conn() as conn:
         if len(question) > ask_log_mod.MAX_CHARS:
             ask_log_mod.record(conn, ip, question, "too_long")
-            return 422, (f"That question is {len(question)} characters; the limit is "
-                         f"{ask_log_mod.MAX_CHARS}. Ask something shorter and more specific.")
-        if ask_log_mod.global_over_limit(conn):
-            ask_log_mod.record(conn, ip, question, "global_limited")
-            return 429, ("The assistant has reached its shared daily limit. Browse "
-                         "Sections and Department Data still work; try the assistant "
-                         "again tomorrow.")
-        blocked, scope = ask_log_mod.over_limit(conn, ip)
+            return (422, (f"That question is {len(question)} characters; the limit is "
+                          f"{ask_log_mod.MAX_CHARS}. Ask something shorter and more specific.")), None
+        row_id = ask_log_mod.reserve(conn, ip, question)
+        if ask_log_mod.global_over_limit(conn, row_id):
+            ask_log_mod.finish(conn, row_id, "global_limited")
+            return (429, ("The assistant has reached its shared daily limit. Browse "
+                          "Sections and Department Data still work; try the assistant "
+                          "again tomorrow.")), None
+        blocked, scope = ask_log_mod.over_limit(conn, ip, row_id)
         if blocked:
-            ask_log_mod.record(conn, ip, question, "rate_limited")
-            return 429, (f"You've hit the limit of AI questions per {scope}. The Browse "
-                         f"Sections and Department Data tools still work, and you can ask "
-                         f"the assistant again later.")
-    return None
+            ask_log_mod.finish(conn, row_id, "rate_limited")
+            return (429, (f"You've hit the limit of AI questions per {scope}. The Browse "
+                          f"Sections and Department Data tools still work, and you can ask "
+                          f"the assistant again later.")), None
+    return None, row_id
+
+
+def _finish_ask(row_id: int, outcome: str, answer: Optional[str] = None,
+                latency_ms: Optional[int] = None) -> None:
+    """Best-effort ask_log.finish(). A failed write leaves the row `pending`,
+    which still counts toward the limits - the safe direction."""
+    try:
+        with get_conn() as conn:
+            ask_log_mod.finish(conn, row_id, outcome, answer, latency_ms)
+    except Exception as exc:  # noqa: BLE001 - logging must not break the response
+        print(f"[ask] ask_log finish failed: {exc!r}", flush=True)
 
 
 def _sse(event: str, data: str) -> str:
@@ -470,33 +543,36 @@ def ask_agent(payload: AskRequest, request: Request):
 
     ip = _client_ip(request)
 
-    blocked = _ask_precheck(question, ip)
-    if blocked:
-        raise HTTPException(status_code=blocked[0], detail=blocked[1])
-
+    if not _ask_slots.acquire(blocking=False):
+        raise HTTPException(status_code=503, detail=_BUSY)
     try:
-        from app.agent import ask
-    except ImportError as exc:
-        print(f"[ask] agent import failed: {exc!r}", flush=True)
-        raise HTTPException(status_code=500, detail="Assistant is unavailable")
+        blocked, row_id = _ask_precheck(question, ip)
+        if blocked:
+            raise HTTPException(status_code=blocked[0], detail=blocked[1])
 
-    # agent.ask() catches setup/provider problems and returns them as a plain
-    # string; this only guards against something truly unexpected.
-    t0 = time.monotonic()
-    try:
-        answer = ask(question, history=payload.history)
-    except Exception as exc:  # noqa: BLE001 - defense in depth
+        try:
+            from app.agent import ask
+        except ImportError as exc:
+            print(f"[ask] agent import failed: {exc!r}", flush=True)
+            _finish_ask(row_id, "error", "agent import failed")
+            raise HTTPException(status_code=500, detail="Assistant is unavailable")
+
+        # agent.ask() catches setup/provider problems and returns them as a
+        # plain string; this only guards against something truly unexpected.
+        t0 = time.monotonic()
+        try:
+            answer = ask(question, history=payload.history)
+        except Exception as exc:  # noqa: BLE001 - defense in depth
+            latency = int((time.monotonic() - t0) * 1000)
+            print(f"[ask] agent raised: {exc!r}", flush=True)
+            _finish_ask(row_id, "error", str(exc), latency)
+            raise HTTPException(status_code=502, detail="The assistant failed to answer. Try again shortly.")
+
         latency = int((time.monotonic() - t0) * 1000)
-        print(f"[ask] agent raised: {exc!r}", flush=True)
-        with get_conn() as conn:
-            ask_log_mod.record(conn, ip, question, "error", str(exc), latency)
-        raise HTTPException(status_code=502, detail="The assistant failed to answer. Try again shortly.")
-
-    latency = int((time.monotonic() - t0) * 1000)
-    outcome = ask_log_mod.classify_answer(answer)  # answered | refused | error
-    with get_conn() as conn:
-        ask_log_mod.record(conn, ip, question, outcome, answer, latency)
-    return {"question": question, "answer": answer}
+        _finish_ask(row_id, ask_log_mod.classify_answer(answer), answer, latency)
+        return {"question": question, "answer": answer}
+    finally:
+        _ask_slots.release()
 
 
 @app.post("/ask/stream")
@@ -514,15 +590,22 @@ async def ask_agent_stream(payload: AskRequest, request: Request):
 
     ip = _client_ip(request)
 
-    blocked = _ask_precheck(question, ip)
-    if blocked:
-        raise HTTPException(status_code=blocked[0], detail=blocked[1])
-
+    if not _ask_slots.acquire(blocking=False):
+        raise HTTPException(status_code=503, detail=_BUSY)
+    release = _SlotRelease()
     try:
-        from app.agent import astream_answer
-    except ImportError as exc:
-        print(f"[ask/stream] agent import failed: {exc!r}", flush=True)
-        raise HTTPException(status_code=500, detail="Assistant is unavailable")
+        blocked, row_id = await run_in_threadpool(_ask_precheck, question, ip)
+        if blocked:
+            raise HTTPException(status_code=blocked[0], detail=blocked[1])
+        try:
+            from app.agent import astream_answer
+        except ImportError as exc:
+            print(f"[ask/stream] agent import failed: {exc!r}", flush=True)
+            await run_in_threadpool(_finish_ask, row_id, "error", "agent import failed")
+            raise HTTPException(status_code=500, detail="Assistant is unavailable")
+    except BaseException:
+        release()
+        raise
 
     async def event_stream():
         t0 = time.monotonic()
@@ -544,14 +627,13 @@ async def ask_agent_stream(payload: AskRequest, request: Request):
             if not final_text:
                 final_text = "Something went wrong answering that question."
         finally:
-            latency = int((time.monotonic() - t0) * 1000)
-            answer = final_text or "".join(parts)
-            outcome = ask_log_mod.classify_answer(answer)
             try:
-                with get_conn() as conn:
-                    ask_log_mod.record(conn, ip, question, outcome, answer, latency)
-            except Exception as exc:  # noqa: BLE001 - logging must not break the response
-                print(f"[ask/stream] ask_log write failed: {exc!r}", flush=True)
+                latency = int((time.monotonic() - t0) * 1000)
+                answer = final_text or "".join(parts)
+                await run_in_threadpool(_finish_ask, row_id,
+                                        ask_log_mod.classify_answer(answer), answer, latency)
+            finally:
+                release()
 
     return StreamingResponse(
         event_stream(),
@@ -560,6 +642,9 @@ async def ask_agent_stream(payload: AskRequest, request: Request):
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",  # tell any proxy not to buffer the stream
         },
+        # Backstop for a stream that never started iterating (client gone
+        # before the first byte): the generator's finally wouldn't run.
+        background=BackgroundTask(release),
     )
 
 
@@ -738,15 +823,16 @@ def get_stats():
 
 @app.get("/calendar")
 def get_calendar(
-    year: Optional[int] = None,
-    semester: Optional[str] = None,
-    category: Optional[str] = None,
+    year: Optional[int] = _year_q(),
+    semester: Optional[str] = Query(default=None, max_length=10),
+    category: Optional[str] = Query(default=None, max_length=20),
 ):
     """UIUC registrar academic-calendar events (instruction dates, add/drop/
     withdraw deadlines, breaks, holidays, finals, grade deadlines), loaded
     per term by app/load_calendar.py. Returns an empty list when nothing is
     loaded for the requested term rather than 404, so a client can show
     "not available yet"."""
+    semester = _semester(semester)
     query = ("SELECT year, semester, event_date, event_end_date, title, "
              "category, raw_date FROM academic_calendar WHERE 1=1")
     params: list = []
@@ -780,7 +866,7 @@ def get_ask_summary():
     try:
         with get_conn() as conn:
             outcomes_24h = ask_log_mod.outcome_counts(conn, timedelta(days=1))
-            global_calls_24h = outcomes_24h.get("answered", 0) + outcomes_24h.get("refused", 0)
+            global_calls_24h = sum(outcomes_24h.get(k, 0) for k in ("answered", "refused", "pending"))
             return {
                 "unique_7d": ask_log_mod.unique_clients(conn, timedelta(days=7)),
                 "global_calls_24h": global_calls_24h,
@@ -817,14 +903,23 @@ class MeetingOut(BaseModel):
 
 
 @app.get("/meetings", response_model=list[MeetingOut])
-def get_meetings(crns: str, year: int, semester: str):
+def get_meetings(
+    crns: str = Query(max_length=600),
+    year: int = Query(ge=2000, le=2100),
+    semester: str = Query(max_length=10),
+):
     """Meeting day/time/location for a set of CRNs in one term - powers the
     schedule builder's grid (schedule.html), which needs every picked
     section's meeting info, not just the conflicting pairs /schedule/
-    conflicts returns. `crns` is a comma-separated list."""
-    crn_list = [c.strip() for c in crns.split(",") if c.strip()]
+    conflicts returns. `crns` is a comma-separated list of at most 50 -
+    capped like /schedule/conflicts so one request can't build a huge IN
+    list."""
+    semester = _semester(semester)
+    crn_list = list(dict.fromkeys(c.strip() for c in crns.split(",") if c.strip()))
     if not crn_list:
         raise HTTPException(status_code=400, detail="crns is required")
+    if len(crn_list) > _MAX_CRNS:
+        raise HTTPException(status_code=422, detail=f"at most {_MAX_CRNS} CRNs per request")
     placeholders = ",".join(["?"] * len(crn_list))
     with get_conn() as conn:
         rows = run_query(
@@ -842,9 +937,9 @@ def get_meetings(crns: str, year: int, semester: str):
 class ConflictCheckRequest(BaseModel):
     # Cap the list: the comparison is O(n^2) over meetings, and a real
     # schedule is a handful of sections. 50 is generous.
-    crns: list[str] = Field(max_length=50)
+    crns: list[str] = Field(max_length=_MAX_CRNS)
     year: int = Field(ge=2000, le=2100)
-    semester: str = Field(max_length=10)
+    semester: Literal["fall", "spring", "summer", "winter"]
 
 
 # Times are stored as text, and the two databases disagree on the shape: the
@@ -879,7 +974,7 @@ def check_schedule_conflicts(payload: ConflictCheckRequest):
     in both day and time. Sections with no meeting data (e.g. fully online/async)
     are silently skipped for that pair rather than flagged - there's nothing to
     compare."""
-    crns = [c.strip() for c in payload.crns if c.strip()]
+    crns = list(dict.fromkeys(c.strip() for c in payload.crns if c.strip()))
     if len(crns) < 2:
         raise HTTPException(status_code=400, detail="Provide at least 2 CRNs to check for conflicts")
 
@@ -925,7 +1020,9 @@ GRADE_WEIGHTS = {
 
 
 @app.get("/courses/{subject}/{course_number}/grade-trend")
-def get_grade_trend(subject: str, course_number: str, instructor: Optional[str] = None):
+def get_grade_trend(subject: str = PathParam(max_length=12),
+                    course_number: str = PathParam(max_length=10),
+                    instructor: Optional[str] = Query(default=None, max_length=100)):
     """Per-term grade distribution and computed average GPA for a course, optionally
     filtered to one instructor. One row per (term, sched type, instructor) as recorded
     in grade_distributions - not collapsed across instructors, so trends per-instructor
@@ -963,7 +1060,8 @@ def get_grade_trend(subject: str, course_number: str, instructor: Optional[str] 
 
 
 @app.get("/courses/{subject}/{course_number}/prereqs")
-def get_prereqs(subject: str, course_number: str):
+def get_prereqs(subject: str = PathParam(max_length=12),
+                course_number: str = PathParam(max_length=10)):
     """Structured prerequisites for a course, parsed from its catalog
     description (see app/prereqs.py - best-effort), plus what taking it
     unlocks. `prerequisites` groups are AND-ed; the `options` within a group

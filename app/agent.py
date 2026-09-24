@@ -596,7 +596,19 @@ def friendly_error(exc: Exception) -> str:
                 "OPENAI_API_KEY / GEMINI_API_KEY in your .env file.")
     if "timeout" in low or "timed out" in low:
         return "The request to the LLM provider timed out. Try again in a moment."
-    return f"Something went wrong answering that question: {exc}"
+    # Unrecognised errors can carry driver/provider internals (hosts, roles,
+    # SQL): log them, never show them.
+    print(f"[agent] unexpected error: {exc!r}", flush=True)
+    return "Something went wrong answering that question. Try again shortly."
+
+
+def setup_unavailable(exc: Exception) -> str:
+    """The answer for a setup failure (no DB, no API key, agent build error).
+    The real reason is logged - it is what an operator needs, and it can
+    contain connection details - and the student gets a fixed line. Keeps
+    the "can't answer that right now" marker ask_log tags as `error`."""
+    print(f"[agent] setup failed: {exc!r}", flush=True)
+    return "Can't answer that right now. The assistant isn't available; try again later."
 
 
 # --- conversation history (windowed, so students can chat continuously) -------
@@ -673,7 +685,7 @@ def ask(question: str, verbose: bool = False, history=None, _model: str | None =
             from app.sql_pipeline import run_pipeline
             return run_pipeline(question, mode=_SQL_PIPELINE_MODE, history=history).answer
         except (FileNotFoundError, EnvironmentError, RuntimeError) as exc:
-            return f"Can't answer that right now: {exc}"
+            return setup_unavailable(exc)
         except Exception as exc:  # noqa: BLE001 - mirror the fallback path below
             return friendly_error(exc)
 
@@ -682,7 +694,7 @@ def ask(question: str, verbose: bool = False, history=None, _model: str | None =
     except (FileNotFoundError, EnvironmentError, RuntimeError) as exc:
         # Surface setup problems as a plain answer string rather than raising,
         # so callers (CLI, FastAPI route) always get something displayable.
-        return f"Can't answer that right now: {exc}"
+        return setup_unavailable(exc)
 
     if _sections_empty():
         return "The database exists but has no rows yet. Run scraper.py first, then ask again."
@@ -726,7 +738,7 @@ async def astream_answer(question: str, history=None, _model: str | None = None)
     try:
         agent = build_agent(streaming=True, model=_model)
     except (FileNotFoundError, EnvironmentError, RuntimeError) as exc:
-        yield "done", f"Can't answer that right now: {exc}"
+        yield "done", setup_unavailable(exc)
         return
 
     if _sections_empty():

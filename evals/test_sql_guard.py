@@ -167,6 +167,7 @@ check("explicit opt-out allows the owner role",
       ro_url(DATABASE_URL="rw", RENDER="true", ALLOW_RW_AGENT_DB="1") == "rw")
 check("local dev falls back to DATABASE_URL", ro_url(DATABASE_URL="rw") == "rw")
 check("no URL -> SQLite", ro_url() is None)
+check("RO URL alone doesn't switch SQLite mode to Postgres", ro_url(DATABASE_URL_RO="ro") is None)
 for k, v in saved.items():
     os.environ.pop(k, None)
     if v is not None:

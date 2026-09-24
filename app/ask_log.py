@@ -17,10 +17,15 @@ Table `ask_log`:
     global_limited - blocked before the LLM by the shared daily cap
     too_long       - blocked before the LLM by the length cap
     error          - the agent or LLM provider errored (includes quota)
+    pending        - reserved, LLM call in flight (see reserve()/finish());
+                     rewritten to one of the above when the call ends
 
-Only `answered` and `refused` count toward the rate limit - both mean an LLM
-call was actually spent. `error` doesn't, so a provider outage never locks
-users out; `too_long` / `rate_limited` don't, since no call was made.
+`answered`, `refused` and `pending` count toward the rate limits - they mean
+an LLM call was (or is being) spent. Each /ask reserves its `pending` row
+before the LLM runs and the limit check counts rows in reservation order,
+so a burst of parallel requests can't all pass on the same stale count.
+`error` doesn't count, so a provider outage never locks users out;
+`too_long` / `rate_limited` don't, since no call was made.
 
 Read-side aggregates for the admin dashboard (all computed on demand, no
 counter table): `unique_clients()` (distinct IPs, optional trailing window),
@@ -112,57 +117,97 @@ def classify_answer(answer: str) -> str:
     return "answered"
 
 
-def over_limit(conn: db.Connection, client_ip: str) -> tuple[bool, str]:
+# Outcomes that spend (or, for `pending`, are about to spend) an LLM call and
+# so count toward every limit. `pending` is the slot reserve() claims before
+# the LLM runs; finish() rewrites it to the real outcome afterwards.
+_SPENDING = "('answered', 'refused', 'pending')"
+
+
+def _spent(conn: db.Connection, since: timedelta, client_ip: "str | None" = None,
+           upto_id: "int | None" = None) -> int:
+    """LLM-spending rows in the trailing `since`, optionally for one IP, and
+    optionally only rows up to and including `upto_id` - i.e. the calls that
+    reserved a slot no later than that row did. Cutoffs are computed in Python
+    so the query stays portable across SQLite and Postgres."""
+    cutoff = (datetime.now(timezone.utc) - since).isoformat(timespec="seconds")
+    sql = f"SELECT COUNT(*) AS n FROM ask_log WHERE ts >= ? AND outcome IN {_SPENDING}"
+    params: list = [cutoff]
+    if client_ip is not None:
+        sql += " AND client_ip = ?"
+        params.append(client_ip)
+    if upto_id is not None:
+        sql += " AND id <= ?"
+        params.append(upto_id)
+    row = conn.execute(sql, params).fetchone()
+    return int(row["n"]) if row else 0
+
+
+def over_limit(conn: db.Connection, client_ip: str,
+               reserved_id: "int | None" = None) -> tuple[bool, str]:
     """(blocked, scope). Counts this IP's LLM-spending attempts (answered +
-    refused) in the trailing hour and day. Cutoffs are computed in Python so
-    the query stays portable across SQLite and Postgres."""
+    refused + pending) in the trailing hour and day.
+
+    With `reserved_id` (the caller's own pending row, see reserve()), only
+    rows reserved up to and including it count, and the limit is exceeded
+    once that count passes the cap - so of N simultaneous requests exactly
+    the first cap-many get through, instead of all N reading the same
+    pre-insert count."""
     if not client_ip or client_ip == "unknown":
         return False, ""
-    now = datetime.now(timezone.utc)
-
-    def count_since(delta: timedelta) -> int:
-        cutoff = (now - delta).isoformat(timespec="seconds")
-        row = conn.execute(
-            "SELECT COUNT(*) AS n FROM ask_log "
-            "WHERE client_ip = ? AND ts >= ? AND outcome IN ('answered', 'refused')",
-            (client_ip, cutoff),
-        ).fetchone()
-        return int(row["n"]) if row else 0
-
-    if count_since(timedelta(hours=1)) >= RATE_PER_HOUR:
-        return True, "hour"
-    if count_since(timedelta(days=1)) >= RATE_PER_DAY:
-        return True, "day"
+    for scope, delta, cap in (("hour", timedelta(hours=1), RATE_PER_HOUR),
+                              ("day", timedelta(days=1), RATE_PER_DAY)):
+        n = _spent(conn, delta, client_ip, reserved_id)
+        if (n > cap) if reserved_id is not None else (n >= cap):
+            return True, scope
     return False, ""
 
 
-def global_over_limit(conn: db.Connection) -> bool:
+def global_over_limit(conn: db.Connection, reserved_id: "int | None" = None) -> bool:
     """True once the whole app has spent ASK_GLOBAL_PER_DAY LLM calls in the
-    trailing 24h (answered + refused). Unlike over_limit() this keys on
-    nothing client-controlled, so it holds even against X-Forwarded-For
-    spoofing - it's the actual protection for the provider's daily budget."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(timespec="seconds")
-    row = conn.execute(
-        "SELECT COUNT(*) AS n FROM ask_log "
-        "WHERE ts >= ? AND outcome IN ('answered', 'refused')",
-        (cutoff,),
-    ).fetchone()
-    return (int(row["n"]) if row else 0) >= GLOBAL_PER_DAY
+    trailing 24h (answered + refused + pending). Unlike over_limit() this keys
+    on nothing client-controlled, so it holds even against X-Forwarded-For
+    spoofing - it's the actual protection for the provider's daily budget.
+    `reserved_id` works as in over_limit()."""
+    n = _spent(conn, timedelta(days=1), upto_id=reserved_id)
+    return n > GLOBAL_PER_DAY if reserved_id is not None else n >= GLOBAL_PER_DAY
 
 
 def record(conn: db.Connection, client_ip: str, question: str, outcome: str,
+           answer: "str | None" = None, latency_ms: "int | None" = None) -> int:
+    """Insert one row (committed immediately, so concurrent requests see it)
+    and return its id."""
+    params = (
+        datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        client_ip,
+        (question or "")[:1000],
+        outcome,
+        (answer or "")[:500] or None,
+        latency_ms,
+    )
+    sql = ("INSERT INTO ask_log (ts, client_ip, question, outcome, answer_preview, latency_ms) "
+           "VALUES (?, ?, ?, ?, ?, ?)")
+    if conn.backend == "postgres":
+        row_id = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
+    else:
+        row_id = conn.execute(sql, params).lastrowid
+    conn.commit()
+    return int(row_id)
+
+
+def reserve(conn: db.Connection, client_ip: str, question: str) -> int:
+    """Claim a `pending` slot before calling the LLM. The row counts toward
+    every limit from the moment it's committed, so the check-then-spend race
+    (N parallel requests all reading the same count) is closed. Always pair
+    with finish()."""
+    return record(conn, client_ip, question, "pending")
+
+
+def finish(conn: db.Connection, row_id: int, outcome: str,
            answer: "str | None" = None, latency_ms: "int | None" = None) -> None:
+    """Rewrite a reserve()d row with the real outcome."""
     conn.execute(
-        "INSERT INTO ask_log (ts, client_ip, question, outcome, answer_preview, latency_ms) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (
-            datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            client_ip,
-            (question or "")[:1000],
-            outcome,
-            (answer or "")[:500] or None,
-            latency_ms,
-        ),
+        "UPDATE ask_log SET outcome = ?, answer_preview = ?, latency_ms = ? WHERE id = ?",
+        (outcome, (answer or "")[:500] or None, latency_ms, row_id),
     )
     conn.commit()
 
