@@ -64,7 +64,10 @@ class Connection:
         if self.backend == "postgres":
             import psycopg2.extras
             cur = self._raw.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-            cur.execute(_translate(query), params)
+            # No params -> pass None, not (): psycopg2 treats every '%' as a
+            # placeholder whenever an args sequence is given, even an empty
+            # one, so a parameterless "LIKE 'CS%'" would raise IndexError.
+            cur.execute(_translate(query), params if params else None)
         else:
             cur = self._raw.execute(query, params)
         return cur

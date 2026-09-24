@@ -21,7 +21,7 @@ answer-formatting rules, and there is no query left to keep terse.
 import json
 from typing import NamedTuple
 
-from app.agent import SYSTEM_CONTEXT
+from app.agent import render_system_context
 from app.sql_pipeline._llm import ask_text, clean_sql, loads_lenient
 from app.sql_pipeline.schema_text import system_context
 
@@ -139,6 +139,6 @@ def synthesize(llm, question: str, sql: str, rows: list[dict]) -> str:
     truncated = f", showing first {_MAX_ROWS_TO_LLM}" if len(rows) > _MAX_ROWS_TO_LLM else ""
     rows_text = json.dumps(shown, default=str, indent=2) if shown else "(no rows)"
     return ask_text(llm, _SYNTH_PROMPT.format(
-        system=SYSTEM_CONTEXT, question=question, sql=sql,
+        system=render_system_context(), question=question, sql=sql,
         n=len(rows), truncated=truncated, rows=rows_text,
     )).strip()

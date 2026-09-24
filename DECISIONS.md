@@ -2941,3 +2941,212 @@ cache header.
 
 Sources: developer.chrome.com/docs/web-platform/view-transitions/cross-document,
 css-tricks.com/cross-document-view-transitions-part-1, MDN View Transition API.
+
+---
+
+## LLM-written SQL is parsed, allowlisted and read-only (2026-09-23)
+
+A security review found two high-severity gaps in how model-written SQL runs.
+The agent fell back to the owner role (`DATABASE_URL`) whenever
+`DATABASE_URL_RO` was unset, and LangChain's `include_tables` only limits which
+tables the model is *shown*: `sql_db_query` ran whatever it wrote, and psycopg2
+accepts stacked statements. Even the old read-only role recipe granted `SELECT
+ON ALL TABLES`, which includes `ask_log` / `answer_feedback` / `site_feedback`
+(other users' IPs and questions). Separately, the opt-in SQL pipeline used the
+owner connection and a `startswith("select"/"with")` check that a
+data-modifying CTE (`WITH d AS (DELETE ... RETURNING *) SELECT ...`) passes.
+
+Now three independent layers, none relying on another. (1) The prompt. (2)
+`app/sql_guard.py`: sqlglot parses every statement - exactly one, a query
+root, no write/DDL/session node anywhere in the tree (catches the CTE, `SELECT
+INTO`, `FOR UPDATE`), tables limited to `INCLUDED_TABLES`, a small denylist of
+functions (`pg_sleep`, `set_config`, `query_to_xml`, ...). Both answer paths use
+it. Every statement also runs in a `READ ONLY` transaction with `SET LOCAL
+statement_timeout` (8 s, `SQL_STATEMENT_TIMEOUT_MS`) - transaction-scoped on
+purpose so it survives Neon's transaction-mode pooler. (3) The `app_ro` role,
+now granted SELECT on the seven catalog tables only, with
+`default_transaction_read_only` and a timeout (recipe in DEPLOYMENT.md 3.5). On
+Render a missing `DATABASE_URL_RO` now fails closed ("can't answer right now")
+unless `ALLOW_RW_AGENT_DB` is set.
+
+Rejected: prefix/keyword checks (the CTE bypass is exactly what they miss) and
+relying on the role alone (a misconfigured role would silently reopen
+everything). Cost: a query sqlglot can't parse is refused, not run - the model
+gets the reason and retries. None of the 20 gold eval queries is rejected.
+Verified on Neon: writes fail with `ReadOnlySqlTransaction`, `ask_log` is
+refused, normal questions answer. `evals/test_sql_guard.py`.
+
+Incident while setting it up: the `DATABASE_URL_RO` value (local `.env` and
+Render) had `token_urlsafe` pasted onto the end, which broke the connection.
+Fixed in both places; the Render value was corrected with a script that only
+trimmed that suffix and was checked by hash against the working local value.
+A first attempt with keystrokes edited the middle of the wrapped field and was
+discarded unsaved.
+
+---
+
+## Request guards: rate-limit race, concurrency ceiling, scrubbed errors, input bounds (2026-09-24)
+
+Four medium findings, fixed together.
+
+- **Parallel requests beat the caps.** `/ask` checked `ask_log` counts but only
+  wrote its row after the LLM finished, so N simultaneous requests all read
+  the same count. Each call now reserves a `pending` row first and the caps
+  count rows in reservation order (`id <= own id`, threshold `>`), so exactly
+  the first cap-many pass. `pending` counts toward every limit, and a crashed
+  request's row stays `pending` - the conservative direction.
+- **Concurrency ceiling.** `ASK_MAX_CONCURRENT` (default 4): past it a request
+  gets an immediate 503 "busy" instead of pinning another worker for tens of
+  seconds. Permits are released on every exit path, including a stream the
+  client abandons. Set to **2 on Render**: with 4 in flight on the free
+  instance answers took 59-150 s. At 2 they still took 31-56 s, so the ceiling
+  isn't the whole latency story (see the startup review below).
+- **Error text.** DB-open failures, unrecognised agent errors, setup failures
+  and the SQL pipeline's failure message no longer echo exception text (hosts,
+  roles, SQL); it's logged server-side.
+- **Input bounds.** `/meetings` takes at most 50 CRNs (the conflict check's
+  cap) and de-dupes them; year, semester and string lengths are bounded on the
+  public read routes (422, not a huge IN list or a driver error).
+  `/ask/feedback` caps new rows per IP (50/day) and globally (2,000/day);
+  re-votes still work.
+
+Found along the way: `readonly_database_url()` returned `DATABASE_URL_RO` even
+in SQLite mode, so a test sent a `DELETE` to Neon as `app_ro` (refused by the
+read-only role, nothing changed). It now returns None unless `DATABASE_URL` is
+set. `evals/test_request_guards.py`.
+
+---
+
+## Strict script CSP, safer links, header-only admin token, pinned deps, body cap (2026-09-24)
+
+Low-severity findings. L1 (per-IP key uses the spoofable leftmost
+X-Forwarded-For) was left as is by the owner's choice; the shared daily cap
+doesn't depend on it.
+
+- **CSP `script-src 'self'`.** Every page's inline `<script>` moved
+  byte-for-byte into `static/<page>-page.js` at the same spot (classic,
+  synchronous - order and globals unchanged), the theme bootstrap into
+  `theme-init.js` (still synchronous in `<head>`, so no theme flash). Checked
+  in a real browser on all 8 pages, locally and in production, including an
+  injected inline script being blocked with a `script-src-elem` violation. A
+  test fails if a page gains an inline script again. Styles keep
+  `'unsafe-inline'`.
+- **Links.** `md.js` no longer renders `//host` or `/\host` (browsers treat both
+  as another site); `citations.js` percent-encodes DB-sourced path segments and
+  attribute-escapes hrefs.
+- **Admin token** is accepted only in `X-Admin-Token`, not `?token=` (URLs land
+  in access logs and history).
+- **Pinned dependencies.** `requirements.in` holds the direct deps;
+  `requirements.txt` is a hash-checked lock. Render turned out to build with
+  **Python 3.14** (from `cp314` wheels in its log), not the local 3.13, so the
+  lock is compiled for 3.14 and pinned to exactly what production had
+  installed - deploying it changed no versions. `pip-audit`: no known
+  vulnerabilities. The local venv still has older versions.
+- **Body size.** FastAPI read any POST body fully into memory before field
+  checks (a 10.5 MB feedback body was accepted). A pure-ASGI guard returns 413
+  above `MAX_BODY_BYTES` (256 KB) - for a declared length up front, for a
+  chunked body after reading at most that much. The largest real body is a few
+  KB.
+
+Render deploys for this service are manual (every entry in its history is
+"Manual"); a push alone doesn't ship.
+
+---
+
+## Startup review: where cold-start time goes (2026-09-24)
+
+A new read-only agent, `.claude/agents/startup-critic.md`, measured startup
+(local Windows, Python 3.13 - relative numbers; Render's shared CPU is
+slower). Time to first 200: 0.56-0.59 s on SQLite, 1.98-2.22 s on Neon. The
+two startup hooks are almost all of the difference: `embeddings.warmup()`
+(fastembed import + ONNX model, ~0.65 s warm, ~2.2 s cold disk, +146 MB RSS)
+and `_ensure_app_tables()` (a fresh Neon TLS connection and 12 DDL statements
+with 4 commits, ~0.67 s). With both off the critical path, Neon's first 200
+matched SQLite (~0.6 s). Other measured costs: a fresh psycopg2 connection per
+request (~170 ms each against Neon), new Groq clients built on every `/ask`
+(~124 ms per SSL context, three per streaming request), `import app.agent`
+~0.56 s on first question, and `app/sync_requests.py` importing the scraper
+(and `requests`/`tqdm`) at startup for CLI-only code. `.claude/` is 74% of the
+repo checkout but never loads at runtime.
+
+Not acted on yet - recorded so the next change starts from these numbers.
+Biggest single win identified: warmup in a background thread plus table
+creation moved to the build step (~1.4 s off every cold start).
+
+
+---
+
+## SYSTEM_CONTEXT rewritten and measured (2026-09-24)
+
+A review of the agent prompt against how LangChain assembles it, the live Neon
+data and `qa_log.txt` found problems that made answers wrong or slow:
+
+1. **A hidden contradiction.** With no `suffix`, `create_sql_agent`
+   (tool-calling) inserts a pre-filled *assistant* turn: "I should look at the
+   tables in the database... then query the schema". The prompt says the
+   opposite, and the model saw itself committed to extra tool round-trips.
+   Now `suffix=_AGENT_SUFFIX`, which agrees with the prompt (it must be
+   non-empty - an empty string falls back to the default).
+2. **Time-of-day answers were silently wrong.** The prompt said start_time looks
+   like '10:00 AM'; Neon mixes '09:00AM' and '12:00 PM' (plus 'ARRANGED'), and
+   neither sorts as text. "CS fall 2026 sections starting at or after 10 AM":
+   the text comparison the model writes gives 263, the right answer is 334.
+   The prompt now gives a minutes-after-midnight expression that works
+   unchanged on Postgres and SQLite (checked: 334 on both, all 79 distinct
+   times in range). Groq's gpt-oss-120b used it and answered 334.
+3. **No SQL dialect.** LangChain `.format()`s the prefix with `{dialect}`, but
+   the prompt never used it. It now says `SQL dialect: {dialect}`. The SQL
+   pipeline gets the same text via `render_system_context()`.
+4. **Hardcoded, drifting facts** ("currently fall 2026" as the unpublished
+   term). Replaced by a DATA NOTES block built from the data at startup: the
+   current year, terms newest-first with the latest named, which terms carry
+   only 'A'/'P' codes (with the open-seats rule attached to that term name -
+   the model didn't reliably cross-reference it otherwise), and which tables
+   are empty (grade_distributions and teachers_ranked_excellent are, on
+   Neon). Querying an empty table once ran a question into the iteration cap.
+5. **Unrecognisable refusals.** The model declined out-of-scope questions in
+   its own words ("I'm unable to provide...", "I can only provide
+   information about..."), which neither `ask_log` nor the eval recognised -
+   so they were logged `answered` and counted against the user's rate limit.
+   Declines now begin with one fixed sentence; missing data with another.
+   Those old phrasings were also added to `ask_log`'s markers.
+6. **A rule conflict** that produced the long duplicated section tables in
+   `qa_log.txt`: "course-level questions need DISTINCT" vs "for every course
+   listed include crn and instructor". Now: course questions get one line per
+   course; CRNs and instructors only for section/time/who-teaches questions.
+7. Tool results are declared data, never instructions (indirect injection).
+   Structure is now purpose-ordered: scope, how to query, tables, how to
+   answer, data notes.
+
+**Evaluation.** `evals/run.py --arms prod --db env` (the live agent path, on
+Neon), 29 questions, `gpt-4o-mini` via `--provider openai` - Groq's free
+200K-token daily budget couldn't absorb several full runs without taking the
+live assistant offline. The old prompt was run twice to measure noise; its
+two runs differed by 7-18 points, so single runs weren't trusted.
+
+| Metric | Old (avg of 2) | New (final) |
+|---|---|---|
+| Answer-OK overall | 62.1% | 89.7% |
+| Result match, loose | 73.5% | 94.1% |
+| Result match, strict | 50.0% | 64.7% |
+| Out-of-scope refusal (recognised) | 0% | 100% |
+| No-data handled | 81.3% | 87.5% |
+
+The first draft regressed (answer-OK 62.1%, and q27 listed 'A' sections as
+"open"). Causes, all fixed: rules that shape the SQL had been moved into the
+answer-style section, where the model doesn't apply them while writing the
+query ("Which instructor... MUST include instructor IS NOT NULL" works as a
+question-triggered query rule, not as a column note); the open-seats rule was
+separated from the term it applies to; and it was then too broad (it blocked a
+legitimate status *breakdown*). Size: about 2,217 tokens rendered, vs about
+2,625 before (the first draft was 27% smaller; the regression fixes added some
+back). Remaining misses (q03/q09/q10/q25/q26-style set-match cases) also fail
+on the old prompt.
+
+**Also found: parameterless `LIKE '%...'` crashed on Postgres.**
+`db.Connection.execute` passed an empty tuple to psycopg2, which then treats
+every `%` as a placeholder. That broke the SQL pipeline's executor and the
+eval's gold queries on Neon (3 of them); the main agent (SQLAlchemy) was
+unaffected. Now it passes None when there are no params. The baselines above
+were re-scored with the fix (`--rescore`, no LLM calls) so both prompts were
+scored identically.

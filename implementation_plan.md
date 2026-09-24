@@ -316,7 +316,7 @@ Suggested order: 3 and 3b first (they decide whether the assistant fixes hold an
 - **Done when:** three consecutive multi-step questions complete in under 30 s
   each on Groq with no 429, or the chosen failover is in place.
 
-### 4. Evals run against the wrong database by default — `todo`
+### 4. Evals run against the wrong database by default — `partly done 2026-09-24`
 - **Problem:** `evals/run.py` defaults to `--db sqlite` (local `data/courses.db`,
   14,714 sections) while the live app reads Neon (19,848 sections, different
   fall-2026 data). Numbers from the default run do not describe what students
@@ -329,8 +329,13 @@ Suggested order: 3 and 3b first (they decide whether the assistant fixes hold an
   than rewriting the gold queries.
 - **Done when:** the full run completes on Neon and its summary names the
   database.
+- **2026-09-24:** the `%` problem is fixed at the source (`db.Connection.execute`
+  now passes no params instead of an empty tuple), so gold SQL runs unchanged on
+  Neon. The full 29-row set has been run on Neon several times with `--db env`
+  (see the SYSTEM_CONTEXT entry in `DECISIONS.md`). Still open: making `env`
+  the default and naming the database in the summary.
 
-### 5. Malformed instructor links and ignored tool rules — `todo`
+### 5. Malformed instructor links and ignored tool rules — `partly done 2026-09-24`
 - **Problem:** the model sometimes writes `https://instructor.html?name=...`
   instead of `/instructor.html?name=...` (broken link), and sometimes calls
   `sql_db_list_tables` / `sql_db_schema` despite the prompt saying not to,
@@ -342,8 +347,12 @@ Suggested order: 3 and 3b first (they decide whether the assistant fixes hold an
   the site-relative form, with a unit test in `test_agent_guards.py`.
 - **Done when:** a 10-question sample never shows those tool calls, and the
   link test passes.
+- **2026-09-24:** found the likely cause of the ignored tool rule: LangChain's
+  default `suffix` pre-filled an assistant turn saying it would list tables and
+  read the schema. `build_agent()` now passes a suffix that agrees with the
+  prompt. (a) removing the tools and (b) the link post-processor are still open.
 
-### 6. Long, noisy table answers ("No 8ams") — `todo`
+### 6. Long, noisy table answers ("No 8ams") — `partly done 2026-09-24`
 - **Problem:** the late-start question returns about 176 raw meeting rows with
   repeated courses and CRN "N/A" (it queried `meetings` without joining
   `sections`). Correct but unhelpful.
@@ -353,6 +362,10 @@ Suggested order: 3 and 3b first (they decide whether the assistant fixes hold an
   first ~15 with "N more". Add a gold row for it. Optionally reword the chip
   once the answer is tidy.
 - **Done when:** the chip's answer fits on one screen and has CRNs.
+- **2026-09-24:** the prompt now separates course questions (one line per
+  course) from section questions, and gives a correct time-of-day expression
+  (the old text comparison undercounted: 263 vs 334 for CS >= 10 AM). The chip's
+  own answer hasn't been re-checked on screen yet, and there's no gold row.
 
 ### 7. Verify the `P` status label and the "only Tue/Thu" meaning — `blocked` on a data sample
 - **Problem:** `P` is labelled "Pending" in the UI and prompt by inference from
@@ -437,3 +450,35 @@ Suggested order: 3 and 3b first (they decide whether the assistant fixes hold an
 - Candidates: `openai/gpt-oss-20b`, `qwen/qwen3.8-27b`. Note: prod, dev and evals share one Groq key, so eval runs eat production budget.
 - Then: 429 failover from 3b, and trimming `SYSTEM_CONTEXT` (about 2,550 tokens, sent every step). Decide later.
 - **2026-09-20 update:** 429 failover to `GROQ_FALLBACK_MODEL` (default qwen/qwen3.8-27b) is implemented (see `DECISIONS.md`); still open: measure qwen's per-minute limit and its full-set accuracy.
+
+---
+
+## Status update (2026-09-24)
+
+Done this session (reasoning in `DECISIONS.md`, entries dated 2026-09-23/24):
+security review and fixes (read-only SQL guard and role, request guards,
+strict script CSP, header-only admin token, body size cap, pinned and audited
+dependencies), all deployed to Render and verified in production;
+`ASK_MAX_CONCURRENT=2` set on Render; SYSTEM_CONTEXT rewritten and evaluated
+(answer-OK 62.1% -> 89.7% on Neon); the `%`-in-parameterless-SQL bug fixed;
+a `startup-critic` agent added and run. Item 3c's "trim SYSTEM_CONTEXT" is done.
+
+### 14. Cut cold-start time — `todo`, 2026-09-24
+- From the startup review: move `embeddings.warmup()` to a background thread
+  and table creation to the build step (~1.4 s off every cold start on Neon);
+  then pool Neon connections (~170 ms per request), cache the Groq clients,
+  and import the scraper lazily in `sync_requests.py`.
+- **Done when:** time to first 200 on Neon is within ~0.1 s of SQLite and the
+  first RAG question after a cold start still works.
+
+### 15. Sync the local venv to the production pins — `todo`, 2026-09-24
+- Production builds on Python 3.14 with `requirements.txt`; the local venv is
+  3.13 with older versions of several packages (e.g. langchain 1.3.14 vs
+  1.4.2), so local test results aren't exactly what's live.
+
+### 16. Record the 2026-09-23/24 remediation in `security_findings.md` — `todo`
+- One table per run, as after the 2026-08-31 red-team run.
+
+### 17. Per-IP key uses the spoofable leftmost X-Forwarded-For (L1) — `closed` (owner decision, 2026-09-24)
+- Left as is; the shared daily cap doesn't depend on it.
+

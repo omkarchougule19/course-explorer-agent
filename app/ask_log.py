@@ -73,6 +73,11 @@ _REFUSAL_MARKERS = (
     "not a general-purpose assistant",
     "don't have information about",
     "can only answer questions that can be answered",
+    # Phrasings models used before SYSTEM_CONTEXT fixed the refusal sentence
+    # (seen in the 2026-09-24 eval) - kept so they're still tagged `refused`.
+    "i can only provide information about",
+    "i'm unable to assist with",
+    "i'm unable to provide information on",
 )
 
 # Substrings agent.ask() uses when it returns a provider/setup problem as a

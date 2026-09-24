@@ -16,7 +16,7 @@ schema check + Repair loop have something real to catch. See evals/RESULTS.md.
 
 import os
 
-from app.agent import SYSTEM_CONTEXT
+from app.agent import render_system_context
 
 _TERSE = """
 UIUC course catalog data assistant. Answer ONLY from the tables below - you
@@ -51,4 +51,4 @@ def is_terse() -> bool:
 
 
 def system_context() -> str:
-    return _TERSE if is_terse() else SYSTEM_CONTEXT
+    return _TERSE if is_terse() else render_system_context()
