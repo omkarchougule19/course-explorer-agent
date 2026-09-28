@@ -425,7 +425,7 @@ course-explorer-agent/
 ├── static/                  # 8 pages + one script file per page + shared modules
 ├── evals/                   # 29-question eval set, harness, offline tests
 ├── docs/                    # handbook, architecture, this reference
-├── .claude/agents/          # qa, redteam, code-critic, startup-critic subagents
+├── .claude/agents/          # qa, redteam, code-critic, startup-critic, improvement-strategist
 ├── README.md                # short portfolio README
 ├── DECISIONS_v2.md          # decisions in force, by topic
 ├── implementation_plan_v2.md # what's left to do

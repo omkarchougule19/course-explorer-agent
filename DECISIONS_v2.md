@@ -555,8 +555,11 @@ the GitHub repository, whose account carries the operator's real name.
 - **Project subagents** in `.claude/agents/`: `course-agent-qa` (answer
   quality, strict no-retry rules after a retry loop once burned a day's
   budget), `course-app-redteam` (security, local throwaway instance only),
-  `code-critic` (read-only code review) and `startup-critic` (measures startup
-  cost, read-only, never spends LLM budget).
+  `code-critic` (read-only code review), `startup-critic` (measures startup
+  cost, read-only, never spends LLM budget) and `improvement-strategist`
+  (finds weak points across lighter / faster / better / more accurate, ranks
+  evidence-backed solutions against the plan, read-only, no LLM spend;
+  added 2026-09-28).
 
 **History.** Harness 2026-09-10; five rows added 2026-09-19; Neon and noise
 practice 2026-09-24; 2026-09-28: `--rescore` now honours `--db` (it had
