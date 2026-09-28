@@ -589,7 +589,7 @@ semantic question doesn't pay for it).
 
 ## 14. Documentation and process
 
-- **README** (`README_v2.md`) is a short portfolio piece; the long reference
+- **README** (`README.md`) is a short portfolio piece; the long reference
   is `docs/REFERENCE_v2.md`.
 - **Decision log and plan are kept current as work happens**, in the same
   commit as the change they describe. This file is the current state; the

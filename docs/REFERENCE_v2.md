@@ -1,5 +1,5 @@
 > Full reference (v2), written from the code as of 2026-09-24. The short
-> version is [`../README_v2.md`](../README_v2.md). Links below are relative to
+> version is [`../README.md`](../README.md). Links below are relative to
 > this `docs/` folder.
 
 # Illini Course Copilot
@@ -426,7 +426,7 @@ course-explorer-agent/
 ├── evals/                   # 29-question eval set, harness, offline tests
 ├── docs/                    # handbook, architecture, this reference
 ├── .claude/agents/          # qa, redteam, code-critic, startup-critic subagents
-├── README_v2.md             # short portfolio README
+├── README.md                # short portfolio README
 ├── DECISIONS_v2.md          # decisions in force, by topic
 ├── implementation_plan_v2.md # what's left to do
 ├── DEPLOYMENT_v2.md         # Render + Neon runbook

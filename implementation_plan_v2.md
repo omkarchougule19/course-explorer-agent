@@ -182,9 +182,6 @@ slow answers), then 4-6 (answer quality you can prove), then 7-10 (data), then
 - Decide whether `qa_log.txt` stays tracked.
 - A right-edge fade on the phone chip row (the swipe hint relies on a clipped
   chip).
-- Refresh the README's eval table with the 2026-09-24 prompt numbers.
-- Decide whether to rename the `_v2` files back to their plain names (GitHub
-  only shows a file named `README.md` on the repo's front page).
 
 ---
 
@@ -205,3 +202,6 @@ slow answers), then 4-6 (answer quality you can prove), then 7-10 (data), then
   transitions and no-cache headers; the assistant fixes of 2026-09-19 (text
   course numbers, prerequisites recipe, result truncation, friendly stop).
 - **Tooling:** the `startup-critic` agent, whose findings are item 1.
+- **Docs, 2026-09-28:** every doc rewritten from the code as a `_v2` file
+  (the README renamed back to `README.md` so GitHub shows it); v1 files
+  removed (in git at `bbf824e`).
