@@ -11,6 +11,7 @@ Docs:
 """
 
 import hmac
+import importlib
 import json
 import os
 import threading
@@ -173,6 +174,26 @@ def _warmup_embeddings():
     if db.is_postgres():
         from app import embeddings
         embeddings.warmup()
+
+
+@app.on_event("startup")
+def _warm_agent_in_background():
+    """Import app.agent and build the streaming agent in a daemon thread, so
+    the first visitor after a cold start doesn't pay for it (~0.6-0.9 s of
+    imports plus ~1.5-3 s of schema reflection and client setup). It runs
+    beside the server, not before it, so startup isn't slower. Postgres only,
+    like the embeddings warm-up; a failure (e.g. DATABASE_URL_RO missing on
+    Render) is logged and the first question simply builds it instead."""
+    if not db.is_postgres():
+        return
+
+    def warm():
+        try:
+            importlib.import_module("app.agent").build_agent(streaming=True)
+        except Exception as exc:  # noqa: BLE001 - warm-up is best effort
+            print(f"[startup] agent warm-up skipped: {exc!r}", flush=True)
+
+    threading.Thread(target=warm, name="agent-warmup", daemon=True).start()
 
 
 @app.on_event("startup")
@@ -661,7 +682,11 @@ async def ask_agent_stream(payload: AskRequest, request: Request):
         if blocked:
             raise HTTPException(status_code=blocked[0], detail=blocked[1])
         try:
-            from app.agent import astream_answer
+            # Imported in a worker thread: the first import of app.agent pulls
+            # in LangChain (~0.6-0.9 s) and would otherwise freeze the event
+            # loop - every other request - while it loads.
+            agent_mod = await run_in_threadpool(importlib.import_module, "app.agent")
+            astream_answer = agent_mod.astream_answer
         except ImportError as exc:
             print(f"[ask/stream] agent import failed: {exc!r}", flush=True)
             await run_in_threadpool(_finish_ask, row_id, "error", "agent import failed")

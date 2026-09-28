@@ -17,9 +17,11 @@ Usage:
 Or import ask() directly, e.g. from a FastAPI route.
 """
 
+import asyncio
 import json
 import os
 import sys
+import threading
 from functools import lru_cache
 from pathlib import Path
 
@@ -271,7 +273,18 @@ def _fallback_model_for(exc: Exception) -> str | None:
     return _groq_fallback_model(_groq_primary_model())
 
 
+_LLMS: dict = {}
+
+
 def _build_llm(streaming: bool = False, model: str | None = None, fallback: bool = True):
+    """(client, provider name), built once per settings and reused - a client
+    holds no per-question state, and each new one costs a TLS context
+    (~0.25-0.5 s). See _new_llm for how the provider is chosen."""
+    return _cached(_LLMS, (streaming, model, fallback, _env_signature()),
+                   lambda: _new_llm(streaming=streaming, model=model, fallback=fallback))
+
+
+def _new_llm(streaming: bool = False, model: str | None = None, fallback: bool = True):
     """Pick the LLM provider. By default it's whichever API key is set, in
     order: GROQ_API_KEY (preferred - free; ~80-100 real questions/day in
     practice, bound by a 200K tokens/day cap more than the 1,000 requests/day
@@ -509,7 +522,66 @@ def render_system_context(dialect: str | None = None) -> str:
     return (SYSTEM_CONTEXT + _data_notes()).format(dialect=dialect)
 
 
+# --- per-process caches ---------------------------------------------------------
+# Building the agent used to happen on every question and cost 1.5-3.7 s before
+# the first LLM call: reflecting the schema (~1.1 s), creating 1-3 LLM clients
+# (each a fresh TLS context) and a new database engine. The agent executor, the
+# SQLDatabase and the LLM clients hold no per-question state (callbacks and
+# inputs arrive through invoke()/astream_events()), so they are built once per
+# process and reused. Keys include every env var that changes what gets built,
+# so swapping a key or model (tests, LLM_PROVIDER) never returns a stale object.
+_CACHE_LOCK = threading.RLock()
+_AGENTS: dict = {}
+_SQL_DBS: dict = {}
+
+_ENV_KEYS = ("LLM_PROVIDER", "GROQ_API_KEY", "GROQ_MODEL", "GROQ_FALLBACK_MODEL",
+             "OPENAI_API_KEY", "OPENAI_MODEL", "DATABASE_URL", "DATABASE_URL_RO")
+
+
+def _env_signature() -> tuple:
+    return tuple(os.environ.get(k, "") for k in _ENV_KEYS)
+
+
+def _cached(cache: dict, key, make):
+    """Return cache[key], building it with make() once. Double-checked under a
+    lock so two simultaneous first questions don't both pay for the build. A
+    failed build raises and isn't cached, so the next question retries."""
+    value = cache.get(key)
+    if value is None:
+        with _CACHE_LOCK:
+            value = cache.get(key)
+            if value is None:
+                value = make()
+                cache[key] = value
+    return value
+
+
+def _sql_database() -> "_CappedSQLDatabase":
+    """One read-only engine + reflected SQLDatabase per database URL."""
+    def make():
+        from sqlalchemy import create_engine
+        engine = sql_guard.readonly_engine(create_engine(_db_uri(), pool_pre_ping=True))
+        return _CappedSQLDatabase(engine, include_tables=INCLUDED_TABLES)
+    return _cached(_SQL_DBS, _db_uri(), make)
+
+
 def build_agent(verbose: bool = False, streaming: bool = False, model: str | None = None):
+    """The agent executor for these settings, built on first use and then
+    reused for the life of the process (see the cache notes above)."""
+    return _cached(_AGENTS, (verbose, streaming, model, _env_signature()),
+                   lambda: _new_agent(verbose=verbose, streaming=streaming, model=model))
+
+
+async def _prepare_agent_async(streaming: bool = True, model: str | None = None):
+    """Build (or fetch) the agent and run the empty-database check in a worker
+    thread, so a first build - and the database round trips - never block the
+    event loop. Before this, every streamed question froze the whole server
+    (one uvicorn worker) for ~1.4 s. Returns (agent, sections_empty)."""
+    agent = await asyncio.to_thread(build_agent, streaming=streaming, model=model)
+    return agent, await asyncio.to_thread(_sections_empty)
+
+
+def _new_agent(verbose: bool = False, streaming: bool = False, model: str | None = None):
     if not db.is_postgres() and not DB_PATH.exists():
         raise FileNotFoundError(f"No database at {DB_PATH}. Run scraper.py first.")
 
@@ -521,9 +593,7 @@ def build_agent(verbose: bool = False, streaming: bool = False, model: str | Non
         raise RuntimeError(f"Couldn't initialize the LLM client: {exc}") from exc
 
     try:
-        from sqlalchemy import create_engine
-        engine = sql_guard.readonly_engine(create_engine(_db_uri()))
-        sql_db = _CappedSQLDatabase(engine, include_tables=INCLUDED_TABLES)
+        sql_db = _sql_database()
     except Exception as exc:
         raise RuntimeError(f"Couldn't open the database: {exc}") from exc
 
@@ -670,16 +740,26 @@ def build_agent_input(question: str, history=None) -> str:
     )
 
 
+_SECTIONS_SEEN = False
+
+
 def _sections_empty() -> bool:
     """True only if the DB is reachable AND sections has zero rows. A
     connection failure returns False so the caller falls through to the agent,
-    which surfaces its own clearer error."""
+    which surfaces its own clearer error. Once rows have been seen the answer
+    can't change for this process (rows are never bulk-deleted), so it stops
+    querying - this used to cost a fresh connection (~150 ms) per question."""
+    global _SECTIONS_SEEN
+    if _SECTIONS_SEEN:
+        return False
     try:
         conn = db.get_connection()
         try:
             row = conn.execute("SELECT COUNT(*) as n FROM sections").fetchone()
         finally:
             conn.close()
+        if row["n"]:
+            _SECTIONS_SEEN = True
         return row["n"] == 0
     except Exception:
         return False
@@ -753,12 +833,12 @@ async def astream_answer(question: str, history=None, _model: str | None = None)
         return
 
     try:
-        agent = build_agent(streaming=True, model=_model)
+        agent, empty = await _prepare_agent_async(streaming=True, model=_model)
     except (FileNotFoundError, EnvironmentError, RuntimeError) as exc:
         yield "done", setup_unavailable(exc)
         return
 
-    if _sections_empty():
+    if empty:
         yield "done", "The database exists but has no rows yet. Run scraper.py first, then ask again."
         return
 

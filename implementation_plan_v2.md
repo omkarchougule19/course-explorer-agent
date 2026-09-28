@@ -192,7 +192,7 @@ because other docs cite them.
 - A right-edge fade on the phone chip row (the swipe hint relies on a clipped
   chip).
 
-### 18. Build the agent once, and off the event loop — `todo` (highest priority)
+### 18. Build the agent once, and off the event loop — `done 2026-09-28`
 - **Problem:** `build_agent()` runs for every question and costs 1.5-1.8 s
   before the first LLM call (measured locally against Neon): schema reflection
   in `_CappedSQLDatabase` 1.0-1.3 s, 1-3 Groq clients 0.25-0.5 s each, and
@@ -211,6 +211,17 @@ because other docs cite them.
   Groq question on both paths.
 - **Done when:** time to first token drops by ~1.5 s and pages stay responsive
   while a question starts.
+- **Done 2026-09-28.** `app/agent.py` caches the read-only engine and
+  reflected `SQLDatabase` (per database URL), the LLM clients and the agent
+  executors (per streaming/model/env settings, built under a lock);
+  `_sections_empty()` stops querying once it has seen rows; the streaming path
+  builds via `asyncio.to_thread`; `/ask/stream` imports `app.agent` in a worker
+  thread; a startup thread pre-builds the streaming agent (Postgres only).
+  Measured against Neon: `build_agent` 3.7 s / 1.7 s / 1.6 s per question →
+  2.9 s once, then 0 ms; the event loop froze 1.43 s per question → 17-20 ms.
+  End to end on a fresh local server: first question's first token 5.5 s →
+  1.6 s, the slowest concurrent `GET /api` 871 ms → 82 ms. Six new checks in
+  `evals/test_agent_guards.py`.
 
 ### 19. IS and STAT fall 2026 have no meeting times — `partly done 2026-09-28`
 - **Problem:** IS has 340 fall 2026 sections and 0 meeting rows, STAT 163 and

@@ -486,7 +486,7 @@ Calendar and the Schedule never call the LLM.
 |---|---|
 | `sync_requests --run` / `scraper` finds "no courses" for many departments in a row | The firewall soft-reject (the wall). Not a bug. Wait and re-run. |
 | `python app/scraper.py ...` fails with `ModuleNotFoundError: No module named 'app'` | Run scripts as modules from the project root: `python -m app.scraper ...`. |
-| First request after a deploy or idle spell is very slow | Render cold start, plus the app's startup (embedding model load, table checks). Later requests are fast. |
+| First request after a deploy or idle spell is very slow | Render cold start, plus the app's startup (embedding model load, table checks). The assistant itself is built in a background thread at startup; if the logs show `[startup] agent warm-up skipped`, the first question builds it instead (the logged reason says why, e.g. `DATABASE_URL_RO` missing). Later requests are fast. |
 | `/ask` says "Can't answer that right now. The assistant isn't available" | A setup problem, logged server-side with the real reason: most often `DATABASE_URL_RO` missing on Render (§3.5), a missing LLM key, or the database unreachable. Check the Render logs for `[agent] setup failed`. |
 | `/ask` returns 503 "busy" | `ASK_MAX_CONCURRENT` questions are already in flight. Expected under load; retry. |
 | `/ask` returns 413 | The request body is over `MAX_BODY_BYTES`. The site never sends that much. |

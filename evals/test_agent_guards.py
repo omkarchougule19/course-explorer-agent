@@ -83,5 +83,82 @@ check("kept rows still end on a whole tuple", big.split("\n")[0].endswith(")]"))
 small = db.run("SELECT a, b FROM t LIMIT 3")
 check("small result is untouched", "[Result truncated" not in small and small.count("row0") == 3)
 
+# 5. the agent is built once per process and never blocks the event loop
+import asyncio
+import time
+
+from app import db as appdb
+
+env_keys = ("DATABASE_URL", "DATABASE_URL_RO", "GROQ_API_KEY", "GROQ_MODEL", "LLM_PROVIDER")
+saved5 = {k: os.environ.get(k) for k in env_keys}
+saved_paths = (agent.DB_PATH, appdb.DB_PATH)
+cat = Path(tempfile.mkdtemp()) / "catalog.db"
+con = sqlite3.connect(cat)
+con.execute("CREATE TABLE sections (year INT, semester TEXT, subject TEXT, course_number TEXT, crn TEXT)")
+con.execute("INSERT INTO sections VALUES (2026, 'fall', 'CS', '225', '1')")
+for t in agent.INCLUDED_TABLES:  # SQLDatabase requires every included table to exist
+    if t != "sections":
+        con.execute(f"CREATE TABLE {t} (id INTEGER)")
+con.commit()
+con.close()
+for k in env_keys:
+    os.environ.pop(k, None)
+os.environ.update(DATABASE_URL="", DATABASE_URL_RO="", GROQ_API_KEY="k")  # fake key: no network on build
+agent.DB_PATH = appdb.DB_PATH = cat
+try:
+    a1, a2 = agent.build_agent(), agent.build_agent()
+    check("second build_agent() returns the cached agent", a1 is a2)
+    check("streaming and non-streaming agents are cached separately",
+          agent.build_agent(streaming=True) is not a1)
+    os.environ["GROQ_MODEL"] = "openai/gpt-oss-20b"
+    check("a different model setting builds a new agent", agent.build_agent() is not a1)
+    check("LLM clients are reused", agent._build_llm()[0] is agent._build_llm()[0])
+
+    agent._SECTIONS_SEEN = False
+    first = agent._sections_empty()
+    real_conn = appdb.get_connection
+    appdb.get_connection = lambda *a, **k: (_ for _ in ()).throw(AssertionError("queried again"))
+    try:
+        second = agent._sections_empty()
+    finally:
+        appdb.get_connection = real_conn
+    check("non-empty sections is remembered (no second query)", first is False and second is False)
+
+    real_build = agent.build_agent
+
+    def slow_build(**kw):
+        time.sleep(0.5)          # a first build, standing in for ~1.5 s of reflection
+        return object()
+
+    async def max_gap():
+        gaps, stop = [], asyncio.Event()
+
+        async def tick():
+            last = time.perf_counter()
+            while not stop.is_set():
+                await asyncio.sleep(0.01)
+                now = time.perf_counter()
+                gaps.append(now - last)
+                last = now
+
+        t = asyncio.create_task(tick())
+        await agent._prepare_agent_async(streaming=True)
+        stop.set()
+        await t
+        return max(gaps)
+
+    agent.build_agent = slow_build
+    try:
+        gap = asyncio.run(max_gap())
+    finally:
+        agent.build_agent = real_build
+    check(f"a slow build doesn't block the event loop (longest gap {gap * 1000:.0f} ms)", gap < 0.2)
+finally:
+    agent.DB_PATH, appdb.DB_PATH = saved_paths
+    for k, v in saved5.items():
+        os.environ.pop(k, None)
+        if v is not None:
+            os.environ[k] = v
+
 print(f"\n{'all checks passed' if not failures else str(len(failures)) + ' FAILED'}")
 raise SystemExit(1 if failures else 0)

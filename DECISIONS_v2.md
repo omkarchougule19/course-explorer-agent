@@ -246,6 +246,14 @@ courses cover X" questions. Answers stream to the browser.
   byte-identical ones (2026-09-28). A typical question is 2 calls of ~2,750
   input tokens, so the 8K tokens/minute limit, not the work, sets the pace
   when questions overlap (three in a row: 4.4 s, 28.8 s, 44.5 s).
+- **Built once per process, never on the event loop.** The agent executor,
+  the reflected `SQLDatabase`, the read-only engine and the LLM clients hold no
+  per-question state, so they're cached per settings (keys include every env
+  var that changes what gets built) instead of rebuilt per question, which cost
+  1.5-3.7 s. A startup thread pre-builds the streaming agent, and the
+  streaming route imports and builds in worker threads, so one uvicorn worker
+  never freezes while a question starts (it used to, for ~1.4 s). Rejected:
+  lazy schema reflection alone (still ~0.4 s per question).
 - **Bounded cost per question.** `max_iterations=6`; any single tool result is
   cut at `MAX_QUERY_RESULT_CHARS` (6,000) on a whole-row boundary with a note
   telling the model to narrow the query (an unbounded `SELECT` once returned
@@ -592,10 +600,14 @@ all the difference:
   and 4 commits, about 0.67 s.
 
 With both off the critical path, Neon's first response matched SQLite. Other
-costs found: a new connection per request (about 170 ms each on Neon), new
-Groq clients built on every question (about 124 ms per SSL context),
-`import app.agent` about 0.56 s on the first question, and the scraper
-imported at startup for CLI-only code. These are plan item 1.
+costs found: a new connection per request (about 170 ms each on Neon) and the
+scraper imported at startup for CLI-only code. These are plan item 1.
+
+**Done (2026-09-28):** the per-question agent build (1.5-3.7 s, including new
+Groq clients and `import app.agent`) is gone: it's built once, in the
+background at startup, and never on the event loop. A fresh server's first
+question now gets its first token in 1.6 s (was 5.5 s), and other requests
+stay under 100 ms meanwhile (was up to 871 ms). See plan item 18.
 
 **Accepted:** Render's own container spin-up after idle, which code can't
 shorten on the free tier; the eager model load (moved to startup so the first
