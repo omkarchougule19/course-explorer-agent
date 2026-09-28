@@ -212,7 +212,7 @@ because other docs cite them.
 - **Done when:** time to first token drops by ~1.5 s and pages stay responsive
   while a question starts.
 
-### 19. IS and STAT fall 2026 have no meeting times — `owner` (sync running)
+### 19. IS and STAT fall 2026 have no meeting times — `partly done 2026-09-28`
 - **Problem:** IS has 340 fall 2026 sections and 0 meeting rows, STAT 163 and
   0 (scraped 08-02/03, before meetings were parsed). Meeting-time questions
   return nothing, and the "No 8ams" / "Done by 5" / "No Fridays" filters let
@@ -222,6 +222,11 @@ because other docs cite them.
   that flags any subject-term with sections but no meetings.
 - **Done when:** fall 2026 sections without a meetings row drop to a handful,
   and the check exists.
+- **2026-09-28:** re-synced (`--run IS STAT`, no firewall wall hit). IS now
+  has 335 meeting rows for 342 sections, STAT 167 for 164; fall 2026 sections
+  without any meeting row dropped from ~503 to 14. On the live site, STAT's
+  "No 8ams" filter now drops exactly the 2 STAT 107 sections at 8:00 AM
+  (before: it passed all 163). Still open: the automatic check.
 
 ### 20. Tell the prompt that fall 2026 is partial — `todo`
 - **Problem:** DATA NOTES say "the latest is fall 2026", but 107 of 191
