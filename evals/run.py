@@ -127,23 +127,56 @@ def run_pipeline_arm(item: dict, mode: str) -> dict:
                    tokens=take_tokens())
 
 
+def _usage_capture():
+    """A LangChain callback that records provider-reported token usage for
+    every LLM call in a run: input, output, and input served from the
+    provider's prompt cache (Groq reports it as `cached_tokens`, which
+    langchain-groq maps to `input_token_details.cache_read`)."""
+    from langchain_core.callbacks import BaseCallbackHandler
+
+    class _Usage(BaseCallbackHandler):
+        def __init__(self):
+            self.calls: list[dict] = []
+
+        def on_llm_end(self, response, **kwargs):
+            for gens in response.generations:
+                for g in gens:
+                    um = getattr(getattr(g, "message", None), "usage_metadata", None) or {}
+                    if not um:
+                        continue
+                    details = um.get("input_token_details") or {}
+                    self.calls.append({"input": um.get("input_tokens", 0),
+                                       "output": um.get("output_tokens", 0),
+                                       "cached": details.get("cache_read") or 0})
+
+        def summary(self) -> dict:
+            total = lambda k: sum(c[k] for c in self.calls)
+            return {"input": total("input"), "output": total("output"),
+                    "cached": total("cached"), "calls": self.calls}
+
+    return _Usage()
+
+
 def run_prod_arm(item: dict) -> dict:
     from app.agent import build_agent, build_agent_input, friendly_error
     from app.citations import SQLCapture
     cap = SQLCapture()
+    usage = _usage_capture()
     t0 = time.monotonic()
     try:
         agent = build_agent()
         out = agent.invoke({"input": build_agent_input(item["question"])},
-                           config={"callbacks": [cap]})
+                           config={"callbacks": [cap, usage]})
         answer = out.get("output", str(out)) if isinstance(out, dict) else str(out)
     except Exception as exc:  # noqa: BLE001
         answer = friendly_error(exc)
+    u = usage.summary()
     return _record(
         "prod", answer, t0,
         final_sql=cap.queries[-1] if cap.queries else None,
         first_sql=cap.queries[0] if cap.queries else None,
         trace=[{"step": "sql_db_query", "sql": q} for q in cap.queries],
+        tokens=u["input"] + u["output"], usage=u,
     )
 
 
@@ -270,6 +303,13 @@ def aggregate(arm: str, recs: list[dict]) -> dict:
         "avg_repairs": mean([r["attempts"] for r in recs]),
         "total_tokens": sum(r.get("tokens") or 0 for r in recs),
         "avg_tokens": int(mean([r.get("tokens") or 0 for r in recs]) or 0),
+        # Prompt-cache hits (Groq reports them; OpenAI too, above 1,024-token
+        # prompts). Cached input tokens don't count toward Groq's rate limits.
+        "total_input_tokens": sum((r.get("usage") or {}).get("input", 0) for r in recs),
+        "total_cached_tokens": sum((r.get("usage") or {}).get("cached", 0) for r in recs),
+        "cache_hit_rate": (lambda i, c: round(c / i, 4) if i else None)(
+            sum((r.get("usage") or {}).get("input", 0) for r in recs),
+            sum((r.get("usage") or {}).get("cached", 0) for r in recs)),
     }
 
 
@@ -288,6 +328,8 @@ _METRIC_ROWS = [
     ("refusal_rate_out_of_scope", "   Refusal rate (out-of-scope)"),
     ("no_data_handled", "   'No data' handled correctly"),
     ("total_tokens", "   Total tokens (provider-reported)"),
+    ("total_cached_tokens", "   Cached input tokens"),
+    ("cache_hit_rate", "   Cache hit rate (cached / input)"),
 ]
 
 
@@ -357,7 +399,7 @@ def _catch_writeups(critic_recs: list[dict]) -> str:
 
 
 _RAW_KEYS = ("arm", "answer", "outcome", "final_sql", "first_sql", "attempts",
-             "exec_error", "rows", "trace", "latency_ms")
+             "exec_error", "rows", "trace", "latency_ms", "tokens", "usage")
 
 
 def _rescore(ts: str, use_sqlite: bool = True) -> int:

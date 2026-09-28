@@ -54,6 +54,12 @@ because other docs cite them.
 - **Done so far:** concurrency ceiling (2 on Render); 429 failover to qwen; the
   prompt rewrite (about 2,200 tokens rendered) with a suffix that no longer
   invites schema-discovery steps.
+- **Measured 2026-09-28:** a typical question is 2 LLM calls of ~2,750 input
+  tokens each (~5.8K per question). Three questions in a row took 4.4 s,
+  28.8 s and 44.5 s: the 8K tokens/minute limit, not the work, sets the pace
+  once more than one question arrives in a minute. Prompt caching doesn't
+  help (item 26), so cutting tokens per step (item 25's schema tools) or a
+  higher tier are the remaining levers.
 - **Plan:**
   1. Remove `sql_db_list_tables`, `sql_db_schema` and `sql_db_query_checker`
      from the agent's tools in `build_agent()` (the schema is in the prompt),
@@ -251,12 +257,10 @@ because other docs cite them.
   `text/event-stream`).
 - **Done when:** pages arrive compressed and `/ask/stream` still streams.
 
-### 23. Record tokens on the production eval arm — `todo`
-- **Problem:** `evals/run.py` hard-codes `tokens: 0` for the prod arm, so item
-  2's "measure tokens per step" can't be done.
-- **Plan:** add a usage-metadata callback next to `SQLCapture`; store input,
-  output and (for Groq) cached tokens.
-- **Done when:** a 2-question OpenAI run reports non-zero tokens.
+### 23. Record tokens on the production eval arm — `done 2026-09-28`
+- The prod arm now records input, output and cached tokens per LLM call
+  (`usage` in each record; `total_cached_tokens` and `cache_hit_rate` in the
+  summary), carried through `--rescore`.
 
 ### 24. One source for the current term — `todo`
 - **Problem:** the current term is hard-coded in four places (`app/terms.py`,
@@ -274,10 +278,17 @@ because other docs cite them.
   deadline, a follow-up with history, an unsynced subject, "what is X about"
   and "is X hard" (the last two are downvote patterns). Extends item 5.
 
-### 26. Groq prompt caching — `owner` (discussion open)
-- Groq caches `openai/gpt-oss-120b` prompts automatically and cached tokens
-  don't count toward rate limits. Whether we already get cache hits, and how
-  to keep the prompt cache-friendly, is being discussed (2026-09-28).
+### 26. Groq prompt caching — `closed 2026-09-28` (measured: no hits)
+- Groq documents automatic caching for `openai/gpt-oss-120b`, with cached
+  tokens exempt from rate limits. Measured on our free-tier key: **0 cached
+  tokens in 8 calls** - 6 agent calls over 3 questions (each question's second
+  call repeats the first call's ~2,750-token prefix; all three share the
+  system prompt) and 2 byte-identical direct API calls, whose raw `usage` had
+  no `prompt_tokens_details` at all and no faster prompt processing. The docs
+  say hits "are not guaranteed" and don't mention tiers.
+- **Decision:** don't plan around caching. The harness keeps recording
+  `cache_hit_rate`, so a change on Groq's side would show up in the next eval.
+  Keep the system prompt static anyway (it costs nothing).
 
 ---
 

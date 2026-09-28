@@ -240,6 +240,12 @@ courses cover X" questions. Answers stream to the browser.
   expansion use `with_fallbacks`. A stream only retries if no answer text has
   gone out yet. Exactly one retry. qwen's free-tier output limit is about 1,000
   tokens per minute, so it's a low-traffic safety net, not extra capacity.
+- **Prompt caching isn't relied on.** Groq documents automatic caching for
+  `gpt-oss-120b` (cached tokens exempt from rate limits), but on our
+  free-tier key it produced 0 cached tokens in 8 measured calls, including two
+  byte-identical ones (2026-09-28). A typical question is 2 calls of ~2,750
+  input tokens, so the 8K tokens/minute limit, not the work, sets the pace
+  when questions overlap (three in a row: 4.4 s, 28.8 s, 44.5 s).
 - **Bounded cost per question.** `max_iterations=6`; any single tool result is
   cut at `MAX_QUERY_RESULT_CHARS` (6,000) on a whole-row boundary with a note
   telling the model to narrow the query (an unbounded `SELECT` once returned
@@ -566,7 +572,8 @@ the GitHub repository, whose account carries the operator's real name.
 **History.** Harness 2026-09-10; five rows added 2026-09-19; Neon and noise
 practice 2026-09-24; 2026-09-28: `--rescore` now honours `--db` (it had
 always re-run SQL against the local snapshot) and every summary's `db` label
-reflects the database actually used (it was computed before `.env` loaded).
+reflects the database actually used (it was computed before `.env` loaded);
+the prod arm now records input, output and cached tokens per LLM call.
 The 2026-09-24 prompt comparison was re-scored on Neon for all three runs
 with identical numbers.
 
