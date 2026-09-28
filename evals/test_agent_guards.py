@@ -9,7 +9,8 @@ Offline checks (no LLM, no network) for the guards around the SQL agent:
    for a message a student can act on, and leaves real answers alone.
 2. That friendly message is tagged `error` by ask_log.classify_answer, so it
    does not count against a user's rate limit.
-3. _build_llm() picks Groq first, then OpenAI, then Gemini, by which key is set
+3. _build_llm() picks Groq first, then OpenAI, by which key is set; a Gemini
+   key alone is ignored (Gemini support was removed 2026-09-28)
    (no network: building a client does not call the provider).
 4. _CappedSQLDatabase cuts a huge query result down to a bounded size, keeps
    the row structure valid, and tells the model the result was truncated.
@@ -59,6 +60,7 @@ def provider_with(**keys):
 check("all keys set -> Groq first", provider_with(GROQ_API_KEY="x", OPENAI_API_KEY="x", GEMINI_API_KEY="x") == "Groq")
 check("no Groq key -> OpenAI second", provider_with(OPENAI_API_KEY="x", GEMINI_API_KEY="x") == "OpenAI")
 check("no keys -> clear error", provider_with() == "none")
+check("a Gemini key alone is ignored", provider_with(GEMINI_API_KEY="x") == "none")
 check("LLM_PROVIDER=openai overrides the order",
       provider_with(GROQ_API_KEY="x", OPENAI_API_KEY="x", LLM_PROVIDER="openai") == "OpenAI")
 for k, v in saved.items():

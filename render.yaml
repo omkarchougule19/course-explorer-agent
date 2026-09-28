@@ -35,13 +35,11 @@ services:
       - key: DATABASE_URL_RO
         sync: false
       # Required for the /ask assistant. Free key from console.groq.com.
-      # OPENAI_API_KEY / GEMINI_API_KEY are optional fallbacks, tried in that
-      # order only if GROQ_API_KEY is unset (see app/agent.py).
+      # OPENAI_API_KEY is an optional fallback, used only if GROQ_API_KEY is
+      # unset (see app/agent.py). Gemini support was removed 2026-09-28.
       - key: GROQ_API_KEY
         sync: false
       - key: OPENAI_API_KEY
-        sync: false
-      - key: GEMINI_API_KEY
         sync: false
       # Optional. Enables GET /admin/ask-log (recent assistant activity). The
       # endpoint 404s while this is unset. Use a long random string.

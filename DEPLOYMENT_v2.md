@@ -108,7 +108,7 @@ python -m app.sync_requests --list     # lists every department (191 today) with
 | `DATABASE_URL` | **yes** | Neon connection string (owner role). |
 | `DATABASE_URL_RO` | **yes** | The SELECT-only `app_ro` role for model-written SQL (§3.5). If it's missing on Render, the assistant answers "Can't answer that right now" rather than run model SQL as the owner. |
 | `GROQ_API_KEY` | **yes** (for `/ask`) | The assistant's LLM. |
-| `OPENAI_API_KEY` / `GEMINI_API_KEY` | no | Fallback providers, tried in that order when `GROQ_API_KEY` is unset (they cost money). |
+| `OPENAI_API_KEY` | no | Fallback provider, used only when `GROQ_API_KEY` is unset (costs money). |
 | `ADMIN_TOKEN` | no | Enables the admin dashboard and every `/admin/*` route; without it they always return 403. |
 | `ASK_MAX_CONCURRENT` | no (code default 4; **2 in production**) | Questions answered at once; past it, an immediate 503 "busy". |
 | `ASK_GLOBAL_PER_DAY` | no (default 250) | **Shared** daily cap across all clients: the real protection for the Groq budget. |
@@ -119,8 +119,8 @@ python -m app.sync_requests --list     # lists every department (191 today) with
 | `SITE_FEEDBACK_MAX_CHARS` / `SITE_FEEDBACK_PER_IP_DAY` | no (2000 / 5) | Feedback-box length and per-IP daily cap. |
 | `SQL_STATEMENT_TIMEOUT_MS` | no (8000) | Per-statement timeout for model-written SQL. |
 | `ALLOW_RW_AGENT_DB` | no | Temporary override: lets the assistant run without `DATABASE_URL_RO` on Render. The SQL guard still applies. |
-| `LLM_PROVIDER` | no | Force `groq`, `openai` or `gemini`. Unset = auto-detect in the order Groq, OpenAI, Gemini. Its own key must be set. |
-| `GROQ_MODEL` | no (`openai/gpt-oss-120b`) | Groq model. The daily cap is per model, so another model has its own budget on the same key. `OPENAI_MODEL` (`gpt-4o-mini`) / `GEMINI_MODEL` (`gemini-2.5-flash`) do the same. |
+| `LLM_PROVIDER` | no | Force `groq` or `openai`. Unset = auto-detect, Groq first. Its own key must be set. |
+| `GROQ_MODEL` | no (`openai/gpt-oss-120b`) | Groq model. The daily cap is per model, so another model has its own budget on the same key. `OPENAI_MODEL` (`gpt-4o-mini`) does the same. |
 | `GROQ_FALLBACK_MODEL` | no (`qwen/qwen3.8-27b`) | Retried once after a Groq 429 on the primary; `off` disables. |
 | `MAX_QUERY_RESULT_CHARS` | no (6000) | A single SQL result sent back to the model is cut here, with a note to narrow the query. |
 | `RAG_MULTIQUERY` / `RAG_SUBQUERIES` / `RAG_K_PER` / `RAG_K_RETURN` | no (on / 3 / 6 / 10) | Multi-query expansion and Reciprocal Rank Fusion for semantic search. `RAG_MULTIQUERY=0` falls back to a single query. |

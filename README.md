@@ -149,7 +149,7 @@ through the Generator → Critic → Repair loop in `app/sql_pipeline/`.
 | Model SQL parsed with `sqlglot`, read-only transaction, SELECT-only role | Three independent layers; a jailbreak can't write or read other users' data |
 | Live "data notes" appended to the prompt | Terms, unpublished registration and empty tables come from the data, so nothing drifts after a scrape |
 | Self-hosted embeddings (`bge-small` via fastembed) | No API key, no rate limit, same vectors everywhere |
-| Provider-agnostic LLM (Groq → OpenAI → Gemini) | Swapping providers is an env var, not a code change |
+| Provider-agnostic LLM (Groq → OpenAI) | Swapping providers is an env var, not a code change |
 | Failover to a second Groq model on a 429 | Daily caps are per model, so the backup has its own budget; one retry, no loops |
 | Multi-query expansion + Reciprocal Rank Fusion | Wider recall than one embedding; enough material for a real summary |
 | Reserved rate-limit slots, global daily cap, concurrency ceiling | Budget backstop that holds under parallel requests; findings in [`security_findings.md`](security_findings.md) |
@@ -165,8 +165,7 @@ uvicorn app.api:app --reload                        # http://127.0.0.1:8000
 ```
 
 Run scripts as modules from the project root (`python -m app.…`). The
-assistant needs one LLM key (`GROQ_API_KEY`, `OPENAI_API_KEY` or
-`GEMINI_API_KEY`). Offline tests, no key needed, for example
+assistant needs one LLM key (`GROQ_API_KEY` or `OPENAI_API_KEY`). Offline tests, no key needed, for example
 `python -m evals.test_sql_guard` and `python -m evals.test_request_guards`;
 all ten suites are listed in [`docs/REFERENCE_v2.md`](docs/REFERENCE_v2.md).
 

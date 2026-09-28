@@ -7,8 +7,8 @@ against the database (SQLite locally, Postgres/Neon in production - see
 app/db.py), and returns a natural language answer.
 
 LLM provider is chosen automatically from whichever API key is set, in this
-order: GROQ_API_KEY (recommended - free, highest daily quota), OPENAI_API_KEY,
-GEMINI_API_KEY. See DECISIONS_v2.md for why Groq is preferred.
+order: GROQ_API_KEY (recommended - free, highest daily quota), then
+OPENAI_API_KEY. See DECISIONS_v2.md for why Groq is preferred.
 
 Usage:
     python -m app.agent "Which CS courses have the most sections this fall?"
@@ -275,25 +275,27 @@ def _build_llm(streaming: bool = False, model: str | None = None, fallback: bool
     """Pick the LLM provider. By default it's whichever API key is set, in
     order: GROQ_API_KEY (preferred - free; ~80-100 real questions/day in
     practice, bound by a 200K tokens/day cap more than the 1,000 requests/day
-    figure - see DECISIONS_v2.md), then OPENAI_API_KEY, then GEMINI_API_KEY.
+    figure - see DECISIONS_v2.md), then OPENAI_API_KEY. (Gemini support was
+    removed 2026-09-28: no key was ever deployed, and its SDK stack was about
+    28 MB.)
 
-    Set LLM_PROVIDER (groq | gemini | openai) to force one regardless of which
-    other keys are present - e.g. LLM_PROVIDER=openai to fall back to OpenAI
-    while Groq's daily token budget is exhausted. Its own key must still be
-    set. Unset -> the auto-detect order above (Groq, then OpenAI, then Gemini).
+    Set LLM_PROVIDER (groq | openai) to force one regardless of which other
+    keys are present - e.g. LLM_PROVIDER=openai to fall back to OpenAI while
+    Groq's daily token budget is exhausted. Its own key must still be set.
+    Unset -> the auto-detect order above (Groq, then OpenAI).
 
     On Groq, a rate-limit error (429) on the primary model is retried on
     GROQ_FALLBACK_MODEL (default qwen/qwen3.8-27b; "off" disables it). `model`
     forces the Groq model name (used for that retry).
 
     The model within a provider is an env var too: GROQ_MODEL (default
-    openai/gpt-oss-120b), OPENAI_MODEL (gpt-4o-mini), GEMINI_MODEL
-    (gemini-2.5-flash). Groq's 200K tokens/day cap is per model, so pointing
+    openai/gpt-oss-120b) and OPENAI_MODEL (gpt-4o-mini). Groq's 200K
+    tokens/day cap is per model, so pointing
     GROQ_MODEL at another hosted model (e.g. openai/gpt-oss-20b) gets a
     separate daily budget on the same key.
 
     Imports are local to each branch so a Groq-only setup never needs the
-    Gemini/OpenAI SDKs installed to run, and vice versa.
+    OpenAI SDK installed to run, and vice versa.
 
     streaming=True asks the provider to emit token deltas, which the
     /ask/stream route turns into a live typewriter response. It's harmless
@@ -325,23 +327,16 @@ def _build_llm(streaming: bool = False, model: str | None = None, fallback: bool
         return ChatOpenAI(model=os.environ.get("OPENAI_MODEL") or "gpt-4o-mini",
                           temperature=0, api_key=openai_key, streaming=streaming), "OpenAI"
 
-    gemini_key = os.environ.get("GEMINI_API_KEY")
-    if gemini_key and forced in ("", "gemini"):
-        from langchain_google_genai import ChatGoogleGenerativeAI
-        return ChatGoogleGenerativeAI(model=os.environ.get("GEMINI_MODEL") or "gemini-2.5-flash",
-                                      temperature=0, google_api_key=gemini_key,
-                                      streaming=streaming), "Gemini"
-
     if forced:
         raise EnvironmentError(
             f"LLM_PROVIDER={forced!r} but its API key isn't set (or the name is "
-            f"not groq/gemini/openai). Set {forced.upper()}_API_KEY, or unset "
+            f"not groq/openai). Set {forced.upper()}_API_KEY, or unset "
             f"LLM_PROVIDER to auto-detect from whichever key is present."
         )
     raise EnvironmentError(
         "No LLM API key found. Set GROQ_API_KEY (recommended - free, get one at "
-        "console.groq.com) in a .env file in the project root, or OPENAI_API_KEY / "
-        "GEMINI_API_KEY as alternatives."
+        "console.groq.com) in a .env file in the project root, or OPENAI_API_KEY "
+        "as the alternative."
     )
 
 
@@ -615,7 +610,7 @@ def friendly_error(exc: Exception) -> str:
         return "The LLM provider's rate limit was hit. Wait a bit and try again."
     if "authentication" in low or "api key" in low or "401" in msg:
         return ("The LLM provider rejected the API key. Double check GROQ_API_KEY / "
-                "OPENAI_API_KEY / GEMINI_API_KEY in your .env file.")
+                "OPENAI_API_KEY in your .env file.")
     if "timeout" in low or "timed out" in low:
         return "The request to the LLM provider timed out. Try again in a moment."
     # Unrecognised errors can carry driver/provider internals (hosts, roles,

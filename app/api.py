@@ -595,7 +595,7 @@ def _sse(event: str, data: str) -> str:
 @app.post("/ask")
 def ask_agent(payload: AskRequest, request: Request):
     """Plain-English question -> SQL/vector agent -> natural-language answer.
-    Requires GROQ_API_KEY (or GEMINI/OPENAI) on the server. Every attempt is
+    Requires GROQ_API_KEY (or OPENAI_API_KEY) on the server. Every attempt is
     written to ask_log; a per-IP rate limit and a length cap run before the
     LLM so junk can't drain the provider's daily budget (see app/ask_log.py
     and DECISIONS_v2.md). The browser UI uses /ask/stream instead; this stays as

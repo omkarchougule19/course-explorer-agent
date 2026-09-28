@@ -304,7 +304,7 @@
 
   <h2 id="agent">8. The agent in detail (<code>agent.py</code>)</h2>
   <ul class="plain">
-    <li><b>Provider by key:</b> <code>GROQ_API_KEY</code>, then <code>OPENAI_API_KEY</code>, then <code>GEMINI_API_KEY</code>; <code>LLM_PROVIDER</code> forces one. Production: Groq <code>openai/gpt-oss-120b</code>, with one retry on <code>qwen/qwen3.8-27b</code> after a rate limit (before any answer text is streamed).</li>
+    <li><b>Provider by key:</b> <code>GROQ_API_KEY</code>, then <code>OPENAI_API_KEY</code>; <code>LLM_PROVIDER</code> forces one. Production: Groq <code>openai/gpt-oss-120b</code>, with one retry on <code>qwen/qwen3.8-27b</code> after a rate limit (before any answer text is streamed).</li>
     <li><b>Budget:</b> Groq's free tier caps about 200K tokens per day per model and 8,000 per minute, shared by production, development and evals. The prompt (~2,200 tokens) is re-sent every step, so steps are capped at 6 and any tool result at 6,000 characters.</li>
     <li><b>The prompt</b> is organized as scope, how to query, tables, how to answer, and live DATA NOTES; it has fixed sentences for refusals and missing data so both are recognizable. It scored 89.7% answer-OK on 29 questions against the live database (62.1% for the previous version).</li>
     <li><b>SQL access is sandboxed</b> by the guard and the role (section 11), not just by the prompt.</li>
@@ -326,7 +326,7 @@
     <tbody>
       <tr><td>DATABASE_URL</td><td>Render + local runs</td><td>Postgres connection; its presence switches <code>db.py</code> to Postgres. Unset → SQLite.</td></tr>
       <tr><td>DATABASE_URL_RO</td><td>Render (required)</td><td>The SELECT-only <code>app_ro</code> role for model-written SQL. Missing on Render → the assistant refuses to answer (<code>ALLOW_RW_AGENT_DB</code> overrides, temporarily).</td></tr>
-      <tr><td>GROQ_API_KEY</td><td>Render + local</td><td>Preferred LLM provider. <code>OPENAI_API_KEY</code> / <code>GEMINI_API_KEY</code> are fallbacks, in that order.</td></tr>
+      <tr><td>GROQ_API_KEY</td><td>Render + local</td><td>Preferred LLM provider. <code>OPENAI_API_KEY</code> is the fallback.</td></tr>
       <tr><td>ADMIN_TOKEN</td><td>Render</td><td>Admin dashboard and routes (header only).</td></tr>
       <tr><td>ASK_MAX_CONCURRENT</td><td>Render = 2</td><td>Questions in flight (code default 4).</td></tr>
       <tr><td>ASK_* · ANSWER_FEEDBACK_* · SITE_FEEDBACK_* · MAX_BODY_BYTES</td><td>optional</td><td>Guardrail limits; defaults in <code>docs/REFERENCE_v2.md</code>.</td></tr>

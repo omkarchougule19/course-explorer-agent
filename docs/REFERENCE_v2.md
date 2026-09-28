@@ -64,7 +64,7 @@ production.
   SQL on SQLite and Postgres.
 - **Self-hosted embeddings.** `BAAI/bge-small-en-v1.5` (384 dimensions) via
   `fastembed`'s ONNX runtime: no key, no rate limit, baked into the build.
-- **Provider-agnostic LLM.** Groq → OpenAI → Gemini, by whichever key is set,
+- **Provider-agnostic LLM.** Groq → OpenAI, by whichever key is set,
   with a one-time 429 failover to a second Groq model.
 
 ---
@@ -170,8 +170,7 @@ uvicorn app.api:app --reload
 ```
 
 Open `http://127.0.0.1:8000/`. The assistant needs one LLM key: `GROQ_API_KEY`
-(recommended, free tier), or `OPENAI_API_KEY` / `GEMINI_API_KEY`, tried in
-that order.
+(recommended, free tier), or `OPENAI_API_KEY` as the fallback.
 
 ### 3. Ask
 
@@ -222,8 +221,8 @@ to 10 turns in `sessionStorage` and sends the last 3; the server re-trims them
 
 ### Providers and failover
 
-`GROQ_MODEL` (default `openai/gpt-oss-120b`), `OPENAI_MODEL` (`gpt-4o-mini`),
-`GEMINI_MODEL` (`gemini-2.5-flash`); `LLM_PROVIDER` forces one. On a Groq 429
+`GROQ_MODEL` (default `openai/gpt-oss-120b`) and `OPENAI_MODEL`
+(`gpt-4o-mini`); `LLM_PROVIDER` forces one. On a Groq 429
 the question is retried once on `GROQ_FALLBACK_MODEL` (default
 `qwen/qwen3.8-27b`; `off` disables), before any answer text is streamed.
 
@@ -356,9 +355,9 @@ calendar events, 5,464 embeddings; grades and rankings 0.
 | `DATABASE_URL` | unset → SQLite | Neon connection string; switches the backend |
 | `DATABASE_URL_RO` | required on Render | SELECT-only role for model-written SQL |
 | `ALLOW_RW_AGENT_DB` | unset | temporary override of the requirement above |
-| `GROQ_API_KEY` · `OPENAI_API_KEY` · `GEMINI_API_KEY` | — | LLM provider, tried in that order |
-| `LLM_PROVIDER` | auto | force `groq` / `openai` / `gemini` |
-| `GROQ_MODEL` · `OPENAI_MODEL` · `GEMINI_MODEL` | `openai/gpt-oss-120b` · `gpt-4o-mini` · `gemini-2.5-flash` | model per provider |
+| `GROQ_API_KEY` · `OPENAI_API_KEY` | — | LLM provider, tried in that order |
+| `LLM_PROVIDER` | auto | force `groq` / `openai` |
+| `GROQ_MODEL` · `OPENAI_MODEL` | `openai/gpt-oss-120b` · `gpt-4o-mini` | model per provider |
 | `GROQ_FALLBACK_MODEL` | `qwen/qwen3.8-27b` | retried once on a Groq 429; `off` disables |
 | `ADMIN_TOKEN` | unset (admin always 403) | admin dashboard and routes |
 | `ENABLE_DOCS` | unset | exposes `/docs`, `/redoc`, `/openapi.json` |
