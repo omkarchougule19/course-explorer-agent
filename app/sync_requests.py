@@ -5,7 +5,7 @@ Demand-driven, department-level refresh for the deployed app.
 
 Because the UIUC Course Explorer WAF soft-blocks a full-catalog scrape (after
 a handful of subjects it returns HTTP 200 with empty course lists - see
-DECISIONS.md), there is no scheduled full re-scrape. Instead:
+DECISIONS_v2.md), there is no scheduled full re-scrape. Instead:
 
   * The web UI shows each department's last-synced date and a "Sync" button
     (hidden when the department was refreshed in the last 7 days).

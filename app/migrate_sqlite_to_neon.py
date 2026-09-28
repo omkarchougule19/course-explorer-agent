@@ -8,7 +8,7 @@ Why this exists instead of just scraping straight to Neon: UIUC's Course
 Explorer WAF soft-blocks a full-catalog scrape after a handful of subjects -
 it starts returning HTTP 200 with empty course lists rather than a clean 403,
 so `scraper.py` run against DATABASE_URL only lands a few hundred sections
-before everything else comes back empty (see DECISIONS.md). The local SQLite
+before everything else comes back empty (see DECISIONS_v2.md). The local SQLite
 file was built up over earlier residential-IP scrapes and *is* complete, so
 the reliable path to a populated Neon database is to migrate that file.
 

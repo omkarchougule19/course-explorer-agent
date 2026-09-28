@@ -136,7 +136,7 @@
 
   // Distinguishes "this department just hasn't been synced for the
   // selected term" (the common case - see the demand-driven refresh model
-  // in DECISIONS.md, sync is manual and per-department) from "no filters
+  // in DECISIONS_v2.md, sync is manual and per-department) from "no filters
   // match" or "nothing on file at all yet", instead of one generic message
   // that reads like a bug either way.
   function emptyDeptMessage() {

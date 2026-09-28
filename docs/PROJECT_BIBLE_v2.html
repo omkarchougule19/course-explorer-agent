@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Illini Course Copilot — Project Bible (v2)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Crimson+Text:ital,wght@0,400;0,600;1,400&family=EB+Garamond:wght@400;600;700&family=Source+Sans+3:wght@400;600;700&display=swap">
+<style>
+  :root{
+    --blue:#13294b; --blue2:#1d4e89; --orange:#ff5f05; --link:#1d58a7;
+    --bg:#eef1f5; --panel:#fff; --ink:#14181f; --ink2:#3f4650; --muted:#6a7078;
+    --line:#d4d7dc; --line2:#b7bcc4; --code-bg:#f1f4f8; --ok:#0a7d3c;
+    --display:"EB Garamond",Georgia,serif;
+    --serif:"Crimson Text",Georgia,serif;
+    --sans:"Source Sans 3",system-ui,-apple-system,"Segoe UI",Arial,sans-serif;
+    --mono:"JetBrains Mono",ui-monospace,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    line-height:1.55;padding:0 0 80px;-webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:940px;margin:0 auto;padding:0 20px}
+  header.banner{
+    background:linear-gradient(150deg,#17325f,var(--blue) 55%,#0d1e39);
+    color:#fff;border-bottom:4px solid var(--orange);
+  }
+  header.banner .wrap{padding:38px 20px}
+  header.banner h1{
+    font-family:var(--display);font-weight:600;font-size:30px;margin:0;
+  }
+  header.banner p{
+    font-family:var(--serif);font-style:italic;font-size:16px;
+    color:rgba(255,255,255,.82);margin:8px 0 0;max-width:64ch;
+  }
+  h2{
+    font-family:var(--display);font-size:24px;color:var(--blue);
+    margin:44px 0 4px;padding-bottom:6px;position:relative;scroll-margin-top:16px;
+  }
+  h2::after{content:"";position:absolute;left:0;bottom:-1px;width:44px;height:3px;background:var(--orange);border-radius:2px}
+  h3{font-family:var(--display);font-size:18px;color:var(--blue);margin:24px 0 8px}
+  p.lead{font-family:var(--serif);font-size:16px;color:var(--ink2);margin:10px 0}
+  ul.plain{font-family:var(--serif);font-size:15px;color:var(--ink2);margin:10px 0;padding-left:22px}
+  ul.plain li{margin:6px 0}
+  ul.plain li b{color:var(--blue);font-family:var(--sans);font-size:14px}
+  code{font-family:var(--mono);font-size:.86em;background:var(--code-bg);color:var(--ink);padding:1px 5px;border-radius:4px}
+  header.banner code{background:rgba(255,255,255,.16);color:#fff}
+  a{color:var(--link)}
+
+  /* table of contents */
+  nav.toc{
+    background:var(--panel);border:1px solid var(--line);border-radius:8px;
+    padding:16px 20px;margin-top:24px;box-shadow:0 1px 2px rgba(16,32,60,.06);
+  }
+  nav.toc h4{margin:0 0 8px;font-family:var(--sans);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--blue)}
+  nav.toc ol{margin:0;padding-left:22px;columns:2;column-gap:32px;font-size:14px}
+  nav.toc li{margin:3px 0;break-inside:avoid}
+  @media(max-width:620px){nav.toc ol{columns:1}}
+
+  /* vertical flow */
+  ol.flow{list-style:none;margin:18px 0 0;padding:0}
+  ol.flow>li{
+    position:relative;background:var(--panel);border:1px solid var(--line);
+    border-left:4px solid var(--blue2);border-radius:8px;padding:14px 18px;
+    box-shadow:0 1px 2px rgba(16,32,60,.06);
+  }
+  ol.flow>li+li{margin-top:40px}
+  ol.flow>li+li::before{
+    content:"";position:absolute;left:26px;top:-34px;width:2px;height:22px;background:var(--line2);
+  }
+  ol.flow>li+li::after{
+    content:"";position:absolute;left:21px;top:-14px;
+    border:6px solid transparent;border-top-color:var(--orange);
+  }
+  ol.flow .n{
+    display:inline-block;min-width:22px;height:22px;line-height:22px;text-align:center;
+    background:var(--blue);color:#fff;font-weight:700;font-size:12px;border-radius:50%;
+    margin-right:8px;vertical-align:1px;
+  }
+  ol.flow b{color:var(--blue)}
+  ol.flow .sub{font-family:var(--serif);color:var(--muted);font-size:14.5px;margin-top:4px}
+
+  /* two-branch split */
+  .split{display:grid;gap:16px;margin-top:18px}
+  @media(min-width:680px){.split{grid-template-columns:1fr 1fr}}
+  .branch{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px 18px}
+  .branch.sql{border-top:3px solid var(--blue2)}
+  .branch.rag{border-top:3px solid var(--orange)}
+  .branch h4{margin:0 0 6px;font-family:var(--sans);font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:var(--blue)}
+  .branch p{margin:6px 0;font-family:var(--serif);font-size:14.5px;color:var(--ink2)}
+
+  /* cards */
+  .cards{display:grid;gap:16px;margin-top:18px}
+  @media(min-width:680px){.cards{grid-template-columns:1fr 1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:18px 20px;box-shadow:0 1px 2px rgba(16,32,60,.06)}
+  .card h3{margin-top:0}
+  .tag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+
+  table{width:100%;border-collapse:collapse;font-size:13px;margin:12px 0 0;background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  tbody tr:last-child td{border-bottom:0}
+  th{background:#eef2f8;color:var(--blue);font-size:11px;letter-spacing:.05em;text-transform:uppercase}
+  td:first-child{font-family:var(--mono);font-size:12px;white-space:nowrap;color:var(--blue)}
+  table.wide td:first-child{white-space:normal}
+
+  pre{
+    background:var(--blue);color:#e8eef7;border-radius:8px;padding:16px 18px;
+    overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.5;margin:14px 0 0;
+  }
+  pre .c{color:#8fa9c9}
+  .note{
+    font-family:var(--serif);font-size:14.5px;color:var(--ink2);
+    background:#fff7ed;border:1px solid #fcd9b6;border-left:3px solid var(--orange);
+    border-radius:8px;padding:12px 16px;margin-top:16px;
+  }
+  footer{margin-top:52px;font-family:var(--serif);font-size:13px;color:var(--muted);text-align:center}
+</style>
+</head>
+<body>
+
+<header class="banner">
+  <div class="wrap">
+    <h1>Illini Course Copilot — Project Bible</h1>
+    <p>The single orientation document: what the project is, why it is shaped this way, how the pieces fit together, and how it is operated. Version 2, written from the code as of 2026-09-24. Broad and shallow by design — follow the cross-references into <code>DECISIONS_v2.md</code> (the why), <code>DEPLOYMENT_v2.md</code> (the ops runbook) and <code>architecture_v2.html</code> (the illustrated data flow) for depth.</p>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <nav class="toc">
+    <h4>Contents</h4>
+    <ol>
+      <li><a href="#what">What this is</a></li>
+      <li><a href="#model">Operating model &amp; principles</a></li>
+      <li><a href="#arch">Architecture at a glance</a></li>
+      <li><a href="#components">Components</a></li>
+      <li><a href="#schema">Data model</a></li>
+      <li><a href="#sources">Data sources</a></li>
+      <li><a href="#flows">Request flows</a></li>
+      <li><a href="#agent">The agent in detail</a></li>
+      <li><a href="#deploy">Deployment &amp; configuration</a></li>
+      <li><a href="#ops">Operations / runbook</a></li>
+      <li><a href="#security">Security posture</a></li>
+      <li><a href="#conventions">Conventions</a></li>
+      <li><a href="#limits">Known limitations</a></li>
+      <li><a href="#roadmap">Roadmap / open threads</a></li>
+      <li><a href="#glossary">Glossary</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="what">1. What this is</h2>
+  <p class="lead">Illini Course Copilot is a dataset-and-agent project built on UIUC's public Course Explorer data. <i>Not affiliated with, endorsed by, or sponsored by the University of Illinois.</i> It:</p>
+  <ol class="flow">
+    <li><span class="n">1</span><b>Collects</b> course, section, instructor, meeting and enrollment-status data from UIUC's public XML, plus supplementary public datasets (grade distributions, "Teachers Ranked as Excellent", Gen Ed categories), the registrar's academic calendar, and prerequisites parsed from course descriptions.</li>
+    <li><span class="n">2</span><b>Structures</b> it into a documented schema that runs unchanged on SQLite (local development) and Postgres / Neon (production).</li>
+    <li><span class="n">3</span><b>Serves</b> it through a FastAPI backend and an 8-page browser site: browse and filter sections, departments, the academic calendar, a schedule builder, instructor pages, data freshness.</li>
+    <li><span class="n">4</span><b>Answers plain-English questions</b> through a LangChain agent that writes its own read-only SQL for structured questions and runs pgvector semantic search for content questions, streaming a sourced answer.</li>
+  </ol>
+  <h3>Why it exists</h3>
+  <p class="lead">It is a work sample for AI Engineer / Forward-Deployed Engineer roles. It walks the whole applied-data loop — pull from an external source, structure it, expose it through an API, let a non-technical user ask in plain language — and keeps going into the parts usually skipped: retrieval quality, guardrails, security, feedback loops, and a measured evaluation of the agent itself.</p>
+
+  <h2 id="model">2. Operating model and guiding principles</h2>
+  <p class="lead">These constraints shaped nearly every technical decision.</p>
+  <ul class="plain">
+    <li><b>Free forever.</b> Render free web service + Neon free Postgres; no paid tier, no standing cost. The instance sleeps when idle, and that trade-off is accepted.</li>
+    <li><b>Scraping runs locally, never in the cloud.</b> UIUC's firewall rejects datacenter IPs and soft-blocks long sweeps, so the operator scrapes from a residential IP and writes straight to Neon.</li>
+    <li><b>Demand-driven freshness.</b> No scheduled re-scrape: visitors request a department refresh, and the operator processes the queue by hand.</li>
+    <li><b>One query text, two backends.</b> Every SQL string is written once; <code>app/db.py</code> translates. Nobody needs Postgres to develop.</li>
+    <li><b>Low traffic, simple over scalable.</b> One worker, no cache layer, no job queue.</li>
+    <li><b>Self-hosted embeddings.</b> <code>fastembed</code> runs bge-small-en-v1.5 locally in both the scraper and the web app; no embeddings API.</li>
+    <li><b>Defence in depth for the LLM.</b> The prompt is one layer, never the only one: model-written SQL is parsed, allowlisted and run read-only on a restricted role, and the budget is protected by limits that run before any model call.</li>
+    <li><b>Measure, don't assume.</b> Prompt and pipeline changes are judged on the eval set against the live database.</li>
+  </ul>
+  <div class="note">Each of these has its reasoning and rejected alternatives in <code>DECISIONS_v2.md</code> (by topic); the dated v1 history is in git (<code>git show bbf824e:DECISIONS.md</code>).</div>
+
+  <h2 id="arch">3. Architecture at a glance</h2>
+  <pre> Operator&#x27;s machine (residential IP)           Cloud (free tier)
+<span class="c">┌──────────────────────────────┐</span>              <span class="c">┌────────────────────────────────────┐</span>
+<span class="c">│</span> scraper.py · sync_requests.py<span class="c">│</span> XML (allowed)<span class="c">│</span>  Neon Postgres                     <span class="c">│</span>
+<span class="c">│</span> load_* · backfill_embeddings <span class="c">│◀────</span> UIUC    <span class="c">│</span>   catalog (7 tables)               <span class="c">│</span>
+<span class="c">│</span>       <span class="c">│</span> upsert + embed       <span class="c">│─────────────▶│</span>   course_embeddings (pgvector)     <span class="c">│</span>
+<span class="c">└───────┼──────────────────────┘</span> DATABASE_URL <span class="c">│</span>   app tables (log, feedback, sync) <span class="c">│</span>
+        <span class="c">▼</span>                                     <span class="c">│</span>         <span class="c">▲</span> app role   <span class="c">▲</span> app_ro role <span class="c">│</span>
+  data/courses.db (SQLite,                    <span class="c">│</span>  <span class="c">┌──────┴────────────┴──────────┐</span>  <span class="c">│</span>
+  local development only)                     <span class="c">│</span>  <span class="c">│</span> FastAPI on Render            <span class="c">│</span>  <span class="c">│</span>
+                                              <span class="c">│</span>  <span class="c">│</span>  api.py · agent.py · static/ <span class="c">│</span>  <span class="c">│</span>
+                                              <span class="c">│</span>  <span class="c">└──────────────────────────────┘</span>  <span class="c">│</span>
+                                              <span class="c">└────────────────────────────────────┘</span></pre>
+  <ul class="plain">
+    <li>The scraping side and the serving side never talk directly; Neon is the only shared state, so Render can sleep or redeploy without data loss.</li>
+    <li>The web app uses the owner role for its own reads and writes, and a separate SELECT-only role (<code>app_ro</code>) for any SQL the model writes.</li>
+    <li>SQLite is a local convenience only; vector search needs Postgres, so the RAG tool is off on SQLite.</li>
+    <li>The step-by-step request path, the SQL safety layers and the RAG loop are illustrated in <a href="architecture_v2.html"><code>architecture_v2.html</code></a>.</li>
+  </ul>
+
+  <h2 id="components">4. Components</h2>
+
+  <h3>Serving path (<code>app/</code>)</h3>
+  <table class="wide">
+    <thead><tr><th>File</th><th>Role</th></tr></thead>
+    <tbody>
+      <tr><td>api.py</td><td>FastAPI app: every HTTP route, security headers and <code>no-cache</code> for pages, a 256 KB body limit, the <code>/ask</code> guardrails (length cap, reserved rate-limit slot, concurrency ceiling), input bounds, fixed error messages, admin auth, startup hooks, static file serving.</td></tr>
+      <tr><td>agent.py</td><td>The hybrid agent: <code>SYSTEM_CONTEXT</code> and its live DATA NOTES, provider selection with Groq 429 failover, the SQL toolkit over the catalog tables, the <code>course_content_search</code> tool (multi-query + RRF), windowed history, <code>ask()</code> and the streaming <code>astream_answer()</code>.</td></tr>
+      <tr><td>sql_guard.py</td><td>Parses and allowlists every model-written statement; makes an engine read-only with a per-statement timeout.</td></tr>
+      <tr><td>db.py</td><td>The dual-backend connection wrapper (<code>?</code> → <code>%s</code>, <code>upsert()</code>, <code>existing_columns()</code>, DDL helpers) and the read-only connection path for model SQL.</td></tr>
+      <tr><td>embeddings.py</td><td>The bge-small model wrapper, <code>course_embeddings</code> table + HNSW index, vector search. No-ops on SQLite.</td></tr>
+      <tr><td>citations.py</td><td>Builds the "Sources: …" footer from the SQL the agent actually ran.</td></tr>
+      <tr><td>ask_log.py</td><td>The question log: reservations, per-IP and shared caps, outcome tagging, admin aggregates, trending course codes.</td></tr>
+      <tr><td>feedback.py · site_feedback.py</td><td>👍/👎 with a downvote review queue; the free-text feedback box. Both capped per IP and in total.</td></tr>
+      <tr><td>sync_requests.py</td><td>The per-department refresh counter behind <b>Sync</b>, and the operator's CLI (<code>--list</code>, <code>--run</code>) with wall detection.</td></tr>
+      <tr><td>terms.py</td><td>The rolling term window (current ± 2) used by the historical loaders.</td></tr>
+      <tr><td>sql_pipeline/</td><td>The opt-in Generator → Critic → Repair pipeline (LangGraph): <code>steps.py</code>, <code>critique.py</code>, <code>graph.py</code>, <code>catalog.py</code>, <code>schema_text.py</code>, <code>_llm.py</code>. Off in production.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Ingestion path (<code>app/</code>, run locally)</h3>
+  <table class="wide">
+    <thead><tr><th>File</th><th>Role</th></tr></thead>
+    <tbody>
+      <tr><td>scraper.py</td><td>The Course Explorer scraper → <code>sections</code> + <code>meetings</code>: concurrent, resumable, idempotent; cleans HTML and entities from catalog text; embeds descriptions when pointed at Postgres.</td></tr>
+      <tr><td>load_grades.py · load_tre.py · load_geneds.py</td><td><code>wadefagen/datasets</code> CSVs → grades, rankings, gen-eds (grades and rankings limited to the term window).</td></tr>
+      <tr><td>load_prereqs.py · prereqs.py</td><td>Parse "Prerequisite:" clauses from descriptions into AND-ed groups of alternatives.</td></tr>
+      <tr><td>load_calendar.py</td><td>Parse one term's registrar calendar page into <code>academic_calendar</code>.</td></tr>
+      <tr><td>load_catalog_snapshot.py</td><td>One-off historical backfill from a pre-scraped term CSV, through the scraper's own save path.</td></tr>
+      <tr><td>backfill_embeddings.py</td><td>Fill or rebuild <code>course_embeddings</code> in batches (<code>--force</code>, <code>--limit N</code>).</td></tr>
+      <tr><td>migrate_sqlite_to_neon.py · clean_descriptions.py</td><td>The one-time SQLite → Neon copy; the one-time text-cleaning backfill.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Frontend (<code>static/</code>)</h3>
+  <table class="wide">
+    <thead><tr><th>File</th><th>Role</th></tr></thead>
+    <tbody>
+      <tr><td>index.html</td><td>Home: the assistant (streaming, Markdown, citations, 👍/👎, chat kept across pages) as the headline, then Browse Sections with term / subject / level filters and the "No 8ams" / "Done by 5" / "No Fridays" chips.</td></tr>
+      <tr><td>departments.html</td><td>Department list with freshness and <b>Sync</b>, and the same course browser as Home.</td></tr>
+      <tr><td>calendar.html · schedule.html</td><td>Registrar dates by term; the schedule builder (conflict check, meeting times, <code>.ics</code> export).</td></tr>
+      <tr><td>instructor.html · freshness.html · about.html</td><td>Per-instructor courses and grade history (+ a RateMyProfessors search link); data freshness per subject and term; How It Works.</td></tr>
+      <tr><td>admin.html</td><td>Token-gated dashboard: usage, outcomes, clients, question log, review queues.</td></tr>
+      <tr><td><i>page</i>-page.js</td><td>Each page's own script, one file per page (the CSP forbids inline scripts).</td></tr>
+      <tr><td>shared modules</td><td><code>course-results.js</code> (course table + quick view), <code>md.js</code> (safe Markdown), <code>citations.js</code>, <code>schedule-store.js</code>, <code>time.js</code>, <code>theme-init.js</code> / <code>theme.js</code> (dark-first theme), <code>motion.js</code>, <code>page-transition.js</code>, <code>share-card.js</code>; styles in <code>style.css</code> + <code>theme-genz.css</code>.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Docs and tooling</h3>
+  <table class="wide">
+    <thead><tr><th>File</th><th>Role</th></tr></thead>
+    <tbody>
+      <tr><td>README_v2.md · docs/REFERENCE_v2.md</td><td>The short portfolio README; the full reference (setup, commands, API, configuration).</td></tr>
+      <tr><td>DECISIONS_v2.md</td><td>Current decisions by topic (the dated v1 history is in git).</td></tr>
+      <tr><td>implementation_plan_v2.md</td><td>What's left to do, in priority order.</td></tr>
+      <tr><td>DEPLOYMENT_v2.md</td><td>Render + Neon runbook, including the SELECT-only role recipe.</td></tr>
+      <tr><td>docs/architecture_v2.html · docs/PROJECT_BIBLE_v2.html</td><td>The illustrated data flow; this file.</td></tr>
+      <tr><td>evals/</td><td>The 29-question eval harness and ten offline test suites.</td></tr>
+      <tr><td>.claude/agents/</td><td>Project subagents: <code>course-agent-qa</code>, <code>course-app-redteam</code>, <code>code-critic</code>, <code>startup-critic</code>.</td></tr>
+      <tr><td>security_findings.md · qa_log.txt</td><td>Red-team passes and QA runs.</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="schema">5. Data model</h2>
+  <p class="lead">All tables live in one database; <code>db.py</code> maps the few DDL keywords that differ per backend. Counts are production on 2026-09-24.</p>
+  <table class="wide">
+    <thead><tr><th>Table</th><th>One row per…</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>sections</td><td>section (CRN) per term</td><td>19,848 rows, 191 subjects. <code>enrollment_status</code> is a word (Open, Closed, …) for published terms and an <code>A</code>/<code>P</code> code otherwise (fall 2026); no seat counts. <code>description</code> is per course. <code>UNIQUE(year, semester, subject, course_number, crn)</code>.</td></tr>
+      <tr><td>meetings</td><td>meeting block per section</td><td>20,476 rows. Times are text in two shapes plus <code>ARRANGED</code>; compare as minutes after midnight, never as text.</td></tr>
+      <tr><td>grade_distributions</td><td>term × course × type × instructor</td><td>0 rows (upstream hasn't published terms in the window).</td></tr>
+      <tr><td>teachers_ranked_excellent</td><td>ranked instructor × term</td><td>0 rows. Department name, not a subject code; joins are best-effort.</td></tr>
+      <tr><td>gen_ed_categories</td><td>course</td><td>1,060 rows, spring 2023 snapshot, category codes.</td></tr>
+      <tr><td>prerequisites</td><td>course × group × option</td><td>5,838 rows, parsed from descriptions; <code>raw_text</code> always kept.</td></tr>
+      <tr><td>academic_calendar</td><td>term × event</td><td>79 events for fall 2026.</td></tr>
+      <tr><td>course_embeddings</td><td>course (Postgres only)</td><td>5,464 vectors, HNSW cosine index.</td></tr>
+      <tr><td>ask_log · answer_feedback · site_feedback · sync_requests</td><td>app bookkeeping</td><td>Questions and outcomes (incl. <code>pending</code> reservations), votes, feedback text, refresh demand. Never visible to the assistant.</td></tr>
+    </tbody>
+  </table>
+  <div class="note">The agent's SQL tool sees only the seven catalog tables (<code>INCLUDED_TABLES</code> in <code>agent.py</code>); the SQL guard and the <code>app_ro</code> role enforce the same list. <code>course_embeddings</code> is reached only through the RAG tool.</div>
+
+  <h2 id="sources">6. Data sources</h2>
+  <table class="wide">
+    <thead><tr><th>Source</th><th>Feeds</th><th>Access &amp; notes</th></tr></thead>
+    <tbody>
+      <tr><td>UIUC Course Explorer XML</td><td>sections, meetings, descriptions</td><td>Public, unauthenticated, firewall-protected against datacenter IPs. Detailed mode costs one request per course (description) and one per section (instructor, status, meetings).</td></tr>
+      <tr><td>wadefagen/datasets (GitHub)</td><td>grade_distributions, teachers_ranked_excellent, gen_ed_categories, one historical catalog snapshot</td><td>Public CSVs. Grades are official UIUC data since spring 2025. The ranking list's upstream (ICES) was retired for a new award from fall 2025.</td></tr>
+      <tr><td>UIUC registrar</td><td>academic_calendar</td><td>One page per term; the URL isn't derivable for every term, so the loader takes it explicitly.</td></tr>
+      <tr><td>Course descriptions</td><td>prerequisites, course_embeddings</td><td>Derived locally: a regex parser and the local embedding model.</td></tr>
+    </tbody>
+  </table>
+  <p class="lead">Explicitly rejected: live seat tracking (continuous polling of a rate-limited site) and scraping RateMyProfessors (against its Terms); the instructor page links to RMP's own search instead.</p>
+
+  <h2 id="flows">7. Request flows</h2>
+
+  <h3>POST /ask/stream (and /ask)</h3>
+  <p class="lead">Body limit → concurrency ceiling → length cap → a <code>pending</code> slot in <code>ask_log</code> → shared and per-IP caps counted in reservation order → the agent (one of two tools, with SQL through the guard and the read-only role) → a streamed, cited answer → the slot rewritten with the outcome. The full, illustrated path is in <a href="architecture_v2.html">architecture_v2.html</a>, sections 4-6.</p>
+
+  <h3>Plain reads</h3>
+  <p class="lead"><code>GET /sections</code>, <code>/subjects</code>, <code>/courses/{subject}</code>, <code>/stats</code>, <code>/freshness</code>, <code>/meetings</code>, <code>/calendar</code>, and the course detail routes (<code>…/grade-trend</code>, <code>…/prereqs</code>) are bounded, parameterised reads straight from the catalog — no LLM. Browse filters (level, and the schedule chips) run in Python after the SQL fetch because course numbers and times are text. <code>POST /schedule/conflicts</code> checks day and time overlaps for 2-50 CRNs.</p>
+
+  <h3>POST /sync/request → GET /sync/status</h3>
+  <p class="lead">A visitor on a stale department presses <b>Sync</b>; the counter goes up. The operator reads <code>--list</code> (or <code>/sync/status</code>) and refreshes the most-requested departments locally.</p>
+
+  <h3>Feedback and admin</h3>
+  <p class="lead"><code>POST /ask/feedback</code> and <code>POST /feedback</code> never fail loudly (a storage error returns <code>{"ok": false}</code>); both are capped. <code>/admin/*</code> needs the <code>X-Admin-Token</code> header.</p>
+
+  <h2 id="agent">8. The agent in detail (<code>agent.py</code>)</h2>
+  <ul class="plain">
+    <li><b>Provider by key:</b> <code>GROQ_API_KEY</code>, then <code>OPENAI_API_KEY</code>, then <code>GEMINI_API_KEY</code>; <code>LLM_PROVIDER</code> forces one. Production: Groq <code>openai/gpt-oss-120b</code>, with one retry on <code>qwen/qwen3.8-27b</code> after a rate limit (before any answer text is streamed).</li>
+    <li><b>Budget:</b> Groq's free tier caps about 200K tokens per day per model and 8,000 per minute, shared by production, development and evals. The prompt (~2,200 tokens) is re-sent every step, so steps are capped at 6 and any tool result at 6,000 characters.</li>
+    <li><b>The prompt</b> is organized as scope, how to query, tables, how to answer, and live DATA NOTES; it has fixed sentences for refusals and missing data so both are recognizable. It scored 89.7% answer-OK on 29 questions against the live database (62.1% for the previous version).</li>
+    <li><b>SQL access is sandboxed</b> by the guard and the role (section 11), not just by the prompt.</li>
+    <li><b>Semantic search</b> is multi-query expansion + Reciprocal Rank Fusion inside the tool, so structured questions never pay for it. Tunable with <code>RAG_MULTIQUERY</code>, <code>RAG_SUBQUERIES</code>, <code>RAG_K_PER</code>, <code>RAG_K_RETURN</code>.</li>
+    <li><b>History</b> is windowed and stateless: the last 3 turns, re-trimmed, context only.</li>
+    <li><b>Citations</b> are deterministic, parsed from the executed SQL; no extra model call.</li>
+    <li><b>Quality is checked</b> by the eval harness and the <code>course-agent-qa</code> subagent; abuse by <code>course-app-redteam</code>.</li>
+  </ul>
+
+  <h2 id="deploy">9. Deployment and configuration</h2>
+  <p class="lead">Full runbook: <code>DEPLOYMENT_v2.md</code>. Summary:</p>
+  <ul class="plain">
+    <li><b>Host:</b> Render free web service <code>course-explorer-agent</code> (<code>render.yaml</code> in the repo names it <code>illini-course-copilot</code>, but the service wasn't created from it). Python 3.14, <code>uvicorn app.api:app</code>, one worker. <b>Deploys are manual</b> (Manual Deploy → Deploy latest commit).</li>
+    <li><b>Build:</b> installs the hash-pinned <code>requirements.txt</code> and pre-downloads the embedding model into <code>model_cache/</code>.</li>
+    <li><b>Database:</b> Neon free Postgres; compute scales to zero when idle and wakes on the next query. <code>pgvector</code> on the same database.</li>
+  </ul>
+  <table class="wide">
+    <thead><tr><th>Variable</th><th>Where</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td>DATABASE_URL</td><td>Render + local runs</td><td>Postgres connection; its presence switches <code>db.py</code> to Postgres. Unset → SQLite.</td></tr>
+      <tr><td>DATABASE_URL_RO</td><td>Render (required)</td><td>The SELECT-only <code>app_ro</code> role for model-written SQL. Missing on Render → the assistant refuses to answer (<code>ALLOW_RW_AGENT_DB</code> overrides, temporarily).</td></tr>
+      <tr><td>GROQ_API_KEY</td><td>Render + local</td><td>Preferred LLM provider. <code>OPENAI_API_KEY</code> / <code>GEMINI_API_KEY</code> are fallbacks, in that order.</td></tr>
+      <tr><td>ADMIN_TOKEN</td><td>Render</td><td>Admin dashboard and routes (header only).</td></tr>
+      <tr><td>ASK_MAX_CONCURRENT</td><td>Render = 2</td><td>Questions in flight (code default 4).</td></tr>
+      <tr><td>ASK_* · ANSWER_FEEDBACK_* · SITE_FEEDBACK_* · MAX_BODY_BYTES</td><td>optional</td><td>Guardrail limits; defaults in <code>docs/REFERENCE_v2.md</code>.</td></tr>
+      <tr><td>GROQ_MODEL · GROQ_FALLBACK_MODEL · LLM_PROVIDER · RAG_* · ENABLE_DOCS · SQL_PIPELINE*</td><td>optional</td><td>Model choice, failover, RAG tuning, API docs, the opt-in pipeline.</td></tr>
+    </tbody>
+  </table>
+  <p class="lead"><code>.env</code> in the project root is loaded by the app and by every data script.</p>
+
+  <h2 id="ops">10. Operations / runbook</h2>
+  <ul class="plain">
+    <li><b>Refresh departments:</b> locally, <code>python -m app.sync_requests --list</code>, then <code>--run DEPT …</code> or <code>--run --top N</code>, with <code>DATABASE_URL</code> pointing at Neon. Stop when wall detection reports the firewall; retry after a cooldown.</li>
+    <li><b>Full scrape of a term:</b> <code>python -m app.scraper --year YYYY --semester SEASON [--subjects …]</code>. Lower <code>--concurrency</code> and raise <code>--section-delay</code> if requests start failing. Cloud runners don't help (same firewall).</li>
+    <li><b>Rolling the term:</b> edit <code>CURRENT_YEAR</code> / <code>CURRENT_SEMESTER</code> in <code>app/terms.py</code>, then re-run the loaders. The prompt's DATA NOTES follow the data automatically.</li>
+    <li><b>After a bulk load or a model change:</b> <code>python -m app.backfill_embeddings</code>.</li>
+    <li><b>Load a term's calendar:</b> <code>python -m app.load_calendar --term 2026-fall --url …</code>.</li>
+    <li><b>Deploy:</b> merge to <code>master</code>, push, then Manual Deploy in the Render dashboard; check the live site.</li>
+    <li><b>Before shipping a prompt or agent change:</b> run the offline tests, then <code>python -m evals.run --arms prod --db env --provider openai -y</code> (full runs on OpenAI so Groq's shared daily budget stays with users), twice for a comparison, then a few targeted questions on Groq.</li>
+    <li><b>After touching the API, guardrails or logging:</b> run <code>course-app-redteam</code> (writes <code>security_findings.md</code>). <b>When cold starts feel slow:</b> run <code>startup-critic</code>.</li>
+  </ul>
+
+  <h2 id="security">11. Security posture</h2>
+  <ul class="plain">
+    <li><b>Model-written SQL, three layers:</b> the prompt; <code>sql_guard.py</code> (one read-only query over the catalog tables, parsed with <code>sqlglot</code>, run in a <code>READ ONLY</code> transaction with an 8 s timeout); and the SELECT-only <code>app_ro</code> role.</li>
+    <li><b>Headers on every response:</b> CSP with <code>script-src 'self'</code> (no inline scripts), <code>frame-ancestors 'none'</code>, <code>X-Frame-Options: DENY</code>, HSTS, <code>nosniff</code>, <code>no-referrer</code>.</li>
+    <li><b>Abuse limits</b> before any model call: size, length, concurrency, shared and per-IP caps with reserved slots; feedback caps; bounded public inputs.</li>
+    <li><b>No internal detail</b> in responses: driver, connection and agent errors are logged server-side only.</li>
+    <li><b>Admin</b> via <code>X-Admin-Token</code> only, constant-time compare, always 403 on failure. API docs off unless <code>ENABLE_DOCS</code>.</li>
+    <li><b>Output encoding</b> on every database value; the Markdown renderer only links same-site paths or <code>https://</code> URLs.</li>
+    <li><b>Dependencies</b> hash-pinned and audited (<code>pip-audit</code>: no known vulnerabilities, 2026-09-24).</li>
+    <li><b>Accepted:</b> the per-IP key uses a spoofable header (the shared cap is the real control). Red-team history: <code>security_findings.md</code>.</li>
+  </ul>
+
+  <h2 id="conventions">12. Conventions</h2>
+  <ul class="plain">
+    <li><b>One query text, both backends.</b> Write <code>?</code> placeholders; never branch on backend outside <code>db.py</code>; use <code>db.upsert()</code>.</li>
+    <li><b>Values:</b> semester and term lowercase; subject codes uppercase; a term is always <code>(semester, year)</code>; <code>course_number</code> is text.</li>
+    <li><b>Run scripts as modules</b> from the project root (<code>python -m app.…</code>).</li>
+    <li><b>No inline scripts or handlers</b> in <code>static/</code>; every page's code lives in its <code>-page.js</code> file (an offline test enforces it).</li>
+    <li><b>Visitor-facing copy</b> stays short and never names env vars, providers, keys or repo files.</li>
+    <li><b>Decisions get logged as they happen:</b> the current state in <code>DECISIONS_v2.md</code>, remaining work in <code>implementation_plan_v2.md</code>, in the same commit as the change.</li>
+    <li><b>Commits on a branch, merged when approved</b>; nothing ships until a manual deploy.</li>
+    <li><b>No new standing cost, provider or paid tier</b> without a logged decision.</li>
+  </ul>
+
+  <h2 id="limits">13. Known limitations</h2>
+  <ul class="plain">
+    <li>Cold starts: the free instance sleeps; the first visit waits for Render plus about 2 s of app startup.</li>
+    <li>Groq's free per-minute token limit makes multi-step questions and simultaneous users slow (4-56 s observed).</li>
+    <li>Grades and instructor rankings are empty until upstream publishes terms in the window.</li>
+    <li>Fall 2026 is synced for 84 of 191 subjects.</li>
+    <li>Fall 2026 enrollment status is only a scheduling code; no term has seat counts.</li>
+    <li>Cross-listed courses are separate rows per subject; the ranking join is name-based; gen-eds are a single snapshot.</li>
+    <li>Vector search needs Postgres; local SQLite has no RAG tool.</li>
+  </ul>
+
+  <h2 id="roadmap">14. Roadmap / open threads</h2>
+  <p class="lead">Tracked in <code>implementation_plan_v2.md</code>, in priority order: cut cold-start time; faster answers on Groq; confirm the prompt on the production model with repeated runs; evals defaulting to the live database and two new gold questions; resume the fall 2026 sync; grade data once upstream publishes; and UI and housekeeping items.</p>
+
+  <h2 id="glossary">15. Glossary</h2>
+  <ul class="plain">
+    <li><b>CRN</b> — Course Reference Number, unique per section per term.</li>
+    <li><b>Catalog tables</b> — the seven relational tables the assistant may query.</li>
+    <li><b>DATA NOTES</b> — the live facts appended to the prompt at startup (current year, terms, unpublished registration, empty tables).</li>
+    <li><b>SQL guard</b> — <code>app/sql_guard.py</code>, the parse-and-allowlist check on model-written SQL.</li>
+    <li><b>Reserved slot</b> — the <code>pending</code> row a question writes to <code>ask_log</code> before the model runs, so rate limits hold under concurrency.</li>
+    <li><b>Detailed / fast mode</b> — the scraper with or without the per-section and per-course requests.</li>
+    <li><b>Hybrid agent</b> — the SQL toolkit plus the pgvector RAG tool, chosen per question.</li>
+    <li><b>Multi-query expansion / RRF</b> — rewriting a topic into facets before vector search, then merging the ranked lists by Reciprocal Rank Fusion.</li>
+    <li><b>Demand-driven refresh</b> — visitors request department syncs; the operator runs them locally.</li>
+    <li><b>Wall</b> — the point where UIUC's firewall starts returning empty lists; sync runs stop there.</li>
+    <li><b>Active term window</b> — current term ± 2 on the spring / summer / fall cycle (<code>terms.py</code>).</li>
+    <li><b>TRE</b> — "Teachers Ranked as Excellent", a published UIUC list.</li>
+  </ul>
+
+  <footer>
+    Illini Course Copilot · project bible v2 · last reviewed 2026-09-24 · see <code>DECISIONS_v2.md</code> for the reasoning behind each choice
+  </footer>
+
+</div>
+</body>
+</html>

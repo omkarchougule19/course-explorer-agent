@@ -4,7 +4,7 @@ This directory measures the `app/sql_pipeline/` Generator → Critic → Repair
 pipeline against a control, on a fixed question set with known-correct
 answers. Methodology and the current numbers are in
 [`RESULTS.md`](RESULTS.md); the short version and the headline table are also
-in the project [README](../README.md#evals).
+in the project [README](../README_v2.md#evals).
 
 ## Layout
 

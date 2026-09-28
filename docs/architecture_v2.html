@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Illini Course Copilot — Architecture &amp; Data Flow (v2)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Crimson+Text:ital,wght@0,400;0,600;1,400&family=EB+Garamond:wght@400;600;700&family=Source+Sans+3:wght@400;600;700&display=swap">
+<style>
+  :root{
+    --blue:#13294b; --blue2:#1d4e89; --orange:#ff5f05; --link:#1d58a7;
+    --bg:#eef1f5; --panel:#fff; --ink:#14181f; --ink2:#3f4650; --muted:#6a7078;
+    --line:#d4d7dc; --line2:#b7bcc4; --code-bg:#f1f4f8; --ok:#0a7d3c;
+    --display:"EB Garamond",Georgia,serif;
+    --serif:"Crimson Text",Georgia,serif;
+    --sans:"Source Sans 3",system-ui,-apple-system,"Segoe UI",Arial,sans-serif;
+    --mono:"JetBrains Mono",ui-monospace,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    line-height:1.55;padding:0 0 80px;-webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:940px;margin:0 auto;padding:0 20px}
+  header.banner{
+    background:linear-gradient(150deg,#17325f,var(--blue) 55%,#0d1e39);
+    color:#fff;border-bottom:4px solid var(--orange);
+  }
+  header.banner .wrap{padding:38px 20px}
+  header.banner h1{
+    font-family:var(--display);font-weight:600;font-size:30px;margin:0;
+  }
+  header.banner p{
+    font-family:var(--serif);font-style:italic;font-size:16px;
+    color:rgba(255,255,255,.82);margin:8px 0 0;max-width:64ch;
+  }
+  h2{
+    font-family:var(--display);font-size:24px;color:var(--blue);
+    margin:44px 0 4px;padding-bottom:6px;position:relative;
+  }
+  h2::after{content:"";position:absolute;left:0;bottom:-1px;width:44px;height:3px;background:var(--orange);border-radius:2px}
+  h3{font-family:var(--display);font-size:18px;color:var(--blue);margin:24px 0 8px}
+  p.lead{font-family:var(--serif);font-size:16px;color:var(--ink2);margin:10px 0}
+  code{font-family:var(--mono);font-size:.86em;background:var(--code-bg);color:var(--ink);padding:1px 5px;border-radius:4px}
+  header.banner code{background:rgba(255,255,255,.16);color:#fff}
+  a{color:var(--link)}
+
+  /* vertical flow */
+  ol.flow{list-style:none;margin:18px 0 0;padding:0}
+  ol.flow>li{
+    position:relative;background:var(--panel);border:1px solid var(--line);
+    border-left:4px solid var(--blue2);border-radius:8px;padding:14px 18px;
+    box-shadow:0 1px 2px rgba(16,32,60,.06);
+  }
+  ol.flow>li+li{margin-top:40px}
+  ol.flow>li+li::before{
+    content:"";position:absolute;left:26px;top:-34px;width:2px;height:22px;background:var(--line2);
+  }
+  ol.flow>li+li::after{
+    content:"";position:absolute;left:21px;top:-14px;
+    border:6px solid transparent;border-top-color:var(--orange);
+  }
+  ol.flow .n{
+    display:inline-block;min-width:22px;height:22px;line-height:22px;text-align:center;
+    background:var(--blue);color:#fff;font-weight:700;font-size:12px;border-radius:50%;
+    margin-right:8px;vertical-align:1px;
+  }
+  ol.flow b{color:var(--blue)}
+  ol.flow .sub{font-family:var(--serif);color:var(--muted);font-size:14.5px;margin-top:4px}
+
+  /* two-branch split */
+  .split{display:grid;gap:16px;margin-top:18px}
+  @media(min-width:680px){.split{grid-template-columns:1fr 1fr}}
+  .branch{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px 18px}
+  .branch.sql{border-top:3px solid var(--blue2)}
+  .branch.rag{border-top:3px solid var(--orange)}
+  .branch h4{margin:0 0 6px;font-family:var(--sans);font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:var(--blue)}
+  .branch p{margin:6px 0;font-family:var(--serif);font-size:14.5px;color:var(--ink2)}
+
+  /* cards row (storage layers) */
+  .cards{display:grid;gap:16px;margin-top:18px}
+  @media(min-width:680px){.cards{grid-template-columns:1fr 1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:18px 20px;box-shadow:0 1px 2px rgba(16,32,60,.06)}
+  .card h3{margin-top:0}
+  .tag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+
+  table{width:100%;border-collapse:collapse;font-size:13px;margin:12px 0 0;background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  tbody tr:last-child td{border-bottom:0}
+  th{background:#eef2f8;color:var(--blue);font-size:11px;letter-spacing:.05em;text-transform:uppercase}
+  td:first-child{font-family:var(--mono);font-size:12px;white-space:nowrap;color:var(--blue)}
+
+  pre{
+    background:var(--blue);color:#e8eef7;border-radius:8px;padding:16px 18px;
+    overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.5;margin:14px 0 0;
+  }
+  pre .k{color:#ffb27a}
+  .note{
+    font-family:var(--serif);font-size:14.5px;color:var(--ink2);
+    background:#fff7ed;border:1px solid #fcd9b6;border-left:3px solid var(--orange);
+    border-radius:8px;padding:12px 16px;margin-top:16px;
+  }
+  footer{margin-top:52px;font-family:var(--serif);font-size:13px;color:var(--muted);text-align:center}
+</style>
+</head>
+<body>
+
+<header class="banner">
+  <div class="wrap">
+    <h1>Illini Course Copilot — Architecture &amp; Data Flow</h1>
+    <p>How the data is stored, how it gets in, how a question travels through the app, how model-written SQL is kept safe, and how the hybrid SQL + vector RAG answer engine works. Version 2, written from the code as of 2026-09-24. Companion to <code>DECISIONS_v2.md</code> (the why) and <code>DEPLOYMENT_v2.md</code> (the ops).</p>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <h2>1. Three kinds of storage, one database</h2>
+  <p class="lead">Everything lives in one database: SQLite locally (<code>data/courses.db</code>), Neon Postgres in production, chosen by whether <code>DATABASE_URL</code> is set. <code>app/db.py</code> hides the difference, so every query is written once with <code>?</code> placeholders.</p>
+
+  <div class="cards">
+    <div class="card">
+      <span class="tag">Layer 1 · exact facts</span>
+      <h3>The catalog</h3>
+      <p class="lead" style="font-size:15px;margin:6px 0 0">Seven relational tables. Rows are <b>upserted on their natural key</b>, so re-scraping is idempotent. The only tables the assistant's SQL may touch, through the SQL guard and a SELECT-only role.</p>
+    </div>
+    <div class="card">
+      <span class="tag">Layer 2 · meaning search</span>
+      <h3>Vector store (<code>course_embeddings</code>)</h3>
+      <p class="lead" style="font-size:15px;margin:6px 0 0">Postgres only, via <code>pgvector</code>. Each course's description as a 384-number vector. Reached only through the <code>course_content_search</code> tool, never through SQL.</p>
+    </div>
+  </div>
+  <div class="note"><b>A third group, invisible to the assistant:</b> the app's own bookkeeping — <code>ask_log</code> (every question, its outcome and latency), <code>answer_feedback</code>, <code>site_feedback</code> and <code>sync_requests</code>. They hold other users' IPs and questions, so the SQL guard and the database role both exclude them.</div>
+
+  <h2>2. The schema</h2>
+
+  <h3>The catalog (what the assistant can query)</h3>
+  <table>
+    <thead><tr><th>Table</th><th>One row per…</th><th>Key columns</th></tr></thead>
+    <tbody>
+      <tr><td>sections</td><td>section (CRN) per term</td><td>year, semester, subject, course_number, course_label, crn, section_name, instructor, enrollment_status, credit_hours, <b>description</b>, part_of_term, section_start_date, section_end_date, scraped_at — <code>UNIQUE(year, semester, subject, course_number, crn)</code></td></tr>
+      <tr><td>meetings</td><td>meeting block (lecture / lab)</td><td>year, semester, subject, course_number, crn, meeting_type, days_of_week (<code>MTWRFSU</code>, R = Thursday), start_time, end_time (text: <code>09:00AM</code>, <code>09:00 AM</code> or <code>ARRANGED</code>), building, room, instructor</td></tr>
+      <tr><td>grade_distributions</td><td>term × course × type × instructor</td><td>year, term, year_term, subject, course_number, course_title, sched_type, primary_instructor, a_plus … f, w, students — <i>empty today (upstream lag)</i></td></tr>
+      <tr><td>teachers_ranked_excellent</td><td>ranked instructor × term</td><td>year, term, unit (a department <i>name</i>), last_name, first_name, role, ranking, course_number — <i>empty today</i></td></tr>
+      <tr><td>gen_ed_categories</td><td>course (one snapshot)</td><td>subject, course_number, course_title, acp, cs, hum, nat, qr, sbs (each a short code or NULL)</td></tr>
+      <tr><td>prerequisites</td><td>course × group × option</td><td>subject, course_number, group_index (groups are AND-ed), req_subject, req_course_number (alternatives within a group), relation, condition_text, raw_text</td></tr>
+      <tr><td>academic_calendar</td><td>term × event</td><td>year, semester, event_date, event_end_date, title, category (instruction / add / drop / withdraw / break / holiday / finals / grades / registration / commencement / other), raw_date</td></tr>
+    </tbody>
+  </table>
+  <div class="note"><b>description</b> is the catalog blurb and is <b>identical for every section of a course</b>, which is why the vector store keys on the course, not the section.</div>
+
+  <h3>Vector store</h3>
+  <pre><span class="k">CREATE EXTENSION</span> vector;
+
+<span class="k">CREATE TABLE</span> course_embeddings (
+    subject        TEXT,
+    course_number  TEXT,
+    description    TEXT,             <span style="color:#8fa9c9">-- the raw blurb, kept for display</span>
+    embedding      VECTOR(384),      <span style="color:#8fa9c9">-- from BAAI/bge-small-en-v1.5</span>
+    updated_at     TIMESTAMP,
+    <span class="k">PRIMARY KEY</span> (subject, course_number)   <span style="color:#8fa9c9">-- one row per COURSE</span>
+);
+<span class="k">CREATE INDEX</span> … <span class="k">USING</span> hnsw (embedding vector_cosine_ops);</pre>
+  <p class="lead">The <code>embedding</code> is the <code>description</code> run through <b>bge-small-en-v1.5</b> via <code>fastembed</code> (ONNX, local CPU, no key, no rate limit). The <b>HNSW index</b> makes nearest-neighbour search fast. Rows are written at scrape time or in bulk by <code>app/backfill_embeddings.py</code>. 5,464 rows in production.</p>
+
+  <h2>3. How data gets in</h2>
+  <p class="lead">UIUC's firewall rejects datacenter IPs and soft-blocks long sweeps (it answers with empty lists instead of an error), so scraping only happens from the operator's residential machine. Render never scrapes; it only reads Neon.</p>
+  <ol class="flow">
+    <li><span class="n">1</span><b>A visitor asks for fresher data</b> — pressing <b>Sync</b> on a stale department sends <code>POST /sync/request</code>, which increments that department's counter in <code>sync_requests</code>.
+      <div class="sub">No scheduled full re-scrape exists; demand decides what gets refreshed.</div></li>
+    <li><span class="n">2</span><b>The operator refreshes locally</b> — <code>python -m app.sync_requests --list</code> ranks departments by demand; <code>--run DEPT …</code> (or <code>--run --top N</code>) scrapes the current term, plus the next if UIUC has published it, and writes straight to Neon.
+      <div class="sub">Wall detection stops the run after 2 departments in a row come back empty or have their term probe rejected. Departments synced in the last 7 days are skipped.</div></li>
+    <li><span class="n">3</span><b>The other tables</b> — <code>load_grades.py</code>, <code>load_tre.py</code> and <code>load_geneds.py</code> read <code>wadefagen/datasets</code> CSVs (grades and rankings kept to a rolling term window from <code>terms.py</code>); <code>load_prereqs.py</code> parses prerequisites out of descriptions; <code>load_calendar.py</code> parses the registrar's page for a term.</li>
+    <li><span class="n">4</span><b>Vectors</b> — the scraper embeds new descriptions as it goes; <code>backfill_embeddings.py</code> fills any gaps (dropping and rebuilding the HNSW index around a bulk load).</li>
+    <li><span class="n">5</span><b>Render reads</b> — <code>app/api.py</code> serves the pages and the API from Neon. Model-written SQL uses a separate, SELECT-only connection (section 5).
+      <div class="sub">Production was first populated by copying a complete local SQLite database into Neon (<code>migrate_sqlite_to_neon.py</code>), because a cloud-bound full scrape hit the soft block.</div></li>
+  </ol>
+
+  <h2>4. How a question is answered</h2>
+  <ol class="flow">
+    <li><span class="n">1</span><b>Browser → <code>POST /ask/stream</code></b> — sends <code>{ question, history }</code>. The chat is kept in the tab's <code>sessionStorage</code>; <code>history</code> is its last 3 turns.</li>
+    <li><span class="n">2</span><b>Cheap refusals first</b> — a body over 256 KB gets 413; if the concurrency ceiling is full (2 in production) the request gets an immediate 503 "busy".</li>
+    <li><span class="n">3</span><b>Guardrails, with a reserved slot</b> — a question over 500 characters is rejected; otherwise a <code>pending</code> row is written to <code>ask_log</code> <i>before</i> any model call, and the shared daily cap (250) and per-IP limits (10/hour, 60/day) are checked by counting rows in reservation order. Parallel requests therefore can't all slip past on one count. Blocked → a plain JSON error, no stream.</li>
+    <li><span class="n">4</span><b>Build the agent input</b> — the trimmed history (question ≤ 200 chars, answer ≤ 250) is prepended as "context only, do not re-answer". The system prompt carries the schema, the house rules and live DATA NOTES (current year, terms in the data, which terms have unpublished registration, which tables are empty).</li>
+    <li><span class="n">5</span><b>The agent picks a tool</b> — a LangChain tool-calling agent on Groq <code>openai/gpt-oss-120b</code> (one retry on <code>qwen/qwen3.8-27b</code> after a rate limit). One of two tools per question:
+      <div class="split">
+        <div class="branch sql">
+          <h4>sql_db_query</h4>
+          <p>Structured facts: who teaches CS 225, section counts, meeting times, gen-eds, prerequisites, deadlines.</p>
+          <p>The written SQL passes the SQL guard, then runs in a read-only transaction on the SELECT-only role (section 5). A result over 6,000 characters is cut, with a note to narrow the query.</p>
+        </div>
+        <div class="branch rag">
+          <h4>course_content_search &nbsp;(the RAG path)</h4>
+          <p>Open-ended: "what courses cover machine learning", "classes about the brain".</p>
+          <p>Runs the multi-query vector retrieval in section 6 and hands the matched descriptions back as context.</p>
+        </div>
+      </div>
+    </li>
+    <li><span class="n">6</span><b>Generate, cite and stream</b> — the answer streams back as Server-Sent Events (<code>status</code> → <code>token</code> → <code>done</code>). If it answered, a footer names the datasets the executed SQL touched and each subject's last sync. The reserved <code>ask_log</code> row is rewritten to the real outcome and latency, and the concurrency slot is released.</li>
+  </ol>
+
+  <h2>5. Keeping model-written SQL safe</h2>
+  <p class="lead">Three independent layers. None relies on another, so one misconfiguration doesn't reopen the database.</p>
+  <ol class="flow">
+    <li><span class="n">1</span><b>The prompt</b> — stays in scope, refuses role changes, treats tool results as data, never instructions.</li>
+    <li><span class="n">2</span><b>The SQL guard</b> (<code>app/sql_guard.py</code>) — parses the statement with <code>sqlglot</code>. Allowed: exactly one query with a <code>SELECT</code> (or set-operation) root, no write, DDL or session node anywhere in the tree, only the seven catalog tables, none of a small denylist of functions (<code>pg_sleep</code>, <code>set_config</code>, <code>query_to_xml</code>, file functions). Anything else is returned to the model as an error it can fix.
+      <div class="sub">Catches what prefix checks miss, e.g. <code>WITH d AS (DELETE … RETURNING *) SELECT …</code>.</div></li>
+    <li><span class="n">3</span><b>The database</b> — every statement runs in a <code>READ ONLY</code> transaction with an 8 s <code>statement_timeout</code> (transaction-scoped, so it holds through Neon's pooler), connected as <code>app_ro</code>: SELECT on the seven catalog tables only. On Render, the assistant refuses to answer if that role isn't configured.</li>
+  </ol>
+
+  <h2>6. The RAG loop, in detail</h2>
+  <p class="lead">What <code>course_content_search</code> does inside step 5 above: <b>Retrieve → Augment → Generate</b>.</p>
+  <ol class="flow">
+    <li><span class="n">1</span><b>Expand the query</b> — one small non-streaming LLM call rewrites the topic and adds 3 distinct facets. <code>"machine learning"</code> → <code>["machine learning", "supervised learning", "unsupervised learning", "ethical AI and bias"]</code>. Falls back to the raw topic on any failure. <span class="sub">Toggle with <code>RAG_MULTIQUERY</code>; its tokens are never streamed to the user.</span></li>
+    <li><span class="n">2</span><b>Embed locally</b> — the <i>same</i> bge-small model that built the table, one batch call.</li>
+    <li><span class="n">3</span><b>Search pgvector per phrase</b> — <code>ORDER BY embedding &lt;=&gt; $vec LIMIT 6</code>. <code>&lt;=&gt;</code> is cosine distance, served by the HNSW index.</li>
+    <li><span class="n">4</span><b>Reciprocal Rank Fusion</b> — merge the lists: <code>score += 1 / (60 + rank)</code>, keyed on <code>(subject, course_number)</code>, keeping the best distance. Top 10.</li>
+    <li><span class="n">5</span><b>Return as context</b> — the agent groups the merged descriptions into a thematic overview.</li>
+  </ol>
+  <div class="note">Structured questions never enter this loop, so they never pay for the expansion call. On local SQLite the tool isn't registered at all.</div>
+
+  <h2>7. Conversation memory</h2>
+  <p class="lead">The server is stateless. The browser keeps the chat in <code>sessionStorage</code> (the last 10 turns, each answer capped at 8,000 characters), so it survives moving between pages and reloading, and clears when the tab closes or with <b>New chat</b>. Each question sends the last 3 turns; the server re-trims them and uses them only to resolve references like "it" or "the second one". Nothing about the conversation is stored on the server beyond the question log.</p>
+
+  <footer>
+    Illini Course Copilot · architecture reference v2 · 2026-09-24 · see <code>DECISIONS_v2.md</code> for the reasoning behind each choice
+  </footer>
+
+</div>
+</body>
+</html>

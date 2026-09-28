@@ -157,7 +157,7 @@ on the local SQLite copy, `data/courses.db` backed up and restored. 9 LLM-backed
     is Unicode-aware).
 - Observed: validation is only `len<=12 and str.isalpha()`; no allowlist against known
   subjects, no cap on distinct rows, no rate limit (the last is intentional per
-  `DECISIONS.md`).
+  `DECISIONS_v2.md`).
 - Impact: an unauthenticated client can flood the `sync_requests` table and pollute
   the demand-ranking the operator uses to decide what to re-scrape (junk departments
   crowd out real ones); unbounded row growth.
@@ -249,7 +249,7 @@ on the local SQLite copy, `data/courses.db` backed up and restored. 9 LLM-backed
 |---|---|---|
 | HIGH - XFF rate-limit bypass | mitigated | Added `ASK_GLOBAL_PER_DAY` shared cap (default 250) in `ask_log.global_over_limit`, checked before per-IP in `/ask`. Keys on nothing client-controlled. Per-IP kept as friction. |
 | MED - `/schedule/conflicts` O(n^2) DoS | fixed | `ConflictCheckRequest.crns` capped at 50 (`Field(max_length=50)`); `year`/`semester` bounded. |
-| MED - SQL agent not read-only | mitigated (needs operator step) | `agent.py._db_uri()` prefers `DATABASE_URL_RO`; `DEPLOYMENT.md` §3.5 has the Neon SELECT-only role recipe. Prompt guard remains the first layer. |
+| MED - SQL agent not read-only | mitigated (needs operator step) | `agent.py._db_uri()` prefers `DATABASE_URL_RO`; `DEPLOYMENT_v2.md` §3.5 has the Neon SELECT-only role recipe. Prompt guard remains the first layer. |
 | MED - no security headers | fixed | HTTP middleware adds CSP, X-Frame-Options DENY, nosniff, Referrer-Policy, HSTS. |
 | LOW - driver error text leaked | fixed | `run_query`, generic handler, `/ask` paths log the real error, return generic text. |
 | LOW - no output encoding (latent XSS) | fixed | `esc()` helper in `index.html` / `freshness.html`, applied to all DB-sourced values in `innerHTML` strings. |

@@ -8,7 +8,7 @@ app/db.py), and returns a natural language answer.
 
 LLM provider is chosen automatically from whichever API key is set, in this
 order: GROQ_API_KEY (recommended - free, highest daily quota), OPENAI_API_KEY,
-GEMINI_API_KEY. See DECISIONS.md for why Groq is preferred.
+GEMINI_API_KEY. See DECISIONS_v2.md for why Groq is preferred.
 
 Usage:
     python -m app.agent "Which CS courses have the most sections this fall?"
@@ -224,7 +224,7 @@ def _db_uri() -> str:
     """SQLAlchemy connection string for the agent's SQL tool.
 
     db.readonly_database_url(): DATABASE_URL_RO (a role with SELECT on only
-    the INCLUDED_TABLES - DEPLOYMENT.md §3.5) if set, else DATABASE_URL, else
+    the INCLUDED_TABLES - DEPLOYMENT_v2.md §3.5) if set, else DATABASE_URL, else
     the local SQLite file. On Render a missing DATABASE_URL_RO raises instead
     of falling back to the owner role. Whatever the role, build_agent() also
     makes the engine read-only (sql_guard.readonly_engine) and every
@@ -244,7 +244,7 @@ def _db_uri() -> str:
 
 
 # Second Groq model tried when the primary hits a rate limit (429). qwen matched
-# the 120b on the eval subset and beat gpt-oss-20b; see DECISIONS.md 2026-09-20.
+# the 120b on the eval subset and beat gpt-oss-20b; see DECISIONS_v2.md §6.
 DEFAULT_GROQ_FALLBACK = "qwen/qwen3.8-27b"
 
 
@@ -275,7 +275,7 @@ def _build_llm(streaming: bool = False, model: str | None = None, fallback: bool
     """Pick the LLM provider. By default it's whichever API key is set, in
     order: GROQ_API_KEY (preferred - free; ~80-100 real questions/day in
     practice, bound by a 200K tokens/day cap more than the 1,000 requests/day
-    figure - see DECISIONS.md), then OPENAI_API_KEY, then GEMINI_API_KEY.
+    figure - see DECISIONS_v2.md), then OPENAI_API_KEY, then GEMINI_API_KEY.
 
     Set LLM_PROVIDER (groq | gemini | openai) to force one regardless of which
     other keys are present - e.g. LLM_PROVIDER=openai to fall back to OpenAI
@@ -560,7 +560,7 @@ def build_agent(verbose: bool = False, streaming: bool = False, model: str | Non
             # burn several thousand tokens fast - capping this bounds the
             # worst case per question instead of letting one bad question (or
             # a retry loop calling ask() repeatedly) exhaust the daily token
-            # budget. See DECISIONS.md for the incident that motivated this.
+            # budget. See DECISIONS_v2.md for the incident that motivated this.
             # Lowered 8 -> 6 alongside the "don't call schema/checker tools"
             # prompt rules above: a well-formed answer now needs ~2 iterations
             # (query, then synthesize), so 6 still leaves slack for one retry.
@@ -694,7 +694,7 @@ def _sections_empty() -> bool:
 # pipeline in app/sql_pipeline/ instead of create_sql_agent. Off by default -
 # the live site is unaffected until this is deliberately set. "critic" runs
 # the full loop, "baseline" runs the same generator with the loop disabled
-# (the control arm the evals compare against). See DECISIONS.md and evals/.
+# (the control arm the evals compare against). See DECISIONS_v2.md and evals/.
 _SQL_PIPELINE_MODE = os.environ.get("SQL_PIPELINE", "").strip().lower()
 
 

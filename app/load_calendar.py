@@ -60,7 +60,7 @@ _DATE_RE = re.compile(
 # <time>", so it isn't a bare date), and on its own it isn't a real event
 # either - it's a continuation of the title fragment right before it. This
 # catches that shape so it gets merged into the previous title instead of
-# becoming its own bogus "October 13 at 2:00 PM" row (see DECISIONS.md).
+# becoming its own bogus "October 13 at 2:00 PM" row (see DECISIONS_v2.md).
 _DATE_TIME_ONLY_RE = re.compile(
     r"^\s*[A-Za-z]{3,9}\.?\s+\d{1,2}\s+at\s+\d{1,2}(:\d{2})?\s*[AaPp]\.?[Mm]\.?\s*$"
 )
@@ -115,7 +115,7 @@ class _Text(HTMLParser):
 
     Skips text inside <script>/<style> - their content is code/JSON, never
     page text, and without this a page's speculation-rules or emoji-data
-    <script> blob gets read as if it were calendar text (see DECISIONS.md's
+    <script> blob gets read as if it were calendar text (see DECISIONS_v2.md's
     "calendar page fixes" entry - a literal '{"prefetch":[...' JSON string
     was showing up as a bogus event before this)."""
     _BLOCK = {"dt", "dd", "li", "p", "br", "tr", "div", "h1", "h2", "h3", "h4"}
@@ -202,7 +202,7 @@ def _categorize(title: str) -> str:
 # office hours, and nav links - which used to get swept in as if it were
 # more calendar text and attributed to whichever date heading happened to
 # be last, producing nonsense entries like "901 West Illinois Street"
-# under the final real date (see DECISIONS.md). Truncating here is a
+# under the final real date (see DECISIONS_v2.md). Truncating here is a
 # no-op (keeps the full page) if the site ever drops this comment.
 _CONTENT_END_MARKER = "<!-- .entry-content -->"
 

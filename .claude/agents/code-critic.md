@@ -14,7 +14,7 @@ What to check, in priority order:
 2. Efficiency: work done on every pointer move or scroll without throttling, layout thrash (reads and writes interleaved), heavy `backdrop-filter` or `filter` on large areas, unneeded re-renders, duplicated network calls, large assets, unused CSS or JS.
 3. Structure and naming: file names that say what they hold, one responsibility per file, shared code in one place instead of copy-pasted across pages, consistent naming (kebab-case CSS classes, camelCase JS), no dead code or stale comments.
 4. Best practices: accessibility (contrast, focus states, ARIA, tap-target size, keyboard use), progressive enhancement, no inline event handlers, no magic numbers without a name or comment, small functions, comments that explain why not what.
-5. Project rules (from the user's standing preferences): user-facing copy stays short and written for a visitor, never names env vars, API keys, providers or repo files; layout is checked for alignment and dead space; reasoning for architecture and scope decisions is recorded in `DECISIONS.md`.
+5. Project rules (from the user's standing preferences): user-facing copy stays short and written for a visitor, never names env vars, API keys, providers or repo files; layout is checked for alignment and dead space; reasoning for architecture and scope decisions is recorded in `DECISIONS_v2.md`.
 
 Output format, and nothing else:
 

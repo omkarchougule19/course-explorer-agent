@@ -3,7 +3,7 @@ ask_log.py
 
 Persists every /ask attempt and enforces a lightweight per-client guardrail,
 so a handful of users can't drain the Groq free-tier budget (200,000
-tokens/day, ~80-100 real questions - see DECISIONS.md) by hammering the
+tokens/day, ~80-100 real questions - see DECISIONS_v2.md) by hammering the
 assistant with junk.
 
 Table `ask_log`:

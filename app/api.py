@@ -167,7 +167,7 @@ def _warmup_embeddings():
     first RAG question - the local ONNX load (~1-2s once the model is baked
     into the build, see render.yaml) happens while Render's own container
     spin-up is already in progress, not stacked onto a user's first request.
-    See DECISIONS.md for the full cold-start reasoning. Postgres-only: the
+    See DECISIONS_v2.md for the full cold-start reasoning. Postgres-only: the
     local SQLite dev fallback never registers the vector-search tool at all,
     so there's nothing to warm up there."""
     if db.is_postgres():
@@ -471,7 +471,7 @@ class SyncRequest(BaseModel):
 def post_sync_request(payload: SyncRequest):
     """Register demand to refresh one department. Bumps a counter the operator
     ranks by when deciding what to re-scrape locally. No rate limit by design
-    (see DECISIONS.md) - repeated clicks just raise the number."""
+    (see DECISIONS_v2.md) - repeated clicks just raise the number."""
     subject = (payload.subject or "").strip().upper()
     # ASCII letters only, 2-12 chars: real UIUC subject codes (CS, ECE, MATH,
     # ...). isascii() + isalpha() together reject Unicode "letters" that could
@@ -554,7 +554,7 @@ def _ask_precheck(question: str, ip: str) -> tuple[Optional[tuple[int, str]], Op
     row_id is the `pending` ask_log row reserved for this call; the caller
     must ask_log.finish() it. Reserving before checking is what makes the
     caps hold under concurrency (see ask_log.reserve). See app/ask_log.py and
-    DECISIONS.md for the rationale."""
+    DECISIONS_v2.md for the rationale."""
     with get_conn() as conn:
         if len(question) > ask_log_mod.MAX_CHARS:
             ask_log_mod.record(conn, ip, question, "too_long")
@@ -598,7 +598,7 @@ def ask_agent(payload: AskRequest, request: Request):
     Requires GROQ_API_KEY (or GEMINI/OPENAI) on the server. Every attempt is
     written to ask_log; a per-IP rate limit and a length cap run before the
     LLM so junk can't drain the provider's daily budget (see app/ask_log.py
-    and DECISIONS.md). The browser UI uses /ask/stream instead; this stays as
+    and DECISIONS_v2.md). The browser UI uses /ask/stream instead; this stays as
     the non-streaming fallback and the documented curl entry point."""
     question = (payload.question or "").strip()
     if not question:
@@ -853,7 +853,7 @@ def admin_site_feedback_reviewed(feedback_id: int):
 def get_freshness():
     """Last-updated timestamp and row count per (subject, year, semester) already
     in the database - i.e. how stale each subject/term's data is, since nothing
-    here is live (see DECISIONS.md: scraping only ever runs locally, manually)."""
+    here is live (see DECISIONS_v2.md: scraping only ever runs locally, manually)."""
     with get_conn() as conn:
         rows = run_query(
             conn,

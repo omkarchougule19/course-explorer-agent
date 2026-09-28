@@ -10,7 +10,7 @@ when produced by the exact same model.
 
 Groq was the original plan for embeddings (nomic-embed-text-v1_5), but
 turned out to have no embeddings API at all - confirmed both by a live 404
-and Groq's own docs. This replaces that entirely. See DECISIONS.md for the
+and Groq's own docs. This replaces that entirely. See DECISIONS_v2.md for the
 full reasoning, including the measured memory footprint (~130MB for the
 model on top of the rest of the app - well within Render's free 512MB tier).
 
@@ -31,7 +31,7 @@ EMBEDDING_DIM = 384
 
 # fastembed's own default cache directory is a temp folder, which isn't a safe
 # place to rely on surviving between Render's build step and the running
-# service (see DECISIONS.md - the cold-start fix bakes the model in at build
+# service (see DECISIONS_v2.md - the cold-start fix bakes the model in at build
 # time, which only works if build and runtime agree on where it lives). Pin
 # it to a fixed path inside the project instead, used identically by every
 # caller: render.yaml's build step, this module's own warmup(), and local dev.
@@ -84,7 +84,7 @@ def embed_text(text: str) -> Optional[List[float]]:
 def init_course_embeddings_table(conn: db.Connection) -> None:
     """Create the course_embeddings table + pgvector extension + similarity
     index. No-op on SQLite (no vector type there) - vector search is
-    Postgres-only by design, see DECISIONS.md."""
+    Postgres-only by design, see DECISIONS_v2.md."""
     if conn.backend != "postgres":
         return
     conn.execute("CREATE EXTENSION IF NOT EXISTS vector")

@@ -111,7 +111,7 @@ def get_connection(db_path: Optional[Path] = None) -> Connection:
 
 def readonly_database_url() -> Optional[str]:
     """The Postgres URL for running LLM-written SQL: DATABASE_URL_RO (a
-    SELECT-only role, see DEPLOYMENT.md §3.5) if set, else DATABASE_URL, else
+    SELECT-only role, see DEPLOYMENT_v2.md §3.5) if set, else DATABASE_URL, else
     None (SQLite). On Render (RENDER is set) a missing DATABASE_URL_RO is a
     hard error rather than a silent fall-back to the owner role, unless
     ALLOW_RW_AGENT_DB is set as a deliberate, temporary opt-out.

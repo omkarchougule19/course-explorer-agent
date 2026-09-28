@@ -3,7 +3,7 @@
 // sections while browsing), schedule.html (viewing/managing the cart), and
 // every page's nav badge (just needs the count). Client-side only - there's
 // no server-side "schedule" concept, matching the rest of this app's
-// no-accounts design (see DECISIONS.md).
+// no-accounts design (see DECISIONS_v2.md).
 (function (global) {
   'use strict';
 

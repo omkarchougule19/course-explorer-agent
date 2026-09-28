@@ -8,7 +8,7 @@ _CappedSQLDatabase) and the Generator -> Critic -> Repair pipeline
 
 The prompt (SYSTEM_CONTEXT) is the first line of defence against a jailbreak;
 this is the second, and the read-only transaction + least-privilege role
-(`readonly_engine()` / db.get_readonly_connection(), DEPLOYMENT.md §3.5) is
+(`readonly_engine()` / db.get_readonly_connection(), DEPLOYMENT_v2.md §3.5) is
 the third. None of them relies on another.
 
 check_select() rejects, by parsing with sqlglot rather than by prefix

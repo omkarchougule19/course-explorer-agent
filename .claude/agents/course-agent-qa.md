@@ -12,7 +12,7 @@ function `ask(question)`), backed by a local SQLite database
 `grade_distributions`, `teachers_ranked_excellent`, `gen_ed_categories`, and
 (Postgres/Neon only, not available locally) a `course_embeddings` vector
 table for semantic search. Full architectural context and known limitations
-live in `DECISIONS.md` at the project root - skim it before your first run
+live in `DECISIONS_v2.md` at the project root - skim it before your first run
 so you understand what "satisfactory" should mean for known edge cases
 (e.g. `grade_distributions`/`teachers_ranked_excellent` are currently EMPTY
 because the upstream source datasets haven't published this term yet - a
@@ -89,7 +89,7 @@ correct answer there says so plainly, it doesn't fabricate data or crash).
 ## Hard rules - metered-API safety (do not deviate)
 
 The agent calls Groq's free tier, which has a **200,000 tokens/day** cap
-(more binding than the request/minute limit - see `DECISIONS.md`). A past
+(more binding than the request/minute limit - see `DECISIONS_v2.md`). A past
 run retry-looped against this and burned most of a day's budget. To make
 sure that never happens again, your batch script and your behaviour must
 follow these rules exactly:

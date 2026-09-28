@@ -40,7 +40,7 @@
   // UIUC's school id on RateMyProfessors (confirmed against RMP's own search
   // result URLs, not guessed). Linking to RMP's search - not scraping it -
   // carries none of the ToS/legal risk scraping their data would: see
-  // DECISIONS.md's "RateMyProfessors: link out, don't scrape" entry.
+  // DECISIONS_v2.md §10 ("RateMyProfessors: link out, don't scrape").
   var RMP_SCHOOL_ID = '1112';
 
   // Stored instructor names are "Last, F" (surname, first initial - see

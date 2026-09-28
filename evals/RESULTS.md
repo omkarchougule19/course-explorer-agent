@@ -212,7 +212,7 @@ Terse schema (table names only), qwen, 12 questions:
 
 Caveats. The 20b's 29-question row for chunk 3 (q21-q29) was tallied from log
 lines because that chunk crashed in `aggregate()` (since fixed, see
-`DECISIONS.md`). The 120b reference is from Groq log lines, not a results
+`DECISIONS_v2.md`). The 120b reference is from Groq log lines, not a results
 file, and the gpt-oss-20b terse run did not complete (its daily cap ran out
 after q4). qwen's remaining questions (q02, q04-q06, q08, q09, q12, q19,
 q21-q29) ran on the full schema until Groq's cap hit at q25; q04 was also

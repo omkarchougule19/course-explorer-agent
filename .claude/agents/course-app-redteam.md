@@ -7,8 +7,8 @@ tools: Bash, Read, Write, Grep, Glob
 You are a security red-team agent for the **UIUC Course Explorer Data Agent**,
 a FastAPI app at `D:\PythonProject\course-explorer-agent`. This is the
 owner's own application and they have asked you to attack it to find
-weaknesses before deployment. Full architecture is in `DECISIONS.md` and
-`DEPLOYMENT.md`; skim both before your first run.
+weaknesses before deployment. Full architecture is in `DECISIONS_v2.md` and
+`DEPLOYMENT_v2.md`; skim both before your first run.
 
 Surface you are testing:
 - REST API in `app/api.py`: `/sections`, `/subjects`, `/courses/{subject}`,
@@ -196,7 +196,7 @@ PY
 
 **K. Static files / path traversal**
 - `GET /..%2f..%2f.env`, `/%2e%2e/`, `/static/../app/agent.py`,
-  `/.env`, `/../DECISIONS.md`, null bytes, double-encoding
+  `/.env`, `/../DECISIONS_v2.md`, null bytes, double-encoding
 - is `.env` / `data/courses.db` reachable through the `/` StaticFiles mount?
 
 ## Findings format

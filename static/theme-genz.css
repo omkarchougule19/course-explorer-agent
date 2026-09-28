@@ -2,7 +2,7 @@
    every public page. style.css still owns layout and components; this file
    re-skins them (tokens, type, radius, gradients) and adds motion. Motion
    behaviour lives in motion.js. Why a layer instead of editing style.css in
-   place, and why dark-first: see DECISIONS.md, "Gen Z refresh".
+   place, and why dark-first: see DECISIONS_v2.md §10.
 
    Rules of thumb used throughout:
    - All movement sits behind prefers-reduced-motion: no-preference (or is

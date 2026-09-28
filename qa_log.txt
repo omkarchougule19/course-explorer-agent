@@ -122,7 +122,7 @@ A: I looked in the **grade_distributions** table for any rows matching the subje
 
 **Result:** No grade‑distribution rows found for CS 225.
 Verdict: satisfactory
-Reason: grade_distributions is genuinely empty (0 rows, confirmed by direct query) - the agent correctly says so instead of fabricating a trend, matching the known data-lag limitation documented in DECISIONS.md.
+Reason: grade_distributions is genuinely empty (0 rows, confirmed by direct query) - the agent correctly says so instead of fabricating a trend, matching the known data-lag limitation documented in DECISIONS_v2.md.
 
 Q: What is the capital of France?
 Scope: out-of-scope
@@ -192,7 +192,7 @@ Reason: In-scope answer still correct after the guardrail change - no regression
 ## Run: 2026-08-25 (fresh batch, 8 in-scope + 5 out-of-scope planned - see notes)
 
 Notes: This run hit a real incident before it could complete. An earlier attempt (not
-logged here, see DECISIONS.md) burned most of Groq's 200,000 tokens/day budget via a
+logged here, see DECISIONS_v2.md) burned most of Groq's 200,000 tokens/day budget via a
 runaway retry loop, blocking every question with 429s for a while. Root cause fixed in
 app/agent.py: SYSTEM_CONTEXT trimmed ~35% (4900->3170 chars) and max_iterations capped
 at 8 (was unbounded/15-default) to bound worst-case token cost per question. Budget

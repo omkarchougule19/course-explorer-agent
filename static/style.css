@@ -6,7 +6,7 @@
 
    Type: Newsreader (display + prose, built for long-form reading) + Roboto
    (data and controls). Palette: "Scholarly Navy + Gold" — a deliberate
-   choice away from UIUC's own brand colors (see DECISIONS.md rebrand entry)
+   choice away from UIUC's own brand colors (see DECISIONS_v2.md §11)
    to keep this visually distinct from any official university product. */
 
 :root {
@@ -546,7 +546,7 @@ td.crn { font-family: var(--mono); font-size: 12px; }
 .citation a:hover { color: var(--link); }
 
 /* "Ratings ->" next to an instructor page's name heading, opens
-   RateMyProfessors' own search (never scraped - see DECISIONS.md). Sized
+   RateMyProfessors' own search (never scraped - see DECISIONS_v2.md). Sized
    down from the heading and muted so it reads as secondary, not a second
    title. */
 .rmp-link {
