@@ -559,7 +559,11 @@ the GitHub repository, whose account carries the operator's real name.
   cost, read-only, never spends LLM budget).
 
 **History.** Harness 2026-09-10; five rows added 2026-09-19; Neon and noise
-practice 2026-09-24.
+practice 2026-09-24; 2026-09-28: `--rescore` now honours `--db` (it had
+always re-run SQL against the local snapshot) and every summary's `db` label
+reflects the database actually used (it was computed before `.env` loaded).
+The 2026-09-24 prompt comparison was re-scored on Neon for all three runs
+with identical numbers.
 
 ---
 

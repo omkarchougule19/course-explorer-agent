@@ -45,6 +45,11 @@ def _disable(key: str) -> None:
 
 
 def _prepare_env(provider: str | None, use_sqlite: bool) -> None:
+    # Load .env first, so DATABASE_URL is known before anything reports or
+    # chooses the backend (app.db doesn't load it; app.agent does, but later).
+    # load_dotenv never overrides a variable _disable() already set.
+    from dotenv import load_dotenv
+    load_dotenv(ROOT / ".env")
     if use_sqlite:
         # Reproducible: score against the local snapshot, not live Neon.
         _disable("DATABASE_URL")
@@ -356,12 +361,15 @@ _RAW_KEYS = ("arm", "answer", "outcome", "final_sql", "first_sql", "attempts",
              "exec_error", "rows", "trace", "latency_ms")
 
 
-def _rescore(ts: str) -> int:
+def _rescore(ts: str, use_sqlite: bool = True) -> int:
     """Recompute metrics for a completed run from its saved per-item records,
     without re-calling any model. Used after a change to score()/metrics.py so
-    an expensive run doesn't have to be repeated."""
+    an expensive run doesn't have to be repeated. Gold and candidate SQL are
+    re-executed against the database `--db` selects: rescore a Neon run with
+    `--db env`, or its SQL is compared against the local snapshot instead."""
     ts = ts.replace("evals/results/", "").replace("evals\\results\\", "").replace("__summary.json", "")
-    _prepare_env(None, use_sqlite=True)  # gold_sql re-execution against the snapshot
+    _prepare_env(None, use_sqlite=use_sqlite)
+    from app import db as _db  # after env prep
     items = {d["id"]: d for d in load_set(None)}
     arm_files = sorted(RESULTS_DIR.glob(f"{ts}__*.json"))
     arms = [f.stem.split("__")[1] for f in arm_files if not f.stem.endswith("summary")]
@@ -375,7 +383,8 @@ def _rescore(ts: str) -> int:
         scored[arm] = [score(items[d["id"]], {k: d.get(k) for k in _RAW_KEYS}) for d in raw]
 
     summaries = {a: aggregate(a, scored[a]) for a in arms}
-    meta = {"timestamp": ts, "provider": "(rescored)", "db": "sqlite (local snapshot)",
+    meta = {"timestamp": ts, "provider": "(rescored)",
+            "db": "postgres/env" if _db.is_postgres() else "sqlite (local snapshot)",
             "n": len(next(iter(scored.values())))}
     write_outputs(f"{ts}-rescored", scored, summaries, meta)
     print(render_table(summaries))
@@ -412,7 +421,7 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.rescore:
-        return _rescore(args.rescore)
+        return _rescore(args.rescore, use_sqlite=(args.db == "sqlite"))
 
     arms = [a.strip() for a in args.arms.split(",") if a.strip()]
     bad = [a for a in arms if a not in ALL_ARMS]

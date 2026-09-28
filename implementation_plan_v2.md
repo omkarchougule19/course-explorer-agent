@@ -78,8 +78,9 @@ slow answers), then 4-6 (answer quality you can prove), then 7-10 (data), then
   of 14,714 sections) while students use Neon (19,848).
 - **Done so far:** the `%` bug that broke gold SQL on Neon is fixed in
   `app/db.py`; full runs work with `--db env`.
-- **Plan:** make `env` the default when `DATABASE_URL` is set, and print the
-  database used at the top of every results file.
+- **Also done (2026-09-28):** each summary's `db` label now reflects the
+  database actually used, and `--rescore` honours `--db`.
+- **Plan:** make `env` the default when `DATABASE_URL` is set.
 - **Done when:** a default run uses Neon and its summary names the database.
 
 ### 5. Add the missing gold questions — `todo`
