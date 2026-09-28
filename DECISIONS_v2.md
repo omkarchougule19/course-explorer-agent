@@ -225,9 +225,10 @@ courses cover X" questions. Answers stream to the browser.
   teaches CS 225"); pure SQL can't answer "courses about the brain". The owner
   chose hybrid.
 - **LLM provider, by key.** `_build_llm()` tries `GROQ_API_KEY`, then
-  `OPENAI_API_KEY`, then `GEMINI_API_KEY`; `LLM_PROVIDER` forces one. Models
-  are env vars with defaults: `GROQ_MODEL` = `openai/gpt-oss-120b`,
-  `OPENAI_MODEL` = `gpt-4o-mini`, `GEMINI_MODEL` = `gemini-2.5-flash`.
+  `OPENAI_API_KEY`; `LLM_PROVIDER` forces one. Models are env vars with
+  defaults: `GROQ_MODEL` = `openai/gpt-oss-120b`, `OPENAI_MODEL` =
+  `gpt-4o-mini`. Gemini support was removed 2026-09-28: no Gemini key was
+  ever deployed, and its SDK stack was 9 packages (about 28 MB).
   Production runs Groq. The Groq key is shared by production, development and
   evals, and Groq's free tier caps **tokens per day per model** (about 200K),
   not just requests.
@@ -276,6 +277,7 @@ production before it wins on the full schema.
 
 **History.** Hybrid agent 2026-08; streaming 2026-08-31; provider order
 changed to Groq → OpenAI → Gemini 2026-09-19; qwen failover 2026-09-20;
+Gemini removed 2026-09-28;
 pipeline 2026-09-10.
 
 ---
@@ -605,5 +607,12 @@ semantic question doesn't pay for it).
 - **Deeper docs:** `docs/PROJECT_BIBLE_v2.html` (the handbook),
   `docs/architecture_v2.html` (the illustrated data flow), `DEPLOYMENT_v2.md`
   (the runbook), `security_findings.md` (red-team passes).
+- **No CI** (owner's decision, 2026-09-28): the offline tests run by hand
+  before a deploy; a GitHub Actions job was proposed and judged unnecessary
+  for a single-operator project with manual deploys.
+- **Only project files are tracked.** Claude Code skill data
+  (`.claude/skills/`, `skills-lock.json`) is per-machine and gitignored since
+  2026-09-28; it had been 77% of the repo's tracked bytes. The project's own
+  subagents in `.claude/agents/` stay tracked.
 - **Commits are reviewable pieces, on a branch, merged when approved**; nothing
   deploys until someone clicks deploy.

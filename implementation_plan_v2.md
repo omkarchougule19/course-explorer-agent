@@ -10,9 +10,11 @@ done-when. The *why* behind everything already built is in
 Status values: `todo`, `partly done`, `blocked` (needs something outside the
 code), `owner` (needs the owner's decision).
 
-Suggested order: 1-3 first (they are what students feel: slow cold starts and
-slow answers), then 4-6 (answer quality you can prove), then 7-10 (data), then
-11-17 (housekeeping and UI).
+Suggested order (revised 2026-09-28 after the `improvement-strategist`
+review): 18 first (it's paid on every question and stalls the whole site),
+then 19-21 (small, measurable accuracy fixes), then 1-3, then 22-24, then the
+rest. Items 18-26 came from that review; older item numbers are unchanged
+because other docs cite them.
 
 ---
 
@@ -184,6 +186,99 @@ slow answers), then 4-6 (answer quality you can prove), then 7-10 (data), then
 - A right-edge fade on the phone chip row (the swipe hint relies on a clipped
   chip).
 
+### 18. Build the agent once, and off the event loop — `todo` (highest priority)
+- **Problem:** `build_agent()` runs for every question and costs 1.5-1.8 s
+  before the first LLM call (measured locally against Neon): schema reflection
+  in `_CappedSQLDatabase` 1.0-1.3 s, 1-3 Groq clients 0.25-0.5 s each, and
+  `_sections_empty()` opens its own connection (~170 ms). On `/ask/stream` this
+  runs synchronously inside an `async` generator (`agent.py:761`, `:766`), so
+  with one uvicorn worker every page request probably stalls for ~1.7 s
+  whenever a question starts (derived from the code and timings, not observed
+  live).
+- **Plan:** build the engine, `SQLDatabase` and agent executors once per
+  process, cached on (provider, model, streaming, key values), with a separate
+  entry for the fallback model; drop `_sections_empty()` or fold it into the
+  cached `_data_notes()` counts; as a stopgap, run `build_agent` via
+  `run_in_threadpool`.
+- **Check:** `test_llm_failover.py`, `test_agent_guards.py` (they swap env
+  keys), a timing script (`build_agent` under 5 ms on the second call), and a
+  Groq question on both paths.
+- **Done when:** time to first token drops by ~1.5 s and pages stay responsive
+  while a question starts.
+
+### 19. IS and STAT fall 2026 have no meeting times — `owner` (sync running)
+- **Problem:** IS has 340 fall 2026 sections and 0 meeting rows, STAT 163 and
+  0 (scraped 08-02/03, before meetings were parsed). Meeting-time questions
+  return nothing, and the "No 8ams" / "Done by 5" / "No Fridays" filters let
+  all 503 through (a section with no timed meetings passes).
+- **Plan:** the owner runs `python -m app.sync_requests --run IS STAT`
+  (agreed 2026-09-28); then add a check (in `_data_notes()` or `/freshness`)
+  that flags any subject-term with sections but no meetings.
+- **Done when:** fall 2026 sections without a meetings row drop to a handful,
+  and the check exists.
+
+### 20. Tell the prompt that fall 2026 is partial — `todo`
+- **Problem:** DATA NOTES say "the latest is fall 2026", but 107 of 191
+  subjects have no fall 2026 rows, so "what does X offer this semester" gets
+  "no data" with no hint that the schedule just isn't synced or that spring
+  2026 exists.
+- **Plan:** derive one note at startup: fall 2026 is synced for N of M
+  subjects; for a subject without it, say its fall schedule isn't synced yet
+  (a visitor can press Sync on Departments) and offer its latest term. Add a
+  gold row. Measure with two full OpenAI runs (the noise rule).
+- **Done when:** the gold row passes and answer-OK doesn't drop.
+
+### 21. Eval gold fixes and the prerequisite recipe — `todo`
+- **Problem:** q04 fails every run with a correct answer (its
+  `answer_contains` is a frozen "187"; the live count is 191). q17 is labelled
+  `no_data`, but prerequisites have been loaded since 09-10; relabelled, it
+  fails for a real reason: answers list alternatives ("125 or 128") as all
+  required. q25 failed 5 of 8 runs because the prompt's `NOT EXISTS` recipe has
+  no subject filter and the model copies it.
+- **Plan:** q04 → drop the frozen needle; q17 → `in_scope` with gold SQL on
+  `prerequisites`; make the recipe a complete example with
+  `s.subject = 'CS'`; add a rule that rows in one `group_index` are
+  alternatives joined by "or". `--rescore` first (free), then
+  `--ids q04,q17,q25` three times on OpenAI.
+- **Done when:** q04 passes on rescore and q17/q25 pass in 3 of 3 runs.
+
+### 22. Compress responses — `todo`
+- **Problem:** nothing is gzipped: the home page is 137 KB raw vs 42.8 KB
+  gzipped; `/sections?subject=CS` 44 KB and `/freshness` 45 KB of JSON.
+- **Plan:** first check whether Render's edge already compresses
+  (`curl -sI -H 'Accept-Encoding: gzip' <site>/style.css`); if not, add
+  Starlette's `GZipMiddleware(minimum_size=1024)` (it already skips
+  `text/event-stream`).
+- **Done when:** pages arrive compressed and `/ask/stream` still streams.
+
+### 23. Record tokens on the production eval arm — `todo`
+- **Problem:** `evals/run.py` hard-codes `tokens: 0` for the prod arm, so item
+  2's "measure tokens per step" can't be done.
+- **Plan:** add a usage-metadata callback next to `SQLCapture`; store input,
+  output and (for Groq) cached tokens.
+- **Done when:** a 2-question OpenAI run reports non-zero tokens.
+
+### 24. One source for the current term — `todo`
+- **Problem:** the current term is hard-coded in four places (`app/terms.py`,
+  `index-page.js`, `departments-page.js`, `calendar-page.js`).
+- **Plan:** return `current_term` from `/stats` and read it on the three pages.
+- **Done when:** a term rollover is a one-line change in `terms.py`.
+
+### 25. Smaller follow-ups from the review — `todo`
+- Remove the unused schema tools (this is item 2.1; ~110 tokens per step).
+- Move the `esc()` / `getJSON()` helpers repeated in 7 page scripts into one
+  shared file (one XSS helper instead of seven; part of item 15).
+- A `no_data` outcome in `ask_log` so the admin page shows how often coverage
+  gaps bite.
+- Eval rows for the RAG tool (never exercised by any gold question), a drop
+  deadline, a follow-up with history, an unsynced subject, "what is X about"
+  and "is X hard" (the last two are downvote patterns). Extends item 5.
+
+### 26. Groq prompt caching — `owner` (discussion open)
+- Groq caches `openai/gpt-oss-120b` prompts automatically and cached tokens
+  don't count toward rate limits. Whether we already get cache hits, and how
+  to keep the prompt cache-friendly, is being discussed (2026-09-28).
+
 ---
 
 ## Done (see `DECISIONS_v2.md` for the reasoning)
@@ -202,7 +297,12 @@ slow answers), then 4-6 (answer quality you can prove), then 7-10 (data), then
   sub-filters instead of LLM chips; chat persistence across pages; page
   transitions and no-cache headers; the assistant fixes of 2026-09-19 (text
   course numbers, prerequisites recipe, result truncation, friendly stop).
-- **Tooling:** the `startup-critic` agent, whose findings are item 1.
+- **Tooling:** the `startup-critic` agent (findings: item 1) and the
+  `improvement-strategist` agent (findings: items 18-26).
+- **2026-09-28 cleanup:** Gemini provider removed (9 packages; no Gemini key
+  was deployed); `.claude/skills/` and `skills-lock.json` untracked (77% of the
+  repo's tracked bytes; kept locally); CI for the offline tests declined by the
+  owner.
 - **Docs, 2026-09-28:** every doc rewritten from the code as a `_v2` file
   (the README renamed back to `README.md` so GitHub shows it); v1 files
   removed (in git at `bbf824e`).

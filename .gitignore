@@ -48,3 +48,8 @@ htmlcov/
 # evals/RESULTS.md and the README "Evals" section)
 evals/results/*
 !evals/results/.gitkeep
+
+# Claude Code skill data (installed per machine, not part of the app;
+# untracked 2026-09-28 - it was ~77% of the repo's tracked bytes)
+.claude/skills/
+skills-lock.json
