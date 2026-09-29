@@ -262,7 +262,7 @@ because other docs cite them.
   "synced"); the harness now also checks `answer_contains` on `no_data` rows.
   q30: 0/2 old prompt, 4/4 new.
 
-### 21. Eval gold fixes and the prerequisite recipe — `partly done 2026-09-28`
+### 21. Eval gold fixes and the prerequisite recipe — `done 2026-09-28`
 - **Problem:** q04 fails every run with a correct answer (its
   `answer_contains` is a frozen "187"; the live count is 191). q17 is labelled
   `no_data`, but prerequisites have been loaded since 09-10; relabelled, it
@@ -290,6 +290,47 @@ because other docs cite them.
   (dropped filter) as the misses. Parallel runs are invalid: OpenAI rate
   limits turned 8-12 answers per run into error messages, which the prod arm
   scored as wrong; it now re-raises rate-limit errors so the harness retries.
+- **Closed later that day:** q25 was a scoring artifact - the model kept the
+  CS filter but answered from two queries (100-level, 200-level) and only the
+  last was scored; the prod arm now falls back to the combined rows. q17's
+  last flat list came from SQL without `group_index`; the prompt now requires
+  it. Both pass in the final runs (item 27).
+
+### 27. Answer questions about a named course, not the nearest lookup — `done 2026-09-28`
+- **Problem:** "Why I should or should not take cs444 with saurabh gupta"
+  got a table of two CRNs (14.8 s) and never the why; another run titled
+  CS 444 "Computer Architecture". Cause: the who-teaches clause of the
+  courses-vs-sections rule, plus no single place to get a course's facts.
+  43% of logged questions name a course.
+- **Plan (after a critique of a 4-layer design):** a `course_facts` tool
+  (fixed SQL, both databases), one named-course answer rule replacing the
+  "what is X about" rule, "a named instructor or term is a filter, not the
+  topic", five `advice` eval rows with `answer_must_not`, full answers in
+  `ask_log` (4,000 chars, was 500), and `md.js` external links limited to
+  illinois.edu.
+- **Done when:** the advice rows pass in 3 of 3 runs and answer-OK on the
+  rest doesn't drop.
+- **Done 2026-09-28.** 19 offline checks in `evals/test_course_facts.py`.
+  Final prompt, 35 questions on Neon: 100% / 97.1% (previous prompt on 30:
+  93.3% / 90.0%); q31-q34 pass in every run of the final prompt, q35 (drop
+  deadline) in every run since the calendar rule requires `event_date`.
+  Cost: ~15% more input tokens per question (~5.6K → ~6.6K; about 30
+  questions a day on Groq's 200K instead of ~35); latency unchanged except
+  advice questions (~4.7 s, two tools). Not yet confirmed on Groq's
+  production model.
+
+### 28. Calendar rows with a wrong date, and a thinner Neon calendar — `todo`
+- **Problem:** on Neon, "September 4 – "10th day" add/drop deadline" is
+  stored with `event_date` 2026-08-28 (the date in the title wasn't used).
+  Neon has no single-course drop deadline for fall 2026 (only "withdraw from
+  the semester (drop all courses)", Oct 16), while the local SQLite calendar
+  has a "Drop deadline without W grade" row: the two databases were loaded
+  from different calendar snapshots (79 vs 15 rows).
+- **Plan:** in `app/load_calendar.py`, prefer a date written at the start of
+  the title over the row's column date; reload fall 2026 on Neon; add a
+  `test_calendar` case.
+- **Done when:** the add/drop row reads 2026-09-04 and a "last day to drop a
+  course" question gets the right date.
 
 ### 22. Compress responses — `todo`
 - **Problem:** nothing is gzipped: the home page is 137 KB raw vs 42.8 KB

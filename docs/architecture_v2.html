@@ -182,12 +182,17 @@
     <li><span class="n">2</span><b>Cheap refusals first</b> — a body over 256 KB gets 413; if the concurrency ceiling is full (2 in production) the request gets an immediate 503 "busy".</li>
     <li><span class="n">3</span><b>Guardrails, with a reserved slot</b> — a question over 500 characters is rejected; otherwise a <code>pending</code> row is written to <code>ask_log</code> <i>before</i> any model call, and the shared daily cap (250) and per-IP limits (10/hour, 60/day) are checked by counting rows in reservation order. Parallel requests therefore can't all slip past on one count. Blocked → a plain JSON error, no stream.</li>
     <li><span class="n">4</span><b>Build the agent input</b> — the trimmed history (question ≤ 200 chars, answer ≤ 250) is prepended as "context only, do not re-answer". The system prompt carries the schema, the house rules and live DATA NOTES (current year, terms in the data, which terms have unpublished registration, which tables are empty).</li>
-    <li><span class="n">5</span><b>The agent picks a tool</b> — a LangChain tool-calling agent on Groq <code>openai/gpt-oss-120b</code> (one retry on <code>qwen/qwen3.8-27b</code> after a rate limit). One of two tools per question:
+    <li><span class="n">5</span><b>The agent picks a tool</b> — a LangChain tool-calling agent on Groq <code>openai/gpt-oss-120b</code> (one retry on <code>qwen/qwen3.8-27b</code> after a rate limit). One of three tools per question:
       <div class="split">
         <div class="branch sql">
           <h4>sql_db_query</h4>
           <p>Structured facts: who teaches CS 225, section counts, meeting times, gen-eds, prerequisites, deadlines.</p>
           <p>The written SQL passes the SQL guard, then runs in a read-only transaction on the SELECT-only role (section 5). A result over 6,000 characters is cut, with a note to narrow the query.</p>
+        </div>
+        <div class="branch sql">
+          <h4>course_facts</h4>
+          <p>One named course: "should I take CS 444", "is CS 225 hard", "can I take CS 444 after CS 225".</p>
+          <p>Fixed read-only SQL returns the real title, description, credits, prerequisites joined with "or", gen-eds, recent instructors and open/closed counts, and grades when loaded, plus what the data can't tell.</p>
         </div>
         <div class="branch rag">
           <h4>course_content_search &nbsp;(the RAG path)</h4>

@@ -346,7 +346,7 @@ from the SQL layers in §3.5.
 | `client_ip` | first hop of `X-Forwarded-For` |
 | `question` | first 1,000 chars |
 | `outcome` | `answered` / `refused` / `rate_limited` / `global_limited` / `too_long` / `error` / `pending` (in flight, or a request that died mid-way) |
-| `answer_preview` | first 500 chars of the answer |
+| `answer_preview` | the answer, up to 4,000 chars (`ANSWER_LOG_CHARS`; it was 500 until 2026-09-28, which cut most answers off mid-table) |
 | `latency_ms` | agent round trip |
 
 `GET /ask/summary` is **public** (no token) and returns only aggregates:

@@ -217,9 +217,25 @@ multi-query + RRF 2026-08-31.
 ## 6. The answer engine
 
 **Decision.** A single **LangChain tool-calling SQL agent**
-(`create_sql_agent`) with two tools, choosing per question: `sql_db_query` for
-structured facts, and `course_content_search` (§5) for open-ended "which
-courses cover X" questions. Answers stream to the browser.
+(`create_sql_agent`) with three tools, choosing per question: `sql_db_query`
+for structured facts, `course_facts` for everything about one named course,
+and `course_content_search` (§5) for open-ended "which courses cover X"
+questions. Answers stream to the browser.
+
+- **`course_facts(course)` for questions about one named course** (what is
+  it, should I take it, is it hard, X or Y, can I take it, should I drop it).
+  Fixed parameterized SQL on the read-only connection returns a ~500-900
+  character block: the title from `course_label`, description, credits,
+  prerequisite groups already joined with "or", gen-eds, the last 3 terms'
+  instructors and open/closed counts, grades and Ranked Excellent rows when
+  loaded, and a line naming what the data can't tell. Why: 43% of logged
+  questions name a course, and a production answer to "should I take CS 444
+  with Gupta" was a table of CRNs that never addressed the question, while
+  another run titled the course "Computer Architecture". Registered on both
+  databases. Rejected (after a critique pass): regex intent tagging (keyword
+  false positives, and judgement wording was ~3% of 136 logged questions), a
+  fact sheet injected into every course question (re-sent on every step),
+  and rewriting answers after streaming (they're already on screen).
 
 - **Hybrid, not either/or.** Pure vector RAG is weak at exact lookups ("who
   teaches CS 225"); pure SQL can't answer "courses about the brain". The owner
@@ -291,7 +307,7 @@ production before it wins on the full schema.
 
 **History.** Hybrid agent 2026-08; streaming 2026-08-31; provider order
 changed to Groq → OpenAI → Gemini 2026-09-19; qwen failover 2026-09-20;
-Gemini removed 2026-09-28;
+Gemini removed 2026-09-28; `course_facts` tool 2026-09-28;
 pipeline 2026-09-10.
 
 ---
@@ -325,7 +341,19 @@ Rules that exist because something went wrong without them:
   the model filtered the wrong side).
 - **Courses vs sections.** Course questions get one line per course; CRNs and
   instructors only for section, time or who-teaches questions. This resolved
-  a rule conflict that produced long duplicated tables.
+  a rule conflict that produced long duplicated tables. A named instructor or
+  term is a filter, not the topic: "should I take CS 444 with Gupta" matched
+  the who-teaches clause and got a CRN table.
+- **Questions about a named course** go through `course_facts` and get the
+  facts that bear on them: prerequisites named (for "can I take it", which
+  lines the student's courses meet and which are missing), drop/withdraw
+  deadlines from the calendar for "should I drop", then what the data can't
+  tell (workload, teaching quality, seats, degree rules) and a pointer to an
+  advisor or DARS. No verdict, no recommendation, nothing about an
+  instructor beyond who teaches when. This replaced the separate "what is X
+  about" rule. Any SQL on `prerequisites` must select `group_index`, and a
+  calendar query must select `event_date` (a run selected only titles and
+  said the deadline wasn't in the data).
 - **DATA NOTES, derived at startup:** the current year, the terms in the data
   (newest first, the latest named), which terms only carry `A`/`P` codes with
   the open-seats rule attached to those term names, which tables are
@@ -370,7 +398,10 @@ variants.
 fixes 2026-09-19; rewrite and eval 2026-09-24; partial-term and
 missing-meetings notes, prerequisite direction and "or" rule 2026-09-28 (30
 questions: 90.0% / 90.0% vs the previous prompt's 93.3% / 90.0%, within noise,
-with the two targeted failures fixed).
+with the two targeted failures fixed); `course_facts` and the named-course
+rule, `group_index` and `event_date` requirements, a worked "CS 400-level"
+filter example 2026-09-28 (35 questions: 100% / 97.1%, the old 30 at
+93.3% / 90.0% before; tokens per question +15%, see §12).
 
 ---
 
@@ -462,7 +493,9 @@ feedback caps, input bounds and body cap 2026-09-24.
 - **Output encoding.** Every database value that reaches `innerHTML` goes
   through an `esc()` helper; the chat's Markdown renderer (`static/md.js`)
   escapes everything before adding a fixed set of tags, and renders a link
-  only for a same-site path (not `//host` or `/\host`) or an `https://` URL.
+  only for a same-site path (not `//host` or `/\host`) or an `https://` URL
+  on `illinois.edu`; any other link renders as plain text (since 2026-09-28;
+  it had accepted any `https://` URL, contradicting §7's link rule).
   Citation links percent-encode their database-sourced path segments.
 
 **Supply chain.** `requirements.in` lists the direct dependencies;
@@ -478,7 +511,8 @@ checks (a data-modifying CTE passes them); `'unsafe-inline'` scripts.
 
 **History.** First red-team pass and hardening 2026-08-31; SQL guard and
 read-only role 2026-09-23; strict CSP, header-only admin token, link fixes,
-pinned dependencies and body cap 2026-09-24. Findings: `security_findings.md`.
+pinned dependencies and body cap 2026-09-24; external answer links limited
+to illinois.edu 2026-09-28. Findings: `security_findings.md`.
 
 ---
 
@@ -562,7 +596,7 @@ the GitHub repository, whose account carries the operator's real name.
 
 **Decision.** Answer quality is measured, not assumed.
 
-- **The eval harness** (`evals/run.py`, 30 questions in `eval_set.jsonl`:
+- **The eval harness** (`evals/run.py`, 35 questions in `eval_set.jsonl`:
   in-scope, hallucination bait, empty data, out of scope). Gold answers are the
   gold SQL executed live in the same run, not frozen rows, because the data is
   a snapshot that changes per sync. Metrics: execution success, result match
@@ -581,7 +615,12 @@ the GitHub repository, whose account carries the operator's real name.
 - **Offline tests, no LLM or network:** `test_sql_guard`,
   `test_request_guards`, `test_agent_guards`, `test_static_check`,
   `test_graph_routing`, `test_citations`, `test_llm_failover`,
-  `test_prereqs`, `test_calendar`, `test_schedule_filters`.
+  `test_prereqs`, `test_calendar`, `test_schedule_filters`,
+  `test_course_facts`.
+- **Judgement questions have no single gold result,** so `expect: "advice"`
+  rows score on `answer_contains` plus `answer_must_not` (what the answer
+  must not say: an invented title, a CRN dump, a verdict). A needle may list
+  alternatives with `|` ("Oct 16|October 16").
 - **Project subagents** in `.claude/agents/`: `course-agent-qa` (answer
   quality, strict no-retry rules after a retry loop once burned a day's
   budget), `course-app-redteam` (security, local throwaway instance only),
@@ -599,7 +638,19 @@ the prod arm now records input, output and cached tokens per LLM call;
 q04/q17 gold fixed, q30 (unsynced subject) added, `no_data` rows now also
 check `answer_contains`, and prod-arm rate-limit errors are retried.
 The 2026-09-24 prompt comparison was re-scored on Neon for all three runs
-with identical numbers.
+with identical numbers. Later on 2026-09-28: five `advice` rows (q31-q35) and
+`answer_must_not`; an answer built from `course_facts` (no SQL) is scored by
+whether every gold value appears in it; when the agent splits a question into
+several queries, the prod arm falls back to their combined rows (q25 had been
+marked wrong for answering 100- and 200-level from two queries).
+Measured, final prompt vs the previous one on Neon with `gpt-4o-mini`:
+answer-OK 100% / 97.1% (35 questions) vs 93.3% / 90.0% (30); q31-q34
+passed in every run of the final prompt and q35 in every run since the
+calendar fix; input tokens per question on the shared 30 rose from ~5.6K to
+~6.6K (+15%: the prompt and tool schema, sent on every step), average
+latency unchanged (~2.4 s); the advice questions use ~8.3K tokens and
+~4.7 s. On Groq's 200K tokens/day that is ~30 questions a day instead of
+~35.
 
 ---
 

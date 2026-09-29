@@ -20,11 +20,11 @@
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return ESC[c]; });
   }
 
-  // [text](url) - only ever emitted by the agent for its own known-safe
-  // link shapes (a same-site "/?course=SUBJ-NUM" deep link, or an
-  // "https://ratemyprofessors.com/..." search link - see agent.py's Rules).
-  // The URL is restricted to those two shapes here regardless of what the
-  // model actually wrote, since this is untrusted LLM output going into
+  // [text](url) - the agent's link shapes are same-site paths
+  // ("/?course=SUBJ-NUM", "/instructor.html?name=..."); the only external
+  // links allowed are to illinois.edu (e.g. Course Explorer). Anything else
+  // renders as plain text, whatever the model wrote, since this is
+  // untrusted LLM output going into
   // innerHTML: a scheme like "javascript:" is never allowed through, link
   // text is already-escaped by the time this runs, and the href itself
   // passes through unescaped only because escapeHtml() already ran on the
@@ -33,6 +33,7 @@
   function linkify(escaped) {
     return escaped.replace(/\[([^\[\]\n]+)\]\((\/(?![\/\\])[^\s()]*|https:\/\/[^\s()]+)\)/g, function (m, text, url) {
       var external = /^https:\/\//.test(url);
+      if (external && !/^https:\/\/([a-z0-9-]+\.)*illinois\.edu(\/|$)/i.test(url)) return text;
       return '<a href="' + url + '"' + (external ? ' target="_blank" rel="noopener noreferrer"' : '') + '>' + text + '</a>';
     });
   }

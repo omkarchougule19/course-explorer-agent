@@ -20,6 +20,7 @@ Or import ask() directly, e.g. from a FastAPI route.
 import asyncio
 import json
 import os
+import re
 import sys
 import threading
 from functools import lru_cache
@@ -80,7 +81,8 @@ HOW TO QUERY
 - Aim for one query. If it errors, fix it in one change; don't retry the same
   idea or switch to unrelated tables.
 - Put every filter the question names (subject, level, term, instructor, day,
-  time) in the WHERE clause. semester/term values are lowercase ('fall',
+  time) in the WHERE clause ("CS 400-level" = subject = 'CS' AND
+  course_number LIKE '4%' - both). semester/term values are lowercase ('fall',
   'spring', 'summer', 'winter'); subject codes are uppercase. A term is the
   pair (semester, year): select, group and filter on both, never semester
   alone.
@@ -148,8 +150,9 @@ TABLES
   or MATH 234"), never as a flat list that makes every course required. NULL req_*
   = a non-course requirement in condition_text. relation is 'prereq' or
   'concurrent'. subject/course_number is the course that HAS the requirement;
-  req_* is the course required. "Prerequisites of X": filter subject/
-  course_number. "What does X unlock": filter req_subject/req_course_number. No
+  req_* is the course required. "Prerequisites of X": call course_facts - it
+  already joins the alternatives with "or". Any SQL on this table must select
+  group_index, or alternatives can't be told from requirements. "What does X unlock": filter req_subject/req_course_number. No
   rows = no prerequisites. "Courses with no prerequisites": start from sections
   with EVERY filter the question names, then exclude courses that have rows,
   e.g. for MATH 300-level:
@@ -163,19 +166,23 @@ TABLES
   category: instruction, add, drop, withdraw, break, holiday, finals, grades,
   registration, commencement, other. Dates are 'YYYY-MM-DD'. "Last day to
   drop" = category IN ('drop','withdraw'). Rows in one category can be for
-  different audiences (UG, graduate, Law, Vet Med): always select title,
-  never LIMIT 1, use the row for the asked audience - UG by default, noting
+  different audiences (UG, graduate, Law, Vet Med): always select event_date
+  and title, never LIMIT 1, use the row for the asked audience - UG by default, noting
   that other deadlines differ.
 - course_content_search tool (when listed): semantic search over course
   descriptions for open-ended "which courses cover X". One call is enough - it
   already expands the topic; group the results by theme. For a named course,
-  query sections.description instead.
+  use course_facts.
+- course_facts tool: one named course's title, description, credits,
+  prerequisites, gen-eds, recent instructors/status and grades in one call.
+  Take a course's title only from it or course_label, never from memory.
 
 HOW TO ANSWER
 - Courses vs sections: a question about courses ("which courses...") gets one
   line per course (SELECT DISTINCT subject, course_number, course_label), not
   one per section. Give CRNs and instructors only when the question is about
-  sections, times, or who teaches.
+  sections, times, or who teaches. A named instructor or term is a filter, not
+  the topic: "should I take CS 444 with Gupta" is about the course.
 - Prose or a short list by default; a Markdown table only for 3+ fields
   across several rows. Cover every row you list, state how many there are,
   and name the term if you chose it. Always write a term with its year
@@ -188,8 +195,16 @@ HOW TO ANSWER
 - Rankings: a named instructor with no row is a coverage gap, never a
   judgement - use the no-data sentence and nothing more. Never call an
   instructor good or bad.
-- "What is X about": 2-3 sentences in your own words from description; if it
-  is NULL, say no description was scraped.
+- Questions about a named course (what is it about, should I take it, is it
+  hard, X or Y, can I take it, should I drop it): call course_facts per course
+  and answer what was asked from its facts. Name the prerequisites (for "can
+  I take it", say which lines the student's courses meet and which are
+  missing); for dropping, also query academic_calendar for the drop/withdraw
+  deadlines. "What is it about" gets 2-3 sentences in your own words. Then
+  say what the data can't tell (workload, teaching quality, seats, degree
+  rules) and point to an academic advisor or the degree audit (DARS). No
+  verdict or recommendation, and nothing about an instructor beyond who
+  teaches when.
 - A conversation-history block may come before the question. Use it only to
   resolve references ("it", "that course", "the second one"); never re-answer
   it.
@@ -462,6 +477,147 @@ def _make_course_content_search_tool(tool_llm):
 
 
 _SEASON_ORDER = {"winter": 0, "spring": 1, "summer": 2, "fall": 3}
+_COURSE_ARG_RE = re.compile(r"\b([A-Za-z]{2,4})\s*-?\s*(\d{3}[A-Za-z]?)\b")
+_FACTS_TERMS = 3        # recent terms listed per course
+_FACTS_DESC_CHARS = 500
+
+
+def course_facts_text(course: str) -> str:
+    """Everything the data holds about one named course, as a short fixed
+    block (~500-900 chars): the title from course_label, description,
+    credits, prerequisite groups already joined with "or", gen-eds, the last
+    few terms' sections / instructors / status, and grades and Ranked
+    Excellent rows when those tables have any. Fixed parameterized SQL on the
+    read-only connection, so it can't invent a title (a run once called
+    CS 444 "Computer Architecture") or forget the facts a should-I / is-it-hard
+    / can-I question turns on."""
+    m = _COURSE_ARG_RE.search(course or "")
+    if not m:
+        return "Give one course code, e.g. 'CS 444'."
+    subj, num = m.group(1).upper(), m.group(2).upper()
+    conn = db.get_readonly_connection()
+    try:
+        secs = conn.execute(
+            "SELECT year, semester, instructor, enrollment_status, course_label, "
+            "credit_hours, description FROM sections WHERE subject = ? AND course_number = ?",
+            (subj, num)).fetchall()
+        prereqs = conn.execute(
+            "SELECT group_index, relation, req_subject, req_course_number, condition_text "
+            "FROM prerequisites WHERE subject = ? AND course_number = ? ORDER BY group_index",
+            (subj, num)).fetchall()
+        geneds = conn.execute(
+            "SELECT course_title, acp, cs, hum, nat, qr, sbs FROM gen_ed_categories "
+            "WHERE subject = ? AND course_number = ?", (subj, num)).fetchall()
+        grades = conn.execute(
+            "SELECT primary_instructor, MIN(year) AS y0, MAX(year) AS y1, "
+            "SUM(COALESCE(students, 0)) AS n, "
+            "SUM(COALESCE(a_plus, 0) + COALESCE(a, 0) + COALESCE(a_minus, 0)) AS a_n "
+            "FROM grade_distributions WHERE subject = ? AND course_number = ? "
+            "GROUP BY primary_instructor", (subj, num)).fetchall()
+        instructors = sorted({r["instructor"] for r in secs
+                              if r["instructor"] and r["instructor"].strip() not in ("", "-")})
+        excellent = []
+        for name in instructors[:6]:
+            last, _, first = name.partition(",")
+            rows = conn.execute(
+                "SELECT DISTINCT year, term FROM teachers_ranked_excellent "
+                "WHERE LOWER(last_name) = LOWER(?) AND UPPER(first_name) LIKE ?",
+                (last.strip(), first.strip()[:1].upper() + "%")).fetchall()
+            if rows:
+                excellent.append(f"{name} ({', '.join(f'{r['term']} {r['year']}' for r in rows[:4])})")
+    finally:
+        conn.close()
+
+    if not (secs or prereqs or geneds):
+        return f"No course {subj} {num} in the data (no sections, prerequisites or gen-ed rows)."
+
+    def term_key(r):
+        return (r["year"] or 0, _SEASON_ORDER.get(r["semester"], 9))
+
+    newest = max(secs, key=term_key) if secs else None
+    title = (newest["course_label"] if newest else None) or (geneds[0]["course_title"] if geneds else "")
+    out = [f"{subj} {num}: {title or '(no title in the data)'}"]
+    if newest and newest["credit_hours"]:
+        out.append(f"Credits: {newest['credit_hours']}")
+    desc = next((r["description"] for r in sorted(secs, key=term_key, reverse=True)
+                 if r["description"]), None)
+    if desc:
+        out.append("Description: " + (desc if len(desc) <= _FACTS_DESC_CHARS
+                                      else desc[:_FACTS_DESC_CHARS].rsplit(" ", 1)[0] + "..."))
+    else:
+        out.append("Description: none scraped.")
+
+    if prereqs:
+        groups: dict = {}
+        for r in prereqs:
+            if r["req_subject"]:
+                item = f"{r['req_subject']} {r['req_course_number']}"
+                if r["relation"] == "concurrent":
+                    item += " (may be taken concurrently)"
+            else:
+                item = r["condition_text"] or ""
+            if item:
+                groups.setdefault(r["group_index"], []).append(item)
+        out.append("Prerequisites (every line required; 'or' = any one): "
+                   + "; ".join(" or ".join(g) for g in groups.values()))
+    else:
+        out.append("Prerequisites: none listed.")
+
+    if geneds:
+        codes = [g[k] for g in geneds for k in ("acp", "cs", "hum", "nat", "qr", "sbs") if g[k]]
+        out.append("Gen-eds: " + (", ".join(dict.fromkeys(codes)) if codes else "none"))
+
+    by_term: dict = {}
+    for r in secs:
+        by_term.setdefault((r["year"], r["semester"]), []).append(r)
+    terms = sorted(by_term, key=lambda t: (t[0] or 0, _SEASON_ORDER.get(t[1], 9)), reverse=True)
+    for year, sem in terms[:_FACTS_TERMS]:
+        rows = by_term[(year, sem)]
+        names = sorted({r["instructor"] for r in rows
+                        if r["instructor"] and r["instructor"].strip() not in ("", "-")})
+        statuses = [r["enrollment_status"] or "" for r in rows]
+        if all(s in ("A", "P", "") for s in statuses):
+            status = "registration not published yet"
+        else:
+            counts: dict = {}
+            for s in statuses:
+                counts[s or "unknown"] = counts.get(s or "unknown", 0) + 1
+            status = ", ".join(f"{n} {s}" for s, n in sorted(counts.items(), key=lambda x: -x[1]))
+        shown = "; ".join(names[:8]) + (f" and {len(names) - 8} more" if len(names) > 8 else "")
+        out.append(f"{sem} {year}: {len(rows)} section(s); instructors: "
+                   f"{shown or 'not assigned'}; status: {status}")
+    if len(terms) > _FACTS_TERMS:
+        out.append(f"(also offered in {len(terms) - _FACTS_TERMS} earlier term(s) in the data)")
+
+    if grades:
+        years = lambda g: str(g["y0"]) if g["y0"] == g["y1"] else f"{g['y0']}-{g['y1']}"
+        parts = [f"{g['primary_instructor'] or 'unknown'} {years(g)}: "
+                 f"{round(100 * (g['a_n'] or 0) / g['n'])}% A-range of {g['n']} students"
+                 for g in grades if g["n"]]
+        out.append("Grades: " + ("; ".join(parts) if parts else "none loaded"))
+    else:
+        out.append("Grades: none loaded for this course.")
+    if excellent:
+        out.append("Ranked Excellent by students: " + "; ".join(excellent))
+    out.append("Not in this data: workload, exam format, teaching quality beyond the "
+               "above, degree/major rules, future offerings or seats.")
+    return "\n".join(out)
+
+
+def _make_course_facts_tool():
+    from langchain_core.tools import tool
+
+    @tool
+    def course_facts(course: str) -> str:
+        """All facts about ONE named course, e.g. 'CS 444': title, description,
+        credits, prerequisites (alternatives joined by 'or'), gen-eds, recent
+        terms' instructors and open/closed status, grades if loaded. Use it for
+        what-is-it, should-I-take, is-it-hard, can-I-take and X-or-Y questions
+        (one call per course). Not for lists, counts, meeting times or
+        searches across courses - use SQL for those."""
+        return course_facts_text(course)
+
+    return course_facts
 
 
 @lru_cache(maxsize=1)
@@ -648,9 +804,9 @@ def _new_agent(verbose: bool = False, streaming: bool = False, model: str | None
         # Query expansion must not stream into the answer, so give the tool a
         # dedicated non-streaming client when the agent itself is streaming.
         tool_llm = llm if not streaming else _build_llm(streaming=False, model=model)[0]
-        extra_tools = [_make_course_content_search_tool(tool_llm)]
+        extra_tools = [_make_course_facts_tool(), _make_course_content_search_tool(tool_llm)]
     else:
-        extra_tools = []
+        extra_tools = [_make_course_facts_tool()]
 
     try:
         agent = create_sql_agent(
@@ -698,6 +854,7 @@ _TOOL_LABELS = {
     "sql_db_schema": "Reading the schema…",
     "sql_db_list_tables": "Looking at the tables…",
     "course_content_search": "Searching course descriptions…",
+    "course_facts": "Looking up the course…",
 }
 
 
@@ -860,7 +1017,7 @@ def ask(question: str, verbose: bool = False, history=None, _model: str | None =
 
     answer = friendly_stop(result.get("output", str(result)))
     if classify_answer(answer) == "answered":
-        answer += sources_footer(cap.queries, cap.rag_used, question)
+        answer += sources_footer(cap.source_sql, cap.rag_used, question)
     return answer
 
 
@@ -949,7 +1106,7 @@ async def astream_answer(question: str, history=None, _model: str | None = None)
 
     answer = friendly_stop(final or "".join(streamed) or "I couldn't produce an answer for that.")
     if classify_answer(answer) == "answered":
-        footer = sources_footer(cap.queries, cap.rag_used or rag_used, q)
+        footer = sources_footer(cap.source_sql, cap.rag_used or rag_used, q)
         if footer:
             yield "token", footer          # show it live in the UI
             answer += footer

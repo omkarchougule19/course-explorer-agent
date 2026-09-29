@@ -93,6 +93,10 @@ _ERROR_MARKERS = (
 )
 
 
+# The whole answer, up to a cap. It was a 500-char preview, which cut off
+# most answers mid-table and made a bad answer impossible to audit.
+ANSWER_LOG_CHARS = 4000
+
 def init_table(conn: db.Connection) -> None:
     conn.execute(
         f"""
@@ -186,7 +190,7 @@ def record(conn: db.Connection, client_ip: str, question: str, outcome: str,
         client_ip,
         (question or "")[:1000],
         outcome,
-        (answer or "")[:500] or None,
+        (answer or "")[:ANSWER_LOG_CHARS] or None,
         latency_ms,
     )
     sql = ("INSERT INTO ask_log (ts, client_ip, question, outcome, answer_preview, latency_ms) "
@@ -212,7 +216,7 @@ def finish(conn: db.Connection, row_id: int, outcome: str,
     """Rewrite a reserve()d row with the real outcome."""
     conn.execute(
         "UPDATE ask_log SET outcome = ?, answer_preview = ?, latency_ms = ? WHERE id = ?",
-        (outcome, (answer or "")[:500] or None, latency_ms, row_id),
+        (outcome, (answer or "")[:ANSWER_LOG_CHARS] or None, latency_ms, row_id),
     )
     conn.commit()
 

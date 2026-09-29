@@ -291,7 +291,7 @@
   <h2 id="flows">7. Request flows</h2>
 
   <h3>POST /ask/stream (and /ask)</h3>
-  <p class="lead">Body limit → concurrency ceiling → length cap → a <code>pending</code> slot in <code>ask_log</code> → shared and per-IP caps counted in reservation order → the agent (one of two tools, with SQL through the guard and the read-only role) → a streamed, cited answer → the slot rewritten with the outcome. The full, illustrated path is in <a href="architecture_v2.html">architecture_v2.html</a>, sections 4-6.</p>
+  <p class="lead">Body limit → concurrency ceiling → length cap → a <code>pending</code> slot in <code>ask_log</code> → shared and per-IP caps counted in reservation order → the agent (one of three tools, with SQL through the guard and the read-only role) → a streamed, cited answer → the slot rewritten with the outcome. The full, illustrated path is in <a href="architecture_v2.html">architecture_v2.html</a>, sections 4-6.</p>
 
   <h3>Plain reads</h3>
   <p class="lead"><code>GET /sections</code>, <code>/subjects</code>, <code>/courses/{subject}</code>, <code>/stats</code>, <code>/freshness</code>, <code>/meetings</code>, <code>/calendar</code>, and the course detail routes (<code>…/grade-trend</code>, <code>…/prereqs</code>) are bounded, parameterised reads straight from the catalog — no LLM. Browse filters (level, and the schedule chips) run in Python after the SQL fetch because course numbers and times are text. <code>POST /schedule/conflicts</code> checks day and time overlaps for 2-50 CRNs.</p>

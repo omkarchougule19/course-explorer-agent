@@ -182,6 +182,7 @@ def run_prod_arm(item: dict) -> dict:
         first_sql=cap.queries[0] if cap.queries else None,
         trace=[{"step": "sql_db_query", "sql": q} for q in cap.queries],
         tokens=u["input"] + u["output"], usage=u,
+        facts_used=bool(cap.fact_sql),
     )
 
 
@@ -219,8 +220,27 @@ def score(item: dict, rec: dict) -> dict:
         gold_rows, gold_err = _run_sql(gold_sql)
         if gold_err:
             match = {"strict": None, "loose": None, "gold_error": gold_err}
+        elif not final_sql and rec.get("facts_used"):
+            # Answered from course_facts, not SQL: no candidate rows exist, so
+            # check that the gold values made it into the answer instead.
+            covered = metrics.answer_covers_rows(answer, gold_rows)
+            match = {"strict": covered, "loose": covered}
         else:
             match = metrics.result_match(gold_rows, cand_rows)
+            # The agent may split one question into several queries (100-level,
+            # then 200-level) and answer from all of them; scoring only the
+            # last one marked a complete answer wrong (q25).
+            sqls = [t.get("sql") for t in rec.get("trace") or [] if t.get("sql")]
+            if not match.get("loose") and rec.get("arm") == "prod" and len(sqls) > 1:
+                union, ok = [], True
+                for sql in sqls:
+                    rows, err = _run_sql(sql)
+                    if err:
+                        ok = False
+                        break
+                    union.extend(rows)
+                if ok:
+                    match = metrics.result_match(gold_rows, union)
 
     # -- hallucination (mode-independent static check) --
     hallu_first = hallucinated_reference(rec.get("first_sql"))
@@ -229,6 +249,12 @@ def score(item: dict, rec: dict) -> dict:
     # -- answer_ok by expectation --
     if expect == "refused":
         answer_ok = refused
+    elif expect == "advice":
+        # Judgement questions (should I take X, is X hard, X or Y, can I take
+        # X): no single gold result. The answer must carry the facts that
+        # bear on it and must not give a verdict, invent a title or dump CRNs.
+        answer_ok = (not refused
+                     and metrics.answer_mentions(answer, item.get("answer_contains")))
     elif expect == "no_data":
         # The requirement for a "no data" / hallucination-bait question is
         # that the agent does NOT fabricate: either it says plainly there's
@@ -241,6 +267,8 @@ def score(item: dict, rec: dict) -> dict:
     else:  # "answer"
         answer_ok = bool(match.get("loose")) and metrics.answer_mentions(
             answer, item.get("answer_contains"))
+
+    answer_ok = answer_ok and metrics.answer_excludes(answer, item.get("answer_must_not"))
 
     # -- repair accounting (critic arm) --
     trace = rec.get("trace") or []
@@ -407,7 +435,8 @@ def _catch_writeups(critic_recs: list[dict]) -> str:
 
 
 _RAW_KEYS = ("arm", "answer", "outcome", "final_sql", "first_sql", "attempts",
-             "exec_error", "rows", "trace", "latency_ms", "tokens", "usage")
+             "exec_error", "rows", "trace", "latency_ms", "tokens", "usage",
+             "facts_used")
 
 
 def _rescore(ts: str, use_sqlite: bool = True) -> int:

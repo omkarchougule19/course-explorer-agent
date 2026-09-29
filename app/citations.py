@@ -67,6 +67,14 @@ class SQLCapture(BaseCallbackHandler):
         super().__init__()
         self.queries: list[str] = []
         self.rag_used = False
+        # course_facts runs fixed SQL of its own; kept apart from `queries`
+        # (which evals score against gold SQL), but the Sources footer
+        # still needs to know which tables and subject it read.
+        self.fact_sql: list[str] = []
+
+    @property
+    def source_sql(self) -> list[str]:
+        return self.queries + self.fact_sql
 
     def on_tool_start(self, serialized, input_str, **kwargs):
         name = ""
@@ -76,6 +84,12 @@ class SQLCapture(BaseCallbackHandler):
         raw = input_str if isinstance(input_str, str) else str(input_str)
         if "course_content_search" in name:
             self.rag_used = True
+            return
+        if "course_facts" in name:
+            m = re.search(r"\b([A-Za-z]{2,4})\s*-?\s*\d{3}", raw)
+            subj = m.group(1).upper() if m else ""
+            self.fact_sql.append(f"SELECT 1 FROM sections WHERE subject = '{subj}'")
+            self.fact_sql.append("SELECT 1 FROM prerequisites")
             return
         if "sql_db_query" in name or "select" in raw.lower():
             q = _unwrap_query(raw.strip())

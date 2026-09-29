@@ -63,13 +63,43 @@ def result_match(gold_rows: "list[dict] | None",
     return {"strict": strict, "loose": loose}
 
 
+def _has(low: str, needle: str) -> bool:
+    # "Oct 16|October 16" = any one of the alternatives.
+    return any(alt.lower() in low for alt in needle.split("|"))
+
+
 def answer_mentions(answer: str, needles: "list[str] | None") -> bool:
-    """True if every needle appears in `answer` (case-insensitive). Empty /
-    missing needle list -> True (nothing to check)."""
+    """True if every needle appears in `answer` (case-insensitive; a needle
+    may list alternatives separated by '|'). Empty / missing needle list ->
+    True (nothing to check)."""
     if not needles:
         return True
     low = (answer or "").lower()
-    return all(n.lower() in low for n in needles)
+    return all(_has(low, n) for n in needles)
+
+
+def answer_excludes(answer: str, needles: "list[str] | None") -> bool:
+    """True if no needle appears in `answer` (case-insensitive) - for what an
+    answer must NOT say: a verdict, an invented title, a section dump."""
+    if not needles:
+        return True
+    low = (answer or "").lower()
+    return not any(_has(low, n) for n in needles)
+
+
+def answer_covers_rows(answer: str, rows, max_rows: int = 30) -> bool:
+    """For an answer built from a tool rather than SQL (course_facts), where
+    there are no candidate rows to match: True if every cell of every gold
+    row appears in the answer. Too many gold rows -> False."""
+    if not rows or len(rows) > max_rows:
+        return False
+    low = (answer or "").lower()
+    for row in rows:
+        cells = row.values() if isinstance(row, dict) else row
+        for v in cells:
+            if v is not None and str(v).strip().lower() not in low:
+                return False
+    return True
 
 
 _REFUSAL_MARKERS = (
