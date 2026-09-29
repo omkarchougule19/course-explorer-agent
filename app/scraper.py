@@ -58,6 +58,7 @@ from tqdm import tqdm
 
 from app import db
 from app import embeddings
+from app.credits import CREDIT_COLUMN_TYPES, CREDIT_COLUMNS, credit_fields
 from app.db import DB_PATH
 
 # Load DATABASE_URL (and any other vars) from the project-root .env, the same
@@ -451,6 +452,12 @@ def init_db(db_path: Optional[Path] = None) -> db.Connection:
                 enrollment_status TEXT,
                 credit_hours TEXT,
                 description TEXT,
+                credit_min REAL,
+                credit_max REAL,
+                grad_credit TEXT,
+                grad_min REAL,
+                grad_max REAL,
+                restriction TEXT,
                 scraped_at {db.current_timestamp_default()},
                 UNIQUE(year, semester, subject, course_number, crn)
             )
@@ -462,6 +469,10 @@ def init_db(db_path: Optional[Path] = None) -> db.Connection:
         for col in ("description", "part_of_term", "section_start_date", "section_end_date"):
             if col not in existing_cols:
                 conn.execute(f"ALTER TABLE sections ADD COLUMN {col} TEXT")
+        # Parsed credit facts (app/credits.py); backfill_credits.py fills old rows.
+        for col, typ in CREDIT_COLUMN_TYPES:
+            if col not in existing_cols:
+                conn.execute(f"ALTER TABLE sections ADD COLUMN {col} {typ}")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_subject ON sections(subject)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_term ON sections(year, semester)")
 
@@ -499,7 +510,7 @@ SECTION_COLUMNS = (
     "year", "semester", "subject", "course_number", "course_label", "crn",
     "section_name", "instructor", "enrollment_status", "credit_hours", "description",
     "part_of_term", "section_start_date", "section_end_date",
-)
+) + CREDIT_COLUMNS
 SECTION_CONFLICT_COLUMNS = ("year", "semester", "subject", "course_number", "crn")
 
 
@@ -509,6 +520,7 @@ def save_sections(conn: db.Connection, sections: Iterable[Section]) -> int:
         (s.year, s.semester, s.subject, s.course_number, s.course_label, s.crn,
          s.section_name, s.instructor, s.enrollment_status, s.credit_hours, s.description,
          s.part_of_term, s.section_start_date, s.section_end_date)
+        + credit_fields(s.course_number, s.credit_hours, s.description)
         for s in sections
     ]
     if not rows:

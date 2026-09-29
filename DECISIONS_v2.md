@@ -170,11 +170,28 @@ once; `db.py` translates for Postgres. Nobody needs Postgres to develop.
 - **One connection per request**, no pool, today. Measured cost against Neon
   is about 170 ms per request (§13); pooling is an open plan item.
 
+- **Credit facts are columns, not text to parse** (2026-09-29). `sections`
+  carries `credit_min`/`credit_max` (from `credit_hours`, e.g. "3 OR 4
+  hours."), `grad_credit` ('yes'/'no'/NULL), `grad_min`/`grad_max` and
+  `restriction` (the "Restricted to..." sentence), parsed by
+  `app/credits.py` at save time and filled for old rows by
+  `app/backfill_credits.py` (run on Neon 2026-09-29: 19,851 sections).
+  An explicit catalog sentence wins ("3 or 4 graduate hours.", "No graduate
+  credit."; whole-sentence matches, so "undergraduate hours" and repeat
+  limits aren't misread); otherwise 500+ is graduate, 100-300 is not, and a
+  400-level course with no statement stays NULL (586 sections) rather than
+  a guess. Why: asked for 3-credit CS courses open to graduate students, the
+  model compared the credit_hours text to 3 and treated only 500-level as
+  graduate, and answered "no data" (there are 33 in fall 2026, 29 of them
+  400-level). Chosen over teaching the prompt to parse the text (the owner's
+  call: the model is the least reliable place to do it). Not solved:
+  department eligibility beyond the verbatim restriction sentence.
+
 **Rejected:** per-file backend branching; an ORM (the queries are simple and
 portable SQL was enough).
 
 **History.** Built and wired in 2026-08; read-only path 2026-09-23; `%` fix
-2026-09-24.
+2026-09-24; parsed credit columns 2026-09-29.
 
 ---
 
@@ -675,7 +692,11 @@ the GitHub repository, whose account carries the operator's real name.
   cost, read-only, never spends LLM budget) and `improvement-strategist`
   (finds weak points across lighter / faster / better / more accurate, ranks
   evidence-backed solutions against the plan, read-only, no LLM spend;
-  added 2026-09-28).
+  added 2026-09-28) and `student-question-writer` (role-plays students who
+  have only seen the website and writes the messy questions they'd type, for
+  revising the golden set; it may read only the visitor pages, never the
+  code, data or the existing eval set; added 2026-09-29, first output
+  `evals/candidates/student_questions.jsonl`, 60 questions).
 
 **History.** Harness 2026-09-10; five rows added 2026-09-19; Neon and noise
 practice 2026-09-24; 2026-09-28: `--rescore` now honours `--db` (it had

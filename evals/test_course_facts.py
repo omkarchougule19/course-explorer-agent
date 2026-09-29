@@ -29,7 +29,8 @@ cat = Path(tempfile.mkdtemp()) / "catalog.db"
 con = sqlite3.connect(cat)
 con.executescript("""
 CREATE TABLE sections (year INT, semester TEXT, subject TEXT, course_number TEXT, crn TEXT,
-  instructor TEXT, enrollment_status TEXT, course_label TEXT, credit_hours TEXT, description TEXT);
+  instructor TEXT, enrollment_status TEXT, course_label TEXT, credit_hours TEXT, description TEXT,
+  grad_credit TEXT, grad_min REAL, grad_max REAL, restriction TEXT);
 CREATE TABLE prerequisites (subject TEXT, course_number TEXT, group_index INT, req_subject TEXT,
   req_course_number TEXT, relation TEXT, condition_text TEXT, raw_text TEXT);
 CREATE TABLE gen_ed_categories (subject TEXT, course_number TEXT, course_title TEXT,
@@ -43,12 +44,12 @@ INSERT INTO academic_calendar VALUES
   (2026, 'fall', '2026-10-16', 'withdraw', 'Deadline for UG to withdraw without W'),
   (2026, 'fall', '2026-09-04', 'add', 'Add deadline');
 INSERT INTO sections VALUES
-  (2026, 'fall',   'CS', '444', '1', 'Gupta, S',    'A',      'Deep Learning for Computer Vision', '3 OR 4 hours.', 'Neural networks.'),
-  (2026, 'fall',   'CS', '444', '2', 'Gupta, S',    'P',      'Deep Learning for Computer Vision', '3 OR 4 hours.', 'Neural networks.'),
-  (2026, 'spring', 'CS', '444', '3', 'Lazebnik, S', 'Closed', 'Old Title',                         '3 hours',       NULL),
-  (2026, 'spring', 'CS', '444', '4', NULL,          'Closed', 'Old Title',                         '3 hours',       NULL),
-  (2025, 'fall',   'CS', '444', '5', 'Lazebnik, S', 'Open',   'Old Title',                         '3 hours',       NULL),
-  (2025, 'spring', 'CS', '444', '6', 'Lazebnik, S', 'Open',   'Old Title',                         '3 hours',       NULL);
+  (2026, 'fall',   'CS', '444', '1', 'Gupta, S',    'A',      'Deep Learning for Computer Vision', '3 OR 4 hours.', 'Neural networks.', 'yes', 4, 4, 'Restricted to juniors.'),
+  (2026, 'fall',   'CS', '444', '2', 'Gupta, S',    'P',      'Deep Learning for Computer Vision', '3 OR 4 hours.', 'Neural networks.', 'yes', 4, 4, 'Restricted to juniors.'),
+  (2026, 'spring', 'CS', '444', '3', 'Lazebnik, S', 'Closed', 'Old Title',                         '3 hours',       NULL, NULL, NULL, NULL, NULL),
+  (2026, 'spring', 'CS', '444', '4', NULL,          'Closed', 'Old Title',                         '3 hours',       NULL, NULL, NULL, NULL, NULL),
+  (2025, 'fall',   'CS', '444', '5', 'Lazebnik, S', 'Open',   'Old Title',                         '3 hours',       NULL, NULL, NULL, NULL, NULL),
+  (2025, 'spring', 'CS', '444', '6', 'Lazebnik, S', 'Open',   'Old Title',                         '3 hours',       NULL, NULL, NULL, NULL, NULL);
 INSERT INTO prerequisites VALUES
   ('CS', '444', 0, 'MATH', '241', 'prereq', NULL, 'raw'),
   ('CS', '444', 1, 'MATH', '257', 'prereq', NULL, 'raw'),
@@ -70,6 +71,8 @@ try:
     check("title comes from the newest term's course_label",
           out.startswith("CS 444: Deep Learning for Computer Vision"))
     check("credits from the newest term", "Credits: 3 OR 4 hours." in out)
+    check("graduate credit from the parsed columns", "Graduate credit: yes, 4 hours" in out)
+    check("restriction sentence shown", "Restriction: Restricted to juniors." in out)
     check("alternatives in one group are joined by 'or'", "MATH 257 or MATH 415" in out)
     check("groups are separate required lines", "MATH 241; MATH 257 or MATH 415; CS 225" in out)
     check("concurrent enrollment is marked", "CS 225 (may be taken concurrently)" in out)

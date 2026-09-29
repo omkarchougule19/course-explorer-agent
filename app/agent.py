@@ -102,8 +102,16 @@ HOW TO QUERY
 TABLES
 - sections(year, semester, subject, course_number, course_label, crn,
   section_name, instructor, enrollment_status, credit_hours, description,
-  part_of_term, section_start_date, section_end_date)
+  part_of_term, section_start_date, section_end_date, credit_min, credit_max,
+  grad_credit, grad_min, grad_max, restriction)
   One row per section (crn); a course is (subject, course_number).
+  Credits: filter on credit_min/credit_max (numbers; "3 credits" =
+  credit_min <= 3 AND credit_max >= 3), never on the credit_hours text.
+  grad_credit is 'yes'/'no'/NULL (catalog doesn't say - report as unknown);
+  grad_min/grad_max are the hours a graduate student takes it for, so
+  "3 credits, open to grad students" = grad_credit = 'yes' AND grad_min <= 3
+  AND grad_max >= 3 (credit_min/max are undergraduate hours there).
+  restriction is the catalog's "Restricted to..." sentence, or NULL.
   instructor is NULL for unassigned sections: whenever you rank, count or
   group by instructor you MUST add instructor IS NOT NULL, or "no instructor"
   comes out on top. description is per course and may be NULL. course_number is TEXT, maybe
@@ -565,7 +573,8 @@ def course_facts_text(course: str, completed: str = "") -> str:
     try:
         secs = conn.execute(
             "SELECT year, semester, instructor, enrollment_status, course_label, "
-            "credit_hours, description FROM sections WHERE subject = ? AND course_number = ?",
+            "credit_hours, description, grad_credit, grad_min, grad_max, restriction "
+            "FROM sections WHERE subject = ? AND course_number = ?",
             (subj, num)).fetchall()
         prereqs = conn.execute(
             "SELECT group_index, relation, req_subject, req_course_number, condition_text "
@@ -610,6 +619,15 @@ def course_facts_text(course: str, completed: str = "") -> str:
     out = [f"{subj} {num}: {title or '(no title in the data)'}"]
     if newest and newest["credit_hours"]:
         out.append(f"Credits: {newest['credit_hours']}")
+    if newest:
+        g = newest["grad_credit"]
+        span = lambda lo, hi: f"{lo:g}" if lo == hi else f"{lo:g}-{hi:g}"
+        out.append("Graduate credit: " + (
+            f"yes, {span(newest['grad_min'], newest['grad_max'])} hours"
+            if g == "yes" and newest["grad_min"] is not None
+            else "yes" if g == "yes" else "none" if g == "no" else "not stated in the catalog"))
+        if newest["restriction"]:
+            out.append(f"Restriction: {newest['restriction']}")
     desc = next((r["description"] for r in sorted(secs, key=term_key, reverse=True)
                  if r["description"]), None)
     if desc:

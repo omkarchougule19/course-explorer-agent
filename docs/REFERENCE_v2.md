@@ -318,7 +318,7 @@ header only. Red-team passes: [`../security_findings.md`](../security_findings.m
 
 | table | grain | notes |
 |---|---|---|
-| `sections` | one section (CRN) per term | instructor, `enrollment_status` (a word, or an `A`/`P` code for an unpublished term), `credit_hours`, `description` (per course), part-of-term dates, `scraped_at` |
+| `sections` | one section (CRN) per term | instructor, `enrollment_status` (a word, or an `A`/`P` code for an unpublished term), `credit_hours`, `description` (per course), part-of-term dates, `scraped_at`; parsed from those: `credit_min`/`credit_max`, `grad_credit` (yes/no/NULL = not stated), `grad_min`/`grad_max`, `restriction` |
 | `meetings` | one meeting block per section | days (`MTWRFSU`, R = Thursday), start/end time as text (`09:00AM` / `09:00 AM` / `ARRANGED`), building, room |
 | `grade_distributions` | term × course × schedule type × instructor | letter-grade counts, W, students; term window only (**empty now**: upstream lag) |
 | `teachers_ranked_excellent` | ranked instructor × term | department *name*, bare course number (**empty now**) |

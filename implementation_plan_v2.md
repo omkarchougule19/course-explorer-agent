@@ -360,6 +360,31 @@ because other docs cite them.
 - **Open, not planned yet:** gpt-oss ends some judgement answers with a
   conditional "bottom line" verdict (q31).
 
+### 30. Credit facts as columns — `done 2026-09-29, deploy pending`
+- **Problem:** "cs courses with 3 credits eligible for graduate students"
+  got "no data": the model compared the credit_hours text to 3 and counted
+  only 500-level as graduate.
+- **Done:** `app/credits.py` (22 offline checks in `evals/test_credits.py`),
+  six columns on `sections` written by `save_sections`, `backfill_credits.py`
+  run on SQLite and Neon (the read-only role reads the new columns),
+  `course_facts` shows graduate credit and restrictions, two prompt lines,
+  eval q37. Runs: 100% / 100% on 37 questions (`gpt-4o-mini`), q37 passes on
+  Groq; after the final wording of the graduate-credit lines, one more full
+  run: 100%.
+- **Known gap:** the model filters on credit_min/max rather than
+  grad_min/max even with a worked example, so the 7 CS courses a graduate
+  student can only take for 4 hours (415, 417, 433, 437, 444, 462, 470) are
+  still listed. The eval's loose match doesn't catch it.
+
+### 31. Revise the golden set from student-style questions — `todo`
+- **Input:** `evals/candidates/student_questions.jsonl` - 60 questions from
+  the `student-question-writer` agent (7 personas, 9 types, each tied to
+  something visible on the site).
+- **Plan:** pick ~20 that cover gaps in the current 37 (vague references,
+  typos, schedule fits, live seats, part-of-term deadlines, made-up course
+  numbers, social-engineering asks), write gold SQL or text checks from the
+  live data, run them, and fix what fails.
+
 ### 22. Compress responses — `todo`
 - **Problem:** nothing is gzipped: the home page is 137 KB raw vs 42.8 KB
   gzipped; `/sections?subject=CS` 44 KB and `/freshness` 45 KB of JSON.
