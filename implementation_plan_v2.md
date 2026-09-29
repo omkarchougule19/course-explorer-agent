@@ -376,7 +376,7 @@ because other docs cite them.
   student can only take for 4 hours (415, 417, 433, 437, 444, 462, 470) are
   still listed. The eval's loose match doesn't catch it.
 
-### 31. Revise the golden set from student-style questions — `done 2026-09-29`
+### 31. Revise the golden set from student-style questions — `done 2026-09-29, deployed (8e02b31)`
 - **Input:** `evals/candidates/student_questions.jsonl` - 60 questions from
   the `student-question-writer` agent (7 personas, 9 types).
 - **Done:** 26 gold rows q38-q63 (typos, vague references, schedule clashes,
@@ -415,6 +415,9 @@ because other docs cite them.
     no-data rows, so it counts as a pass).
   - q49: "the ai class" still lists other AI courses without CS 440.
   - 34 candidate questions not yet turned into gold rows.
+- **Production check after deploy:** "Which MATH 241 discussion sections are
+  in the afternoon?" (the question that used to hit the iteration cap)
+  answered with one query in 22.5 s, clock times shown, no minutes leaked.
 
 ### 22. Compress responses — `todo`
 - **Problem:** nothing is gzipped: the home page is 137 KB raw vs 42.8 KB
