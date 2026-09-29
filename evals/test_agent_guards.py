@@ -104,6 +104,20 @@ check("a repeated failing query is refused with its first error", "Repeated quer
 agent.new_query_log()
 check("a new answer starts a fresh log", "[You already ran" not in db.run("SELECT a FROM t LIMIT 2"))
 
+# 4c. empty result for a subject with no rows in the latest term
+real_cov = agent._subject_coverage
+agent._subject_coverage = lambda: ("fall 2026", {"CS": "fall 2026", "ECON": "spring 2026"})
+try:
+    note = agent._unsynced_note("SELECT * FROM sections WHERE subject = 'ECON' AND semester = 'fall' AND year = 2026")
+    check("unsynced subject in the latest term gets a note naming its latest term",
+          bool(note) and "ECON has no fall 2026 rows" in note and "spring 2026" in note)
+    check("a synced subject gets no note",
+          agent._unsynced_note("SELECT * FROM sections WHERE subject = 'CS' AND semester = 'fall' AND year = 2026") is None)
+    check("a query on another term gets no note",
+          agent._unsynced_note("SELECT * FROM sections WHERE subject = 'ECON' AND semester = 'spring' AND year = 2026") is None)
+finally:
+    agent._subject_coverage = real_cov
+
 # 5. the agent is built once per process and never blocks the event loop
 import asyncio
 import time

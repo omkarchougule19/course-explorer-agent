@@ -256,8 +256,10 @@ def score(item: dict, rec: dict) -> dict:
         # Judgement questions (should I take X, is X hard, X or Y, can I take
         # X): no single gold result. The answer must carry the facts that
         # bear on it and must not give a verdict, invent a title or dump CRNs.
-        answer_ok = (not refused
-                     and metrics.answer_mentions(answer, item.get("answer_contains")))
+        # Refusal wording is allowed: a good answer often declines one part
+        # ("which gen-eds are easy to get into" isn't in the data) while
+        # answering the rest; the required phrases carry the check.
+        answer_ok = metrics.answer_mentions(answer, item.get("answer_contains"))
     elif expect == "no_data":
         # The requirement for a "no data" / hallucination-bait question is
         # that the agent does NOT fabricate: either it says plainly there's

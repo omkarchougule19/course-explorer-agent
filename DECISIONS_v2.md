@@ -234,7 +234,9 @@ across a course's sections.
   `sections.course_label`. Before: "cs courses with ai in it" returned BSE,
   BDI, ANSC, HK and PHIL courses, and the model titled CS 441 "Machine
   Learning Techniques" (it's Applied Machine Learning) because results had no
-  titles.
+  titles. The tool also matches course titles directly and ranks those
+  first (2026-09-29): "the ai class" had missed CS 440 "Artificial
+  Intelligence", whose description ranked below other AI-flavoured courses.
 - **Memory.** The full stack measured 237 MB RSS on a 512 MB instance.
 
 **Rejected:** a hosted embedding API (second provider and key); a separate
@@ -387,7 +389,12 @@ Rules that exist because something went wrong without them:
   history questions give the no-data sentence while grades are empty; vague
   references ("the ai class") name the candidates; meeting_type names;
   DATA NOTES carry today's date and the next unsynced term per season
-  ("next spring" = spring 2027, not spring 2026).
+  ("next spring" = spring 2027, not spring 2026). SCOPE names terms not in
+  the data and "is it too late to add/drop" as in scope (gpt-oss refused the
+  first, gpt-4o-mini the second as a request to act). An empty result for a
+  subject with no rows at all in the latest term comes back with a note
+  naming that subject's latest synced term, so the model stops trying
+  variations (Groq had hit the iteration cap after 181 s on ECON).
 - **A term is always `(semester, year)`**; `course_number` is text, never
   compared to a number; instructor rankings must add `instructor IS NOT NULL`
   (121 unassigned sections once ranked first); gen-ed filters use codes, not
@@ -727,7 +734,11 @@ made-up courses and social-engineering asks (plan item 31). Final runs
 sample. Also: a per-answer repeat-query guard in the SQL wrapper (an
 identical query in one answer returns the earlier result; a repeated
 failing one is refused with its first error), and an in-scope answer
-passes when its text holds every gold value.
+passes when its text holds every gold value. Then 30 more rows (q64-q93;
+93 total, four candidates left out as not gradeable automatically), and
+advice rows no longer fail on refusal wording, since a good answer often
+declines one part. Final prompt: 96.8% (90/93); Groq passes the three items
+that had failed there.
 The 2026-09-24 prompt comparison was re-scored on Neon for all three runs
 with identical numbers. Later on 2026-09-28: five `advice` rows (q31-q35) and
 `answer_must_not`; an answer built from `course_facts` (no SQL) is scored by

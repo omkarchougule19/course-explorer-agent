@@ -406,15 +406,30 @@ because other docs cite them.
   98.4% / 98.4% (62/63; the miss is q49, "the ai class"). Prompt about
   3,100 tokens (was ~2,600 before items 29-31). Groq `gpt-oss-120b` on 6
   new rows: 5/6.
-- **Open:**
-  - q55 on Groq: "online sections of ECON 102 this fall" hit the iteration
-    cap after 181 s (ECON isn't synced for fall; gpt-oss kept trying new
-    queries, which the repeat guard doesn't catch).
-  - q53 on Groq: "next spring" got the out-of-scope refusal instead of
-    "spring 2027 isn't in the data yet" (the scorer accepts a refusal for
-    no-data rows, so it counts as a pass).
-  - q49: "the ai class" still lists other AI courses without CS 440.
-  - 34 candidate questions not yet turned into gold rows.
+- **Open items closed 2026-09-29:**
+  - q55 (ECON unsynced, iteration cap on Groq): an empty result for a
+    subject with no rows in the latest term now carries a note naming the
+    subject's latest synced term (`_unsynced_note`). Groq: answered in 47 s.
+  - q53 ("next spring" refused on Groq): SCOPE says terms not in the data
+    are in scope. Groq: "no data for spring 2027".
+  - q49 ("the ai class" without CS 440): the topic search also matches
+    course titles (`_title_matches`), ranked first. Groq: "The AI class is
+    CS 440".
+  - The remaining candidates: 30 more gold rows (q64-q93); the set is 93.
+    Not turned into rows: s017 and s019 (200+ / 36 valid answers, not
+    gradeable automatically), s020 (needs another department's clash data),
+    s037 (8-week drop deadline; blocked on plan item 28).
+  - Also: "is it too late to add a class" was refused as a request to act;
+    SCOPE now names deadline questions. Scoring: advice rows no longer fail
+    on refusal wording (good answers decline one part); q40 scored on CRNs
+    in the text; q73 (personal advising) expects a refusal.
+- **Measured:** 93 rows, `gpt-4o-mini`: 93.5% / 93.5% before the last
+  fixes, 96.8% on the final prompt (90/93). Groq `gpt-oss-120b`: q49, q53,
+  q55, q81 all pass, but slowly (47-74 s: the 8K tokens/min limit).
+- **Still open:** q74 (PSYC unsynced for fall: says so but doesn't offer
+  the spring 2026 sections), q91 ("that intro programming one" picked
+  CS 400 over CS 124), q45 once joined meetings without the course keys
+  (noise; passed in every other run).
 - **Production check after deploy:** "Which MATH 241 discussion sections are
   in the afternoon?" (the question that used to hit the iteration cap)
   answered with one query in 22.5 s, clock times shown, no minutes leaked.
