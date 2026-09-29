@@ -186,6 +186,13 @@ once; `db.py` translates for Postgres. Nobody needs Postgres to develop.
   400-level). Chosen over teaching the prompt to parse the text (the owner's
   call: the model is the least reliable place to do it). Not solved:
   department eligibility beyond the verbatim restriction sentence.
+- **Meeting times as numbers too** (2026-09-29). `meetings.start_min` /
+  `end_min` hold minutes after midnight (NULL for ARRANGED), parsed by
+  `app/timefields.py` at save time and backfilled (20,978 meetings on Neon).
+  The model filters on them and shows the start_time/end_time text. Why: it
+  had to copy a four-line CAST(substr(...)) expression for every time
+  question and kept unbalancing it ("MATH 241 discussion sections in the
+  afternoon" hit the iteration cap on parse errors).
 
 **Rejected:** per-file backend branching; an ORM (the queries are simple and
 portable SQL was enough).
@@ -369,10 +376,18 @@ Rules that exist because something went wrong without them:
 - **A `suffix` that agrees with the prompt.** Without one, LangChain inserted
   a pre-filled assistant turn promising to list tables and read the schema,
   the opposite of the prompt's instruction.
-- **Time of day is compared as minutes after midnight**, with a given
-  expression that works unchanged on Postgres and SQLite. Plain text
-  comparison of the mixed time formats undercounted (263 vs the correct 334
-  for CS fall 2026 sections starting at or after 10 AM).
+- **Time of day is compared as minutes after midnight**: since 2026-09-29
+  through the `start_min`/`end_min` columns (§4), filtered on but never
+  shown; before that, through a given CAST(substr(...)) expression the model
+  often mis-copied. Plain text comparison of the mixed time formats
+  undercounted (263 vs the correct 334 for CS fall 2026 sections starting at
+  or after 10 AM).
+- **Rules added from the student-style golden rows** (2026-09-29): calendar
+  answers give ranges; one line per prerequisite group; "easy A"/GPA/grade
+  history questions give the no-data sentence while grades are empty; vague
+  references ("the ai class") name the candidates; meeting_type names;
+  DATA NOTES carry today's date and the next unsynced term per season
+  ("next spring" = spring 2027, not spring 2026).
 - **A term is always `(semester, year)`**; `course_number` is text, never
   compared to a number; instructor rankings must add `instructor IS NOT NULL`
   (121 unassigned sections once ranked first); gen-ed filters use codes, not
@@ -707,8 +722,12 @@ q04/q17 gold fixed, q30 (unsynced subject) added, `no_data` rows now also
 check `answer_contains`, and prod-arm rate-limit errors are retried.
 2026-09-29: golden set revised from `student-question-writer` output - 26
 rows (q38-q63) of typos, vague references, schedule fits, unsynced terms,
-made-up courses and social-engineering asks; work in progress, see plan
-item 31.
+made-up courses and social-engineering asks (plan item 31). Final runs
+98.4% / 98.4% on 63 rows (from 87.3% before the fixes); Groq 5/6 on a
+sample. Also: a per-answer repeat-query guard in the SQL wrapper (an
+identical query in one answer returns the earlier result; a repeated
+failing one is refused with its first error), and an in-scope answer
+passes when its text holds every gold value.
 The 2026-09-24 prompt comparison was re-scored on Neon for all three runs
 with identical numbers. Later on 2026-09-28: five `advice` rows (q31-q35) and
 `answer_must_not`; an answer built from `course_facts` (no SQL) is scored by

@@ -376,46 +376,45 @@ because other docs cite them.
   student can only take for 4 hours (415, 417, 433, 437, 444, 462, 470) are
   still listed. The eval's loose match doesn't catch it.
 
-### 31. Revise the golden set from student-style questions — `in progress, paused 2026-09-29`
+### 31. Revise the golden set from student-style questions — `done 2026-09-29`
 - **Input:** `evals/candidates/student_questions.jsonl` - 60 questions from
-  the `student-question-writer` agent (7 personas, 9 types, each tied to
-  something visible on the site).
-- **Plan:** pick ~20 that cover gaps in the current 37 (vague references,
-  typos, schedule fits, live seats, part-of-term deadlines, made-up course
-  numbers, social-engineering asks), write gold SQL or text checks from the
-  live data, run them, and fix what fails.
-- **Done so far (committed as work in progress, NOT deployed):**
-  - 26 gold rows q38-q63 from the candidates (facts checked on Neon); the set
-    is 63 rows. Gold corrections: q45 (CS 421 does meet TR 3:30 - my fact
-    query had dropped 'Lecture-Discussion' rows), q48 (refusing to edit the
-    Schedule is acceptable).
-  - First runs: 87.3% / 87.3% (new rows 18/26, old 37/37); after fixes
-    92.1% / 93.7% (new 21-22/26).
-  - Fixes in `app/agent.py`: calendar answers give date ranges
-    (event_end_date); one line per prerequisite group; "easy A"/GPA/grade
-    history give the no-data sentence while grades are empty; vague course
-    references ("the ai class") name the candidates; a per-answer repeat-query
-    guard (`new_query_log()`: an identical query in one answer returns the
-    earlier result, a repeated failing one is refused with its first error).
-  - Started, untested end to end: `meetings.start_min/end_min` (minutes after
-    midnight, `app/timefields.py`, 8 checks in `evals/test_credits.py`),
-    written by the scraper and by `backfill_credits.py`; the prompt now
-    describes these columns instead of the CAST(substr(...)) formula the
-    model kept unbalancing (q40 hit the iteration cap). Also: DATA NOTES give
-    today's date and the next unsynced term per season ('next spring' =
-    spring 2027; q53 answered with spring 2026), the partial-term note checks
-    the whole subject (q55), and an in-scope answer passes when its text holds
-    every gold value (q39 used STRING_AGG).
-- **Before resuming or deploying:**
-  1. Run `python -m app.backfill_credits` on SQLite, then (owner approval)
-     on Neon - **the committed prompt references meetings.start_min/end_min,
-     which don't exist on Neon yet; do not deploy before this.**
-  2. Tidy the `covered` line in `evals/run.py` score() (it uses
-     `"gold_rows" in dir()`; initialise `gold_rows = None` instead).
-  3. Offline suites, then two full runs of the 63 rows; check q39, q40, q53,
-     q55 in particular; then one Groq check of the new rows.
-  4. Update DECISIONS_v2.md (§4 meeting minutes, §7 prompt rules, §12 golden
-     set and repeat-query guard) with the measured results, commit, deploy.
+  the `student-question-writer` agent (7 personas, 9 types).
+- **Done:** 26 gold rows q38-q63 (typos, vague references, schedule clashes,
+  unsynced terms, a made-up course, social-engineering asks), facts checked
+  on Neon; the set is 63 rows. Gold corrections found by the runs: q45 (CS
+  421 does meet TR 3:30), q48 (refusing to edit the Schedule is acceptable),
+  q37 (the question names no term, so gold covers every term), q40 (section
+  names, not CRNs).
+- **What the new rows exposed, and the fixes:**
+  - Time-of-day questions: the model kept unbalancing the copied
+    CAST(substr(...)) formula (q40 hit the iteration cap). Now
+    `meetings.start_min/end_min` (`app/timefields.py`, backfilled on SQLite
+    and Neon, 20,978 meetings); the prompt says filter on them but show
+    start_time/end_time (one run had converted 930 to "11:30 AM" and
+    invented a clash).
+  - A per-answer repeat-query guard (`new_query_log()`).
+  - Prompt: calendar ranges (event_end_date); one line per prerequisite
+    group; "easy A"/GPA/grade history give the no-data sentence while grades
+    are empty; vague references ("the ai class") name the candidates,
+    searching spelled-out titles; meeting_type names ("discussion" =
+    'Discussion/Recitation'); DATA NOTES give today's date and the next
+    unsynced term per season ("next spring" = spring 2027); the
+    partial-term note checks the whole subject.
+  - Scoring: an in-scope answer also passes when its text holds every gold
+    value.
+- **Measured** (`gpt-4o-mini`, Neon): first runs 87.3% / 87.3%; final
+  98.4% / 98.4% (62/63; the miss is q49, "the ai class"). Prompt about
+  3,100 tokens (was ~2,600 before items 29-31). Groq `gpt-oss-120b` on 6
+  new rows: 5/6.
+- **Open:**
+  - q55 on Groq: "online sections of ECON 102 this fall" hit the iteration
+    cap after 181 s (ECON isn't synced for fall; gpt-oss kept trying new
+    queries, which the repeat guard doesn't catch).
+  - q53 on Groq: "next spring" got the out-of-scope refusal instead of
+    "spring 2027 isn't in the data yet" (the scorer accepts a refusal for
+    no-data rows, so it counts as a pass).
+  - q49: "the ai class" still lists other AI courses without CS 440.
+  - 34 candidate questions not yet turned into gold rows.
 
 ### 22. Compress responses — `todo`
 - **Problem:** nothing is gzipped: the home page is 137 KB raw vs 42.8 KB
