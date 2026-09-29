@@ -705,6 +705,10 @@ reflects the database actually used (it was computed before `.env` loaded);
 the prod arm now records input, output and cached tokens per LLM call;
 q04/q17 gold fixed, q30 (unsynced subject) added, `no_data` rows now also
 check `answer_contains`, and prod-arm rate-limit errors are retried.
+2026-09-29: golden set revised from `student-question-writer` output - 26
+rows (q38-q63) of typos, vague references, schedule fits, unsynced terms,
+made-up courses and social-engineering asks; work in progress, see plan
+item 31.
 The 2026-09-24 prompt comparison was re-scored on Neon for all three runs
 with identical numbers. Later on 2026-09-28: five `advice` rows (q31-q35) and
 `answer_must_not`; an answer built from `course_facts` (no SQL) is scored by

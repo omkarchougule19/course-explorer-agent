@@ -83,6 +83,27 @@ check("kept rows still end on a whole tuple", big.split("\n")[0].endswith(")]"))
 small = db.run("SELECT a, b FROM t LIMIT 3")
 check("small result is untouched", "[Result truncated" not in small and small.count("row0") == 3)
 
+# 4b. an identical query repeated within one answer is not re-run
+check("no log outside an answer: plain result", "[You already ran" not in db.run("SELECT a FROM t LIMIT 1"))
+agent.new_query_log()
+first = db.run("SELECT a FROM t LIMIT 2")
+again = db.run("SELECT  a FROM t\n LIMIT 2")   # whitespace differs, same query
+check("a repeated query returns the earlier result with a note",
+      again.startswith("[You already ran this exact query") and again.endswith(first))
+bad = "SELECT a FROM t WHERE (a = 'x'"
+try:
+    db.run(bad)
+except Exception:
+    pass
+try:
+    db.run(bad)
+    repeated_error = ""
+except Exception as exc:
+    repeated_error = str(exc)
+check("a repeated failing query is refused with its first error", "Repeated query" in repeated_error)
+agent.new_query_log()
+check("a new answer starts a fresh log", "[You already ran" not in db.run("SELECT a FROM t LIMIT 2"))
+
 # 5. the agent is built once per process and never blocks the event loop
 import asyncio
 import time

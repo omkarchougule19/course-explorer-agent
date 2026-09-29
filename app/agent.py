@@ -18,6 +18,7 @@ Or import ask() directly, e.g. from a FastAPI route.
 """
 
 import asyncio
+import contextvars
 import json
 import os
 import re
@@ -127,16 +128,14 @@ TABLES
   breakdown) are fine: query, and explain the codes in words instead of
   showing a bare A/P. No term has seat counts.
 - meetings(year, semester, subject, course_number, crn, meeting_type,
-  days_of_week, start_time, end_time, building, room, instructor)
+  days_of_week, start_time, end_time, building, room, instructor, start_min,
+  end_min)
   A section may have several rows (lecture + discussion). Join to sections on
   (year, semester, subject, course_number, crn). days_of_week uses M T W R F
   S U (R = Thursday); only Tuesday and Thursday = 'TR'.
-  start_time/end_time are text in mixed formats ('09:00AM', '09:00 AM') or
-  'ARRANGED' - never compare them as text. For time-of-day filters exclude
-  'ARRANGED' and compare minutes after midnight, e.g. start at or after 10 AM:
-    ((CAST(substr(replace(start_time,' ',''),1,2) AS INTEGER) % 12) * 60
-     + CAST(substr(replace(start_time,' ',''),4,2) AS INTEGER)
-     + CASE WHEN replace(start_time,' ','') LIKE '%PM' THEN 720 ELSE 0 END) >= 600
+  start_min/end_min are minutes after midnight (NULL when ARRANGED): filter
+  on them, never on the start_time/end_time text. Afternoon = start_min >=
+  720; no 8 AMs = start_min >= 540; done by 5 = end_min <= 1020.
 - grade_distributions(year, term, year_term, subject, course_number,
   course_title, sched_type, primary_instructor, a_plus, a, a_minus, b_plus, b,
   b_minus, c_plus, c, c_minus, d_plus, d, d_minus, f, w, students)
@@ -155,7 +154,8 @@ TABLES
   req_course_number, relation, condition_text, raw_text)
   Best-effort parse of the description. Groups (group_index) are AND-ed; rows
   in one group are alternatives: always write them joined by "or" ("MATH 221
-  or MATH 234"), never as a flat list that makes every course required. NULL req_*
+  or MATH 234"), one line per group, never as a flat list or under a "Group
+  1" heading that makes every course look required. NULL req_*
   = a non-course requirement in condition_text. relation is 'prereq' or
   'concurrent'. subject/course_number is the course that HAS the requirement;
   req_* is the course required. "Prerequisites of X": call course_facts - it
@@ -174,8 +174,8 @@ TABLES
   category: instruction, add, drop, withdraw, break, holiday, finals, grades,
   registration, commencement, other. Dates are 'YYYY-MM-DD'. "Last day to
   drop" = category IN ('drop','withdraw'). Rows in one category can be for
-  different audiences (UG, graduate, Law, Vet Med): always select event_date
-  and title, never LIMIT 1, use the row for the asked audience - UG by default, noting
+  different audiences (UG, graduate, Law, Vet Med): always select event_date,
+  event_end_date and title (give a range when an end date is set), never LIMIT 1, use the row for the asked audience - UG by default, noting
   that other deadlines differ.
 - course_content_search tool (when listed): semantic search over course
   descriptions for open-ended "which courses cover X". One call is enough - it
@@ -216,6 +216,9 @@ HOW TO ANSWER
   rules) and point to an academic advisor or the degree audit (DARS). No
   verdict or recommendation, and nothing about an instructor beyond who
   teaches when.
+- A vague course reference ("the ai class", "that intro programming one"):
+  find courses whose title matches; if several do, name the likeliest by
+  title and list the others, or ask which one - never pick one silently.
 - A conversation-history block may come before the question. Use it only to
   resolve references ("it", "that course", "the second one"); never re-answer
   it.
@@ -234,17 +237,54 @@ class _GuardRejected(SQLAlchemyError):
     """A statement refused by sql_guard before execution."""
 
 
+# Queries already run while producing the current answer: {sql: (ok, text)}.
+# A model stuck on a broken query resubmits the identical text until the
+# iteration cap ("Which MATH 241 discussion sections are in the afternoon?"
+# sent one unbalanced-parenthesis query 6 times). Per answer, not per
+# process, so two students asking the same thing never see each other's
+# queries; LangChain runs tools in a copy of the caller's context, so the
+# log set in ask()/astream_answer() is visible to _CappedSQLDatabase.run.
+_QUERY_LOG: contextvars.ContextVar = contextvars.ContextVar("agent_query_log", default=None)
+
+
+def new_query_log() -> None:
+    """Start a fresh repeat-query log for one answer."""
+    _QUERY_LOG.set({})
+
+
 class _CappedSQLDatabase(SQLDatabase):
     def run(self, command, fetch="all", **kwargs):
         # Every model-written statement passes the structural guard before it
         # executes (see app/sql_guard.py). The allowlist is this instance's own
         # include_tables. The error subclasses SQLAlchemyError so the toolkit's
         # run_no_throw hands the reason back to the model as a tool error.
-        if isinstance(command, str):
-            reason = sql_guard.check_select(command, self.dialect, self.get_usable_table_names())
-            if reason:
-                raise _GuardRejected(f"Query rejected: {reason}")
-        result = super().run(command, fetch=fetch, **kwargs)
+        log = _QUERY_LOG.get()
+        key = " ".join(command.split()) if isinstance(command, str) else None
+        if log is not None and key in log:
+            ok, text = log[key]
+            if not ok:
+                raise _GuardRejected(
+                    "Repeated query: this exact statement already failed in this answer "
+                    f"({text[:300]}). Don't send it again - fix the SQL (check parentheses "
+                    "and quotes) or answer without it.")
+            return ("[You already ran this exact query in this answer; its result is repeated "
+                    "below. Don't run it again - answer from it or change the query.]\n" + text)
+        try:
+            if isinstance(command, str):
+                reason = sql_guard.check_select(command, self.dialect, self.get_usable_table_names())
+                if reason:
+                    raise _GuardRejected(f"Query rejected: {reason}")
+            result = self._capped(super().run(command, fetch=fetch, **kwargs))
+        except Exception as exc:
+            if log is not None and key:
+                log[key] = (False, str(exc))
+            raise
+        if log is not None and key:
+            log[key] = (True, result if isinstance(result, str) else str(result))
+        return result
+
+    @staticmethod
+    def _capped(result):
         if isinstance(result, str) and len(result) > MAX_QUERY_RESULT_CHARS:
             cut = result[:MAX_QUERY_RESULT_CHARS].rsplit("),", 1)[0] + ")]"
             note = (
@@ -734,6 +774,19 @@ def _make_course_facts_tool():
     return course_facts
 
 
+def _next_terms(latest) -> list:
+    """The next occurrence of each regular season after the latest term, in
+    order: after fall 2026 -> ['spring 2027', 'summer 2027', 'fall 2027']."""
+    year, sem = latest["year"], latest["semester"]
+    order = ("spring", "summer", "fall")
+    i = order.index(sem) if sem in order else len(order) - 1
+    out = []
+    for step in range(1, 4):
+        j = i + step
+        out.append(f"{order[j % 3]} {year + j // 3}")
+    return out
+
+
 @lru_cache(maxsize=1)
 def _data_notes() -> str:
     """The DATA NOTES block appended to the prompt: facts about the live data
@@ -789,10 +842,13 @@ def _data_notes() -> str:
     coded = [f"{r['semester']} {r['year']}" for r in terms if (r["coded"] or 0) * 2 > r["n"]]
     from datetime import date
     notes = [
-        f"- The current year is {date.today().year}.",
+        f"- Today is {date.today().isoformat()}.",
         f"- Terms in the data, newest first: {', '.join(names)}. The latest is "
         f"{names[0]}: read 'this', 'current', 'next' or 'upcoming' semester as that, "
         "and never filter on a term not in this list.",
+        f"- Not in the data yet: {', '.join(_next_terms(terms[0]))}. 'Next spring' means "
+        f"{_next_terms(terms[0])[0]}, not an earlier spring: for these say the schedule "
+        "isn't in the data yet - never answer with an earlier term of that season.",
     ]
     if coded:
         notes.append(f"- Registration isn't published yet for {', '.join(coded)}: "
@@ -802,7 +858,10 @@ def _data_notes() -> str:
                      "open/closed isn't published yet and point to UIUC Course Explorer.")
     if empty:
         notes.append(f"- Empty right now: {', '.join(empty)}. Don't query them; "
-                     "give the no-data sentence.")
+                     "give the no-data sentence."
+                     + (" That includes 'easy A', 'GPA', 'curve' and 'grade history' "
+                        "questions: open with it, and don't present a list as easy."
+                        if "grade_distributions" in empty else ""))
 
     latest_year, latest_sem = terms[0]["year"], terms[0]["semester"]
     all_subjects = {r["subject"] for r in subject_terms}
@@ -811,8 +870,9 @@ def _data_notes() -> str:
     if all_subjects and len(latest_subjects) < len(all_subjects):
         notes.append(f"- {names[0]} is synced for only {len(latest_subjects)} of "
                      f"{len(all_subjects)} subjects. Only when a question asks about "
-                     f"{names[0]} (or this/next semester) and the subject has no rows "
-                     f"there: say its {names[0]} schedule hasn't been synced yet (a visitor "
+                     f"{names[0]} (or this/next semester) and the course has no rows "
+                     f"there, check whether its whole subject has any; if not, say the "
+                     f"subject's {names[0]} schedule hasn't been synced yet (a visitor "
                      "can press Sync on the Departments page) and offer the latest term it "
                      "does have - never say the subject offers nothing. A question that "
                      "names no term (gen-eds, prerequisites, what a course is about) "
@@ -1119,6 +1179,7 @@ def ask(question: str, verbose: bool = False, history=None, _model: str | None =
     from app.citations import SQLCapture, sources_footer
 
     cap = SQLCapture()
+    new_query_log()
     try:
         result = agent.invoke(
             {"input": build_agent_input(question, history)},
@@ -1169,6 +1230,7 @@ async def astream_answer(question: str, history=None, _model: str | None = None)
     streamed: list[str] = []
     final: str | None = None
     tool_depth = 0
+    new_query_log()
     try:
         async for ev in agent.astream_events(
             {"input": build_agent_input(q, history)},

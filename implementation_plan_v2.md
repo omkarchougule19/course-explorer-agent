@@ -360,7 +360,7 @@ because other docs cite them.
 - **Open, not planned yet:** gpt-oss ends some judgement answers with a
   conditional "bottom line" verdict (q31).
 
-### 30. Credit facts as columns — `done 2026-09-29, deploy pending`
+### 30. Credit facts as columns — `done 2026-09-29, deployed (af0b2c7)`
 - **Problem:** "cs courses with 3 credits eligible for graduate students"
   got "no data": the model compared the credit_hours text to 3 and counted
   only 500-level as graduate.
@@ -376,7 +376,7 @@ because other docs cite them.
   student can only take for 4 hours (415, 417, 433, 437, 444, 462, 470) are
   still listed. The eval's loose match doesn't catch it.
 
-### 31. Revise the golden set from student-style questions — `todo`
+### 31. Revise the golden set from student-style questions — `in progress, paused 2026-09-29`
 - **Input:** `evals/candidates/student_questions.jsonl` - 60 questions from
   the `student-question-writer` agent (7 personas, 9 types, each tied to
   something visible on the site).
@@ -384,6 +384,38 @@ because other docs cite them.
   typos, schedule fits, live seats, part-of-term deadlines, made-up course
   numbers, social-engineering asks), write gold SQL or text checks from the
   live data, run them, and fix what fails.
+- **Done so far (committed as work in progress, NOT deployed):**
+  - 26 gold rows q38-q63 from the candidates (facts checked on Neon); the set
+    is 63 rows. Gold corrections: q45 (CS 421 does meet TR 3:30 - my fact
+    query had dropped 'Lecture-Discussion' rows), q48 (refusing to edit the
+    Schedule is acceptable).
+  - First runs: 87.3% / 87.3% (new rows 18/26, old 37/37); after fixes
+    92.1% / 93.7% (new 21-22/26).
+  - Fixes in `app/agent.py`: calendar answers give date ranges
+    (event_end_date); one line per prerequisite group; "easy A"/GPA/grade
+    history give the no-data sentence while grades are empty; vague course
+    references ("the ai class") name the candidates; a per-answer repeat-query
+    guard (`new_query_log()`: an identical query in one answer returns the
+    earlier result, a repeated failing one is refused with its first error).
+  - Started, untested end to end: `meetings.start_min/end_min` (minutes after
+    midnight, `app/timefields.py`, 8 checks in `evals/test_credits.py`),
+    written by the scraper and by `backfill_credits.py`; the prompt now
+    describes these columns instead of the CAST(substr(...)) formula the
+    model kept unbalancing (q40 hit the iteration cap). Also: DATA NOTES give
+    today's date and the next unsynced term per season ('next spring' =
+    spring 2027; q53 answered with spring 2026), the partial-term note checks
+    the whole subject (q55), and an in-scope answer passes when its text holds
+    every gold value (q39 used STRING_AGG).
+- **Before resuming or deploying:**
+  1. Run `python -m app.backfill_credits` on SQLite, then (owner approval)
+     on Neon - **the committed prompt references meetings.start_min/end_min,
+     which don't exist on Neon yet; do not deploy before this.**
+  2. Tidy the `covered` line in `evals/run.py` score() (it uses
+     `"gold_rows" in dir()`; initialise `gold_rows = None` instead).
+  3. Offline suites, then two full runs of the 63 rows; check q39, q40, q53,
+     q55 in particular; then one Groq check of the new rows.
+  4. Update DECISIONS_v2.md (§4 meeting minutes, §7 prompt rules, §12 golden
+     set and repeat-query guard) with the measured results, commit, deploy.
 
 ### 22. Compress responses — `todo`
 - **Problem:** nothing is gzipped: the home page is 137 KB raw vs 42.8 KB

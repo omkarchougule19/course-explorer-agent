@@ -158,13 +158,14 @@ def _usage_capture():
 
 
 def run_prod_arm(item: dict) -> dict:
-    from app.agent import build_agent, build_agent_input, collapse_padding, friendly_error
+    from app.agent import build_agent, build_agent_input, collapse_padding, friendly_error, new_query_log
     from app.citations import SQLCapture
     cap = SQLCapture()
     usage = _usage_capture()
     t0 = time.monotonic()
     try:
         agent = build_agent()
+        new_query_log()   # as production does, per answer
         out = agent.invoke({"input": build_agent_input(item["question"])},
                            config={"callbacks": [cap, usage]})
         answer = out.get("output", str(out)) if isinstance(out, dict) else str(out)
@@ -217,6 +218,7 @@ def score(item: dict, rec: dict) -> dict:
 
     # -- result match --
     match = {"strict": None, "loose": None}
+    gold_rows = None
     if gold_sql:
         gold_rows, gold_err = _run_sql(gold_sql)
         if gold_err:
@@ -266,7 +268,12 @@ def score(item: dict, rec: dict) -> dict:
         # unsynced subject is described as not synced yet, not just 'no data').
         answer_ok = answer_ok and metrics.answer_mentions(answer, item.get("answer_contains"))
     else:  # "answer"
-        answer_ok = bool(match.get("loose")) and metrics.answer_mentions(
+        # A correct answer can come from a differently shaped query (q39 used
+        # STRING_AGG per prerequisite group): also accept one whose text holds
+        # every gold value.
+        covered = (bool(gold_rows) and not match.get("gold_error")
+                   and metrics.answer_covers_rows(answer, gold_rows))
+        answer_ok = (bool(match.get("loose")) or covered) and metrics.answer_mentions(
             answer, item.get("answer_contains"))
 
     answer_ok = answer_ok and metrics.answer_excludes(answer, item.get("answer_must_not"))

@@ -1,10 +1,11 @@
 """
 backfill_credits.py
 
-One-off (and safe to re-run): add the parsed credit columns to `sections`
-if they're missing and fill them from each row's own credit_hours and
-description (app/credits.py). No re-scrape; only the six credit columns are
-written. New rows get them at save time (scraper.save_sections).
+One-off (and safe to re-run): add the parsed columns if they're missing and
+fill them from each row's own text - the six credit columns on `sections`
+(app/credits.py) and start_min/end_min on `meetings` (app/timefields.py).
+No re-scrape; only those columns are written. New rows get them at save
+time (scraper.save_sections).
 
     python -m app.backfill_credits --dry-run   # counts only, writes nothing
     python -m app.backfill_credits             # SQLite locally, or Neon if DATABASE_URL is set
@@ -20,16 +21,40 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 
 from app import db  # noqa: E402
 from app.credits import CREDIT_COLUMN_TYPES, CREDIT_COLUMNS, credit_fields  # noqa: E402
+from app.timefields import MEETING_TIME_COLUMN_TYPES, meeting_minutes  # noqa: E402
 
 
-def add_missing_columns(conn: db.Connection) -> list:
-    existing = db.existing_columns(conn, "sections")
+def add_missing_columns(conn: db.Connection, table: str = "sections", types=CREDIT_COLUMN_TYPES) -> list:
+    existing = db.existing_columns(conn, table)
     added = []
-    for col, typ in CREDIT_COLUMN_TYPES:
+    for col, typ in types:
         if col not in existing:
-            conn.execute(f"ALTER TABLE sections ADD COLUMN {col} {typ}")
-            added.append(col)
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+            added.append(f"{table}.{col}")
     return added
+
+
+def backfill_meetings(conn: db.Connection, dry_run: bool) -> None:
+    rows = conn.execute("SELECT id, start_time, end_time FROM meetings").fetchall()
+    updates = [(r["id"],) + meeting_minutes(r["start_time"], r["end_time"]) for r in rows]
+    timed = sum(1 for u in updates if u[1] is not None)
+    print(f"meetings: {len(updates)} ({timed} with a parsed start time, "
+          f"{len(updates) - timed} ARRANGED/blank)")
+    if dry_run:
+        return
+    print(f"columns added: {add_missing_columns(conn, 'meetings', MEETING_TIME_COLUMN_TYPES) or 'none'}")
+    if conn.backend == "postgres":
+        from psycopg2.extras import execute_values
+        execute_values(
+            conn._raw.cursor(),
+            "UPDATE meetings AS m SET start_min = v.start_min::integer, end_min = v.end_min::integer "
+            "FROM (VALUES %s) AS v(id, start_min, end_min) WHERE m.id = v.id",
+            updates, page_size=1000)
+    else:
+        conn.executemany("UPDATE meetings SET start_min = ?, end_min = ? WHERE id = ?",
+                         [u[1:] + (u[0],) for u in updates])
+    conn.commit()
+    print(f"updated {len(updates)} meetings")
 
 
 def main() -> None:
@@ -55,6 +80,7 @@ def main() -> None:
         for k, v in sorted(stats.items()):
             print(f"  {k:<22} {v}")
         if args.dry_run:
+            backfill_meetings(conn, dry_run=True)
             print("dry run: nothing written")
             return
 
@@ -81,6 +107,7 @@ def main() -> None:
             conn.executemany(f"UPDATE sections SET {sets} WHERE id = ?", params)
         conn.commit()
         print(f"updated {len(updates)} sections")
+        backfill_meetings(conn, dry_run=False)
     finally:
         conn.close()
 

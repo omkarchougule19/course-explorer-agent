@@ -59,6 +59,7 @@ from tqdm import tqdm
 from app import db
 from app import embeddings
 from app.credits import CREDIT_COLUMN_TYPES, CREDIT_COLUMNS, credit_fields
+from app.timefields import MEETING_TIME_COLUMN_TYPES, meeting_minutes
 from app.db import DB_PATH
 
 # Load DATABASE_URL (and any other vars) from the project-root .env, the same
@@ -491,10 +492,17 @@ def init_db(db_path: Optional[Path] = None) -> db.Connection:
                 end_time TEXT,
                 building TEXT,
                 room TEXT,
-                instructor TEXT
+                instructor TEXT,
+                start_min INTEGER,
+                end_min INTEGER
             )
             """
         )
+        # Minutes after midnight (app/timefields.py); backfill_credits.py fills old rows.
+        existing_meeting_cols = db.existing_columns(conn, "meetings")
+        for col, typ in MEETING_TIME_COLUMN_TYPES:
+            if col not in existing_meeting_cols:
+                conn.execute(f"ALTER TABLE meetings ADD COLUMN {col} {typ}")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_meetings_section "
             "ON meetings(year, semester, subject, course_number, crn)"
@@ -546,14 +554,16 @@ def save_sections(conn: db.Connection, sections: Iterable[Section]) -> int:
                     (s.year, s.semester, s.subject, s.course_number, s.crn,
                      m.meeting_type, m.days_of_week, m.start_time, m.end_time,
                      m.building, m.room, m.instructor)
+                    + meeting_minutes(m.start_time, m.end_time)
                 )
         if meeting_rows:
             conn.executemany(
                 """
                 INSERT INTO meetings
                 (year, semester, subject, course_number, crn,
-                 meeting_type, days_of_week, start_time, end_time, building, room, instructor)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 meeting_type, days_of_week, start_time, end_time, building, room, instructor,
+                 start_min, end_min)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 meeting_rows,
             )

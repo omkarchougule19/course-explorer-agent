@@ -56,5 +56,16 @@ check("long restrictions are capped", len(parse_restriction("Restricted to " + "
 check("credit_fields in column order",
       credit_fields("440", "3 OR 4 hours.", CS440) == (3.0, 4.0, "yes", 3.0, 4.0, None))
 
+from app.timefields import meeting_minutes, minutes_after_midnight  # noqa: E402
+
+check("morning time", minutes_after_midnight("09:30AM") == 570)
+check("space before AM/PM", minutes_after_midnight("09:30 AM") == 570)
+check("noon hour is PM, not +12h", minutes_after_midnight("12:15PM") == 735)
+check("midnight hour", minutes_after_midnight("12:00AM") == 0)
+check("afternoon", minutes_after_midnight("03:30 PM") == 930)
+check("ARRANGED and blanks are NULL", minutes_after_midnight("ARRANGED") is None and minutes_after_midnight(None) is None)
+check("impossible hour is NULL", minutes_after_midnight("13:00PM") is None)
+check("start and end together", meeting_minutes("11:00AM", "12:15PM") == (660, 735))
+
 print(f"\n{'all checks passed' if not failures else str(len(failures)) + ' FAILED'}")
 raise SystemExit(1 if failures else 0)
