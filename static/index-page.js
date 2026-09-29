@@ -87,7 +87,6 @@
       courses.slice(0, buttons.length).forEach((course, i) => {
         buttons[i].textContent = CHIP_TEMPLATES[i % CHIP_TEMPLATES.length](course);
       });
-      $('chips-label').hidden = false;
     } catch (e) { /* keep the static defaults already in the markup */ }
   }
 
@@ -184,13 +183,67 @@
     }
   });
 
+  // Empty: greeting + composer + chips centred. Active: messages above, the
+  // composer pinned to the bottom of the chat block.
+  function setChatState(state) {
+    $('chat').dataset.state = state;
+  }
+
+  // The composer grows with the question, up to its CSS max-height.
+  function autosize() {
+    const box = $('ask-input');
+    box.style.height = 'auto';
+    box.style.height = box.scrollHeight + 'px';
+  }
+  $('ask-input').addEventListener('input', autosize);
+  // Enter sends, Shift+Enter is a new line (not while an IME is composing).
+  $('ask-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      $('ask-form').requestSubmit();
+    }
+  });
+
+  // Keep the chat pinned to its newest line, like other AI chats: every
+  // change inside the scrollback (a streamed token, the Markdown re-render,
+  // the feedback bar) scrolls to the bottom - unless the reader has scrolled
+  // up, in which case it stays put and a "Jump to latest" button appears.
+  // Before this, the scroll ran before an answer's Markdown rendered, so a
+  // restored chat stopped short of the end.
+  let stickToLatest = true;
+  const NEAR_BOTTOM_PX = 60;
+  function atBottom() {
+    const sb = $('scrollback');
+    return sb.scrollHeight - sb.scrollTop - sb.clientHeight < NEAR_BOTTOM_PX;
+  }
+  function scrollToLatest(force) {
+    if (force) stickToLatest = true;
+    if (!stickToLatest) { $('jump-latest').hidden = false; return; }
+    const sb = $('scrollback');
+    sb.scrollTop = sb.scrollHeight;
+    $('jump-latest').hidden = true;
+  }
+  $('scrollback').addEventListener('scroll', () => {
+    stickToLatest = atBottom();
+    if (stickToLatest) $('jump-latest').hidden = true;
+  }, { passive: true });
+  let pinQueued = false;
+  new MutationObserver(() => {
+    if (pinQueued) return;
+    pinQueued = true;
+    requestAnimationFrame(() => { pinQueued = false; scrollToLatest(false); });
+  }).observe($('scrollback'), { childList: true, subtree: true, characterData: true });
+  // The visible area also shrinks without any DOM change inside it: the
+  // budget bar under the composer appears once /ask/summary answers, and the
+  // composer grows with a long question. Re-pin on those too.
+  if (window.ResizeObserver) new ResizeObserver(() => scrollToLatest(false)).observe($('scrollback'));
+  $('jump-latest').addEventListener('click', () => scrollToLatest(true));
+
   function addLine(text, cls) {
-    const scrollback = $('scrollback');
     const div = document.createElement('div');
     div.className = 'line ' + cls;
     div.textContent = text;
-    scrollback.appendChild(div);
-    scrollback.scrollTop = scrollback.scrollHeight;
+    $('scrollback').appendChild(div);
     return div;
   }
 
@@ -215,7 +268,6 @@
       '<button type="button" class="fb-down" aria-label="Not helpful">' + THUMB_DOWN + '</button>' +
       '<span class="fb-note" hidden>couldn’t save that</span>';
     afterEl.insertAdjacentElement('afterend', bar);
-    $('scrollback').scrollTop = $('scrollback').scrollHeight;
 
     const up = bar.querySelector('.fb-up');
     const down = bar.querySelector('.fb-down');
@@ -305,8 +357,7 @@
     if (!saved || (!(saved.transcript || []).length && !saved.pendingQuestion)) return;
     transcript = Array.isArray(saved.transcript) ? saved.transcript : [];
     chatHistory = Array.isArray(saved.chatHistory) ? saved.chatHistory : [];
-    $('sb-placeholder')?.remove();
-    $('chips').style.display = 'none';
+    setChatState('active');
     for (const t of transcript) {
       addLine(t.q, 'line-q');
       const a = addLine('', 'line-a md');
@@ -317,6 +368,10 @@
       addLine('That reply was cut off when you left the page. Ask again to retry.', 'line-sys');
     }
     pendingQuestion = null;
+    scrollToLatest(true);
+    // Web fonts arriving after the redraw make the text taller without any
+    // DOM change for the observer to see; re-pin once they're in.
+    if (document.fonts) document.fonts.ready.then(() => scrollToLatest(false));
     saveChat();   // the interrupted question is shown once, not on every visit
     $('new-chat').hidden = false;
   }
@@ -327,9 +382,8 @@
     pendingQuestion = null;
     saveChat();
     $('new-chat').hidden = true;
-    $('chips').style.display = '';
-    $('scrollback').innerHTML =
-      '<div class="line line-sys" id="sb-placeholder">Your conversation will appear here.</div>';
+    $('scrollback').querySelectorAll('.line, .feedback').forEach((el) => el.remove());
+    setChatState('empty');
     $('ask-input').focus();
   });
 
@@ -346,10 +400,12 @@
     const question = input.value.trim();
     if (!question) { if (window.Motion) Motion.shake(input); return; }
     input.value = '';
+    autosize();
     input.disabled = true;
-    const chipsEl = $('chips');
-    if (chipsEl) chipsEl.style.display = 'none';
-    $('sb-placeholder')?.remove();
+    const wasEmpty = $('chat').dataset.state === 'empty';
+    setChatState('active');
+    // The block grows from its centred empty state: bring all of it on screen.
+    if (wasEmpty) $('chat').scrollIntoView({ behavior: REDUCED ? 'auto' : 'smooth', block: 'nearest' });
 
     pendingQuestion = question;
     saveChat();
@@ -360,7 +416,8 @@
     status.innerHTML = '<span class="st-text">Checking the catalog</span><span class="bounce" aria-hidden="true"><i></i><i></i><i></i></span>';
 
     let raw = '', streaming = false, settled = false;
-    const scroll = () => { $('scrollback').scrollTop = $('scrollback').scrollHeight; };
+    const scroll = () => scrollToLatest(false);
+    scrollToLatest(true);   // asking always brings the chat back to the end
 
     const settle = (finalText, asError) => {
       if (settled) return;

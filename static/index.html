@@ -55,33 +55,46 @@
 
   <section class="panel ask-hero">
     <h2>Ask the Course Assistant <button type="button" class="link-btn" id="new-chat" hidden>New chat</button></h2>
-    <p class="ask-lead">Ask about courses, sections, instructors, or gen-eds. Follow-ups work.</p>
-    <div class="usage-note" id="usage-note">
-      <div class="usage-note-text">
-        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
-        <span>Under active development, on a small shared free LLM budget. If the daily limit is reached the assistant pauses; browsing, search, prerequisites, and grade history keep working.</span>
+    <!-- Claude/Gemini-style chat block: messages scroll above, the composer is
+         pinned to the bottom. data-state="empty" centres the greeting, the
+         composer and the chips until the first question. -->
+    <div class="chat" id="chat" data-state="empty">
+      <div class="scrollback" id="scrollback" aria-live="polite">
+        <div class="chat-empty" id="sb-placeholder">
+          <p class="chat-greet">What do you want to know?</p>
+          <p class="ask-lead">Ask about courses, sections, instructors, prerequisites or gen-eds. Follow-ups work.</p>
+        </div>
       </div>
-      <div class="usage-bar-row" id="usage-bar-row" hidden>
-        <div class="usage-bar"><div class="usage-bar-fill" id="usage-bar-fill"></div></div>
-        <span class="usage-text" id="usage-text"></span>
+      <div class="composer-wrap">
+        <button type="button" class="jump-latest" id="jump-latest" hidden>
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>
+          Jump to latest
+        </button>
+        <form id="ask-form" class="ask-form composer">
+          <textarea id="ask-input" rows="1" maxlength="500" placeholder="e.g. Which CS courses have the most sections this fall?" aria-label="Ask the course assistant" autocomplete="off"></textarea>
+          <button type="submit" class="send-btn" aria-label="Send">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+          </button>
+        </form>
+        <div class="chips-wrap">
+          <div class="chips" id="chips">
+            <button type="button" class="chip">Who teaches CS 225 this fall?</button>
+            <button type="button" class="chip">Which courses satisfy a QR gen-ed?</button>
+            <button type="button" class="chip">What does STAT 400 cover?</button>
+            <button type="button" class="chip">Find courses about machine learning</button>
+          </div>
+        </div>
+        <div class="usage-note" id="usage-note">
+          <div class="usage-note-text">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+            <span>Answers come from the synced catalog and can be wrong. Runs on a small shared free LLM budget; if it runs out, browsing and search keep working.</span>
+          </div>
+          <div class="usage-bar-row" id="usage-bar-row" hidden>
+            <div class="usage-bar"><div class="usage-bar-fill" id="usage-bar-fill"></div></div>
+            <span class="usage-text" id="usage-text"></span>
+          </div>
+        </div>
       </div>
-    </div>
-    <form id="ask-form" class="ask-form">
-      <input id="ask-input" type="text" placeholder="e.g. Which CS courses have the most sections this fall?" autocomplete="off">
-      <button type="submit">
-        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
-        Send
-      </button>
-    </form>
-    <p class="chips-label" id="chips-label" hidden><span class="sticker">🔥 Trending</span> What everyone's stressing about this week</p>
-    <div class="chips" id="chips">
-      <button type="button" class="chip">Who teaches CS 225 this fall?</button>
-      <button type="button" class="chip">Which courses satisfy a QR gen-ed?</button>
-      <button type="button" class="chip">What does STAT 400 cover?</button>
-      <button type="button" class="chip">Find courses about machine learning</button>
-    </div>
-    <div class="scrollback" id="scrollback" aria-live="polite">
-      <div class="line line-sys" id="sb-placeholder">Your conversation will appear here.</div>
     </div>
   </section>
 

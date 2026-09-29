@@ -332,6 +332,27 @@ because other docs cite them.
 - **Done when:** the add/drop row reads 2026-09-04 and a "last day to drop a
   course" question gets the right date.
 
+### 29. Chat UI and answer fixes of 2026-09-28/29 — `paused, uncommitted work saved`
+- **Done (committed as work in progress, not deployed):**
+  - Claude/Gemini-style chat block: messages above, composer pinned at the
+    bottom, centred empty state, question bubbles, auto-growing input
+    (Enter sends, Shift+Enter new line); pinned to the newest line with a
+    "Jump to latest" button; Trending label removed. Tested locally in
+    Chrome at desktop width, dark and light.
+  - `course_content_search` takes `subjects` and returns real titles (q36).
+  - `LLM_MAX_TOKENS` output cap (4,000) after a 2.1M-space runaway answer.
+  - `course_facts(course, completed=...)` met/missing prerequisite check,
+    with 7 new offline checks (all pass).
+- **Still to do when resumed:**
+  1. Two full eval runs on the final version (the `completed` check and the
+     word-level coverage metric haven't been through one); q34 must pass
+     every run.
+  2. Check the chat at phone width (Chrome DevTools device mode; the
+     browser tool couldn't resize the maximized window).
+  3. Confirm q31-q36 once on Groq's production model at a quiet time.
+  4. Deploy (`be1ac55`, `23c3264`, `c5c0d2d` and this work) after a local
+     check, then verify in production.
+
 ### 22. Compress responses — `todo`
 - **Problem:** nothing is gzipped: the home page is 137 KB raw vs 42.8 KB
   gzipped; `/sections?subject=CS` 44 KB and `/freshness` 45 KB of JSON.

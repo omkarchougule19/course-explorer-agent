@@ -94,10 +94,12 @@ def answer_covers_rows(answer: str, rows, max_rows: int = 30) -> bool:
     if not rows or len(rows) > max_rows:
         return False
     low = (answer or "").lower()
+    words = set(re.findall(r"[a-z0-9]+", low))
     for row in rows:
         cells = row.values() if isinstance(row, dict) else row
         for v in cells:
-            if v is not None and str(v).strip().lower() not in low:
+            # Word-level, so the stored "4 hours." matches "4 credit hours".
+            if v is not None and not set(re.findall(r"[a-z0-9]+", str(v).lower())) <= words:
                 return False
     return True
 

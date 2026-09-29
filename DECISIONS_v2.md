@@ -202,6 +202,15 @@ across a course's sections.
   and the top `RAG_K_RETURN` (10) returned. Falls back to the raw topic on any
   failure; `RAG_MULTIQUERY=0` disables it. Structured SQL questions never pay
   for it. Its tokens are never streamed to the user.
+- **Department filter and real titles** (2026-09-28). The tool takes an
+  optional `subjects` argument ("CS", "CS,ECE"); with it, the search is an
+  exact scan over those departments' rows (`OFFSET 0` keeps the planner off
+  the HNSW index, which filters after picking ~40 global neighbours and could
+  return none of a small department). Every result carries its title from
+  `sections.course_label`. Before: "cs courses with ai in it" returned BSE,
+  BDI, ANSC, HK and PHIL courses, and the model titled CS 441 "Machine
+  Learning Techniques" (it's Applied Machine Learning) because results had no
+  titles.
 - **Memory.** The full stack measured 237 MB RSS on a 512 MB instance.
 
 **Rejected:** a hosted embedding API (second provider and key); a separate
@@ -210,7 +219,7 @@ too big for the instance); full query decomposition (2-3 extra LLM calls per
 question for a gain facet expansion already delivers).
 
 **History.** Model chosen 2026-08; RAG verified on Neon 2026-08-31;
-multi-query + RRF 2026-08-31.
+multi-query + RRF 2026-08-31; department filter and titles 2026-09-28.
 
 ---
 
@@ -236,6 +245,15 @@ questions. Answers stream to the browser.
   false positives, and judgement wording was ~3% of 136 logged questions), a
   fact sheet injected into every course question (re-sent on every step),
   and rewriting answers after streaming (they're already on screen).
+  Its optional `completed` argument ("CS 225, MATH 241") adds a deterministic
+  met/missing check of each prerequisite line: left to the model, one run
+  told a student with CS 225 and MATH 241 "you can take CS 444" while two
+  lines were still missing (added 2026-09-29; not yet re-evaluated).
+- **Output cap per LLM call: `LLM_MAX_TOKENS` (4,000).** Normal answers are
+  under ~1,600 output tokens (eval p99 762); with no cap, gpt-4o-mini once
+  padded a Markdown table header with 2.1 million spaces (16,384 tokens,
+  136 s). 4,000 leaves room for gpt-oss's reasoning tokens. The prompt also
+  says not to pad table cells.
 
 - **Hybrid, not either/or.** Pure vector RAG is weak at exact lookups ("who
   teaches CS 225"); pure SQL can't answer "courses about the brain". The owner
@@ -535,6 +553,25 @@ JavaScript, no framework and no build step, served by FastAPI's
   fallback path. Answers render as Markdown through `md.js` (a small
   hand-written renderer: a CDN library is blocked by the CSP and the model
   only emits a small subset).
+- **Chat laid out like Claude or Gemini** (since 2026-09-28): one framed block
+  with the messages scrolling inside it and the composer pinned to its bottom
+  edge, so a new answer appears just above where you type. Before the first
+  question, a greeting, the composer and the suggestion chips sit centred;
+  the first question switches the block to its active state (72% of the
+  viewport, 78% on phones). The question is a small right-aligned bubble and
+  the answer runs full width, so tables keep their room. The composer is an
+  auto-growing textarea (Enter sends, Shift+Enter adds a line, 500-char cap
+  matching `ASK_MAX_CHARS`), and the budget note shrank to one muted line
+  under it. It replaced input-on-top with the answers growing below it,
+  where every reply pushed the conversation away from the input. Chosen
+  over a chat-first home page and a floating chat on every page (bigger
+  changes); Browse and Feedback stay where they were. The chat stays pinned
+  to its newest line (a MutationObserver for streamed text and re-renders, a
+  ResizeObserver for the area shrinking when the budget bar appears) unless
+  the reader scrolls up, which shows a "Jump to latest" button; asking always
+  returns to the end. The "Trending / What everyone's stressing about this
+  week" label was removed at the owner's request (the chips stay, still
+  filled from `/ask/trending`).
 - **The chat survives page changes** through `sessionStorage` (last 10 turns,
   answers capped at 8,000 characters), cleared when the tab closes or with
   "New chat". `localStorage` was rejected: it would keep someone's questions
@@ -567,7 +604,7 @@ failed in production).
 
 **History.** UI iterations 2026-08-31 to 2026-09-20; pages split out
 2026-09-14/15; chat persistence and transitions 2026-09-20; page scripts moved
-out for the CSP 2026-09-24.
+out for the CSP 2026-09-24; Claude/Gemini-style chat block 2026-09-28.
 
 ---
 
@@ -650,7 +687,12 @@ calendar fix; input tokens per question on the shared 30 rose from ~5.6K to
 ~6.6K (+15%: the prompt and tool schema, sent on every step), average
 latency unchanged (~2.4 s); the advice questions use ~8.3K tokens and
 ~4.7 s. On Groq's 200K tokens/day that is ~30 questions a day instead of
-~35.
+~35. 2026-09-28/29: q36 ("cs courses with ai in it", department filter
+and titles); tool-answer coverage is word-level ("4 hours." matches "4
+credit hours"). Runs after the search fix and output cap: 100% / 97.2% /
+88.9% / 97.2% on 36 questions; the 88.9% run had a wrong eligibility answer
+(q34), which led to the `completed` check - that change hasn't been through
+a full run yet.
 
 ---
 

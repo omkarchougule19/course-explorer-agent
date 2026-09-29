@@ -137,17 +137,40 @@ def save_course_embedding(conn: db.Connection, subject: str, course_number: str,
     return True
 
 
-def search_similar_by_vector(conn: db.Connection, vector: Optional[List[float]], k: int = 5) -> List[dict]:
+def search_similar_by_vector(conn: db.Connection, vector: Optional[List[float]], k: int = 5,
+                             subjects: Optional[List[str]] = None) -> List[dict]:
     """Cosine-nearest course descriptions to an already-computed embedding.
     Lets a multi-query search embed all of its sub-queries in one batch
     (embed_texts) and reuse the vectors here instead of re-embedding per
-    query. Empty list on SQLite or if `vector` is missing."""
+    query. `subjects` limits the search to those departments ("CS courses
+    about AI" once returned BSE, BDI, ANSC...). Empty list on SQLite or if
+    `vector` is missing."""
     if conn.backend != "postgres" or not vector:
         return []
 
     from pgvector import Vector
     from pgvector.psycopg2 import register_vector
     register_vector(conn._raw)
+
+    if subjects:
+        # Exact search over the named departments' rows (at most a few
+        # hundred). OFFSET 0 keeps the planner off the HNSW index, which
+        # filters *after* picking ~40 global neighbours and so could return
+        # few or none of a small department's courses.
+        rows = conn.execute(
+            """
+            SELECT * FROM (
+                SELECT subject, course_number, description, embedding <=> ? AS distance
+                FROM course_embeddings
+                WHERE subject = ANY(?)
+                OFFSET 0
+            ) t
+            ORDER BY distance
+            LIMIT ?
+            """,
+            (Vector(vector), [s.upper() for s in subjects], k),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     rows = conn.execute(
         """

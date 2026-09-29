@@ -227,7 +227,6 @@ button:active { transform: scale(0.95); }
   60%  { transform: translateY(-3px) scale(1.05) rotate(3deg); }
   100% { transform: translateY(-3px) scale(1.05) rotate(-2deg); }
 }
-.chips-label { display: flex; align-items: center; gap: 8px; }
 .sticker {
   display: inline-block;
   padding: 2px 9px;

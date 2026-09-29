@@ -81,6 +81,15 @@ try:
     check("unknown course says so", agent.course_facts_text("CS 999").startswith("No course CS 999 in the data"))
     check("no course code asks for one", agent.course_facts_text("deep learning") == "Give one course code, e.g. 'CS 444'.")
     check("stays compact", len(out) < 1500)
+    chk = agent.course_facts_text("CS 444", completed="cs225, MATH 241")
+    check("eligibility: met lines named", "Met: MATH 241; CS 225." in chk)
+    check("eligibility: missing line with its alternatives", "Missing: MATH 257 or MATH 415." in chk)
+    check("eligibility: says lines are still missing", "1 line(s) still missing" in chk)
+    check("eligibility: a non-course condition is flagged, not judged",
+          "Not checkable from the data: junior standing." in chk)
+    all_met = agent.course_facts_text("CS 444", completed="MATH 241, MATH 415, CS 225")
+    check("eligibility: all course lines met", "all listed course prerequisites met" in all_met)
+    check("no completed list, no check line", "Check against" not in out)
 finally:
     appdb.DB_PATH = saved
 

@@ -34,7 +34,8 @@ production.
   and searched in pgvector; the ranked lists are fused with
   `score += 1 / (60 + rank)`.
 - **Streams, with memory.** Answers arrive over Server-Sent Events with live
-  "Running SQL…" status lines. The chat survives page changes in the tab
+  "Running SQL…" status lines, in a chat block whose composer is pinned to
+  the bottom (Enter sends, Shift+Enter adds a line). The chat survives page changes in the tab
   (`sessionStorage`); the server stays stateless and uses the last 3 turns only
   to resolve "it" or "the second one".
 - **Every answer is sourced.** A deterministic footer names the datasets the
@@ -359,6 +360,7 @@ calendar events, 5,464 embeddings; grades and rankings 0.
 | `LLM_PROVIDER` | auto | force `groq` / `openai` |
 | `GROQ_MODEL` · `OPENAI_MODEL` | `openai/gpt-oss-120b` · `gpt-4o-mini` | model per provider |
 | `GROQ_FALLBACK_MODEL` | `qwen/qwen3.8-27b` | retried once on a Groq 429; `off` disables |
+| `LLM_MAX_TOKENS` | `4000` | output cap per LLM call |
 | `ADMIN_TOKEN` | unset (admin always 403) | admin dashboard and routes |
 | `ENABLE_DOCS` | unset | exposes `/docs`, `/redoc`, `/openapi.json` |
 | `ASK_MAX_CHARS` · `ASK_RATE_PER_HOUR` · `ASK_RATE_PER_DAY` · `ASK_GLOBAL_PER_DAY` | 500 · 10 · 60 · 250 | question guardrails |

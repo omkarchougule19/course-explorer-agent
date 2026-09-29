@@ -171,8 +171,9 @@ TABLES
   that other deadlines differ.
 - course_content_search tool (when listed): semantic search over course
   descriptions for open-ended "which courses cover X". One call is enough - it
-  already expands the topic; group the results by theme. For a named course,
-  use course_facts.
+  already expands the topic; group the results by theme. When the question
+  names a department ("CS courses about AI"), pass it as subjects. Use the
+  titles it returns, never your own. For a named course, use course_facts.
 - course_facts tool: one named course's title, description, credits,
   prerequisites, gen-eds, recent instructors/status and grades in one call.
   Take a course's title only from it or course_label, never from memory.
@@ -184,7 +185,7 @@ HOW TO ANSWER
   sections, times, or who teaches. A named instructor or term is a filter, not
   the topic: "should I take CS 444 with Gupta" is about the course.
 - Prose or a short list by default; a Markdown table only for 3+ fields
-  across several rows. Cover every row you list, state how many there are,
+  across several rows, with no spaces padding the cells. Cover every row you list, state how many there are,
   and name the term if you chose it. Always write a term with its year
   ("fall 2026"), never the season alone.
 - Link every course as [CS 225](/?course=CS-225) and every instructor as
@@ -198,8 +199,8 @@ HOW TO ANSWER
 - Questions about a named course (what is it about, should I take it, is it
   hard, X or Y, can I take it, should I drop it): call course_facts per course
   and answer what was asked from its facts. Name the prerequisites (for "can
-  I take it", say which lines the student's courses meet and which are
-  missing); for dropping, also query academic_calendar for the drop/withdraw
+  I take it", pass the courses they've taken as completed and report its
+  met/missing check as given); for dropping, also query academic_calendar for the drop/withdraw
   deadlines. "What is it about" gets 2-3 sentences in your own words. Then
   say what the data can't tell (workload, teaching quality, seats, degree
   rules) and point to an academic advisor or the degree audit (DARS). No
@@ -307,6 +308,17 @@ def _build_llm(streaming: bool = False, model: str | None = None, fallback: bool
                    lambda: _new_llm(streaming=streaming, model=model, fallback=fallback))
 
 
+def _max_tokens() -> int:
+    """Output cap per LLM call. A normal answer is under ~1,600 output
+    tokens (eval p99: 762); without a cap, gpt-4o-mini once padded a Markdown
+    table header with 2 million spaces (16,384 tokens, 136 s) before stopping.
+    Generous enough for gpt-oss's reasoning tokens, which count against it."""
+    try:
+        return max(256, int(os.environ.get("LLM_MAX_TOKENS", "4000")))
+    except ValueError:
+        return 4000
+
+
 def _new_llm(streaming: bool = False, model: str | None = None, fallback: bool = True):
     """Pick the LLM provider. By default it's whichever API key is set, in
     order: GROQ_API_KEY (preferred - free; ~80-100 real questions/day in
@@ -342,7 +354,8 @@ def _new_llm(streaming: bool = False, model: str | None = None, fallback: bool =
     if groq_key and forced in ("", "groq"):
         from langchain_groq import ChatGroq
         name = model or _groq_primary_model()
-        primary = ChatGroq(model=name, temperature=0, api_key=groq_key, streaming=streaming)
+        primary = ChatGroq(model=name, temperature=0, api_key=groq_key, streaming=streaming,
+                           max_tokens=_max_tokens())
         # Groq's daily token cap is per model, so a 429 on the primary can be
         # answered by a different model on the same key. This wrapper only
         # suits callers that .invoke() the model (the SQL pipeline, RAG query
@@ -352,7 +365,7 @@ def _new_llm(streaming: bool = False, model: str | None = None, fallback: bool =
         if backup_name:
             import groq
             backup = ChatGroq(model=backup_name, temperature=0, api_key=groq_key,
-                              streaming=streaming)
+                              streaming=streaming, max_tokens=_max_tokens())
             return (primary.with_fallbacks([backup], exceptions_to_handle=(groq.RateLimitError,)),
                     "Groq")
         return primary, "Groq"
@@ -361,7 +374,8 @@ def _new_llm(streaming: bool = False, model: str | None = None, fallback: bool =
     if openai_key and forced in ("", "openai"):
         from langchain_openai import ChatOpenAI
         return ChatOpenAI(model=os.environ.get("OPENAI_MODEL") or "gpt-4o-mini",
-                          temperature=0, api_key=openai_key, streaming=streaming), "OpenAI"
+                          temperature=0, api_key=openai_key, streaming=streaming,
+                          max_tokens=_max_tokens()), "OpenAI"
 
     if forced:
         raise EnvironmentError(
@@ -441,6 +455,22 @@ def _rrf_merge(result_lists: list, k: int = 60, top_n: int = 10) -> list:
     return [e["row"] for e in ranked[:top_n]]
 
 
+def _course_titles(conn, keys) -> dict:
+    """{(subject, course_number): course_label} for the given courses, newest
+    label first; one query."""
+    if not keys:
+        return {}
+    where = " OR ".join("(subject = ? AND course_number = ?)" for _ in keys)
+    rows = conn.execute(
+        f"SELECT subject, course_number, course_label, year FROM sections WHERE {where} "
+        "ORDER BY year DESC", [v for k in keys for v in k]).fetchall()
+    out: dict = {}
+    for r in rows:
+        if r["course_label"]:
+            out.setdefault((r["subject"], r["course_number"]), r["course_label"])
+    return out
+
+
 def _make_course_content_search_tool(tool_llm):
     """The RAG half of the hybrid agent: multi-query semantic search over
     course descriptions via pgvector. Only meaningful on Postgres (see
@@ -451,26 +481,37 @@ def _make_course_content_search_tool(tool_llm):
     from app import embeddings as emb
 
     @tool
-    def course_content_search(query: str) -> str:
+    def course_content_search(query: str, subjects: str = "") -> str:
         """Semantic search over course catalog descriptions - use this for
         open-ended 'what courses cover X' / 'find courses about Y' questions,
         not for looking up a specific already-named course. The query is
-        automatically expanded into related facets and the results merged."""
+        automatically expanded into related facets and the results merged.
+        subjects: the department code(s) the question names, comma-separated
+        (e.g. 'CS' or 'CS,ECE'); leave empty to search every department."""
+        wanted = [s for s in re.findall(r"[A-Za-z]{2,4}", subjects or "")]
         conn = db.get_connection()
         try:
             phrases = _expand_query(tool_llm, query, _RAG_SUBQUERIES)
             vectors = emb.embed_texts(phrases) if phrases else []
             result_lists = [
-                emb.search_similar_by_vector(conn, v, _RAG_K_PER)
+                emb.search_similar_by_vector(conn, v, _RAG_K_PER, subjects=wanted or None)
                 for v in vectors if v is not None
             ]
             matches = _rrf_merge(result_lists, top_n=_RAG_K_RETURN)
+            titles = _course_titles(conn, [(m["subject"], m["course_number"]) for m in matches])
         finally:
             conn.close()
         if not matches:
-            return "No matching course descriptions found."
+            where = f" in {', '.join(w.upper() for w in wanted)}" if wanted else ""
+            return f"No matching course descriptions found{where}."
+        # The title comes from the data: without it the model named courses
+        # itself (CS 441 "Machine Learning Techniques"; it's Applied Machine
+        # Learning).
         return "\n\n".join(
-            f"{m['subject']} {m['course_number']}: {m['description']}" for m in matches
+            f"{m['subject']} {m['course_number']}"
+            f"{' - ' + titles[(m['subject'], m['course_number'])] if (m['subject'], m['course_number']) in titles else ''}"
+            f": {m['description']}"
+            for m in matches
         )
 
     return course_content_search
@@ -482,7 +523,7 @@ _FACTS_TERMS = 3        # recent terms listed per course
 _FACTS_DESC_CHARS = 500
 
 
-def course_facts_text(course: str) -> str:
+def course_facts_text(course: str, completed: str = "") -> str:
     """Everything the data holds about one named course, as a short fixed
     block (~500-900 chars): the title from course_label, description,
     credits, prerequisite groups already joined with "or", gen-eds, the last
@@ -490,7 +531,10 @@ def course_facts_text(course: str) -> str:
     Excellent rows when those tables have any. Fixed parameterized SQL on the
     read-only connection, so it can't invent a title (a run once called
     CS 444 "Computer Architecture") or forget the facts a should-I / is-it-hard
-    / can-I question turns on."""
+    / can-I question turns on. `completed` (courses the student says they've
+    taken) adds a deterministic check of which prerequisite lines are met and
+    which are missing: left to the model, one run told a student with CS 225
+    and MATH 241 "you can take CS 444" while two lines were still missing."""
     m = _COURSE_ARG_RE.search(course or "")
     if not m:
         return "Give one course code, e.g. 'CS 444'."
@@ -560,6 +604,21 @@ def course_facts_text(course: str) -> str:
                 groups.setdefault(r["group_index"], []).append(item)
         out.append("Prerequisites (every line required; 'or' = any one): "
                    + "; ".join(" or ".join(g) for g in groups.values()))
+        taken = {f"{s.upper()} {n.upper()}" for s, n in _COURSE_ARG_RE.findall(completed or "")}
+        if taken:
+            met, missing, unchecked = [], [], []
+            for r_group in groups.values():
+                courses = [i.split(" (")[0] for i in r_group if _COURSE_ARG_RE.fullmatch(i.split(" (")[0])]
+                if not courses:
+                    unchecked.append(" or ".join(r_group))
+                elif any(c in taken for c in courses):
+                    met.append(next(c for c in courses if c in taken))
+                else:
+                    missing.append(" or ".join(r_group))
+            verdict = "all listed course prerequisites met" if not missing else f"{len(missing)} line(s) still missing"
+            out.append(f"Check against the courses given ({', '.join(sorted(taken))}): {verdict}. "
+                       f"Met: {'; '.join(met) or 'none'}. Missing: {'; '.join(missing) or 'none'}."
+                       + (f" Not checkable from the data: {'; '.join(unchecked)}." if unchecked else ""))
     else:
         out.append("Prerequisites: none listed.")
 
@@ -608,14 +667,17 @@ def _make_course_facts_tool():
     from langchain_core.tools import tool
 
     @tool
-    def course_facts(course: str) -> str:
+    def course_facts(course: str, completed: str = "") -> str:
         """All facts about ONE named course, e.g. 'CS 444': title, description,
         credits, prerequisites (alternatives joined by 'or'), gen-eds, recent
         terms' instructors and open/closed status, grades if loaded. Use it for
         what-is-it, should-I-take, is-it-hard, can-I-take and X-or-Y questions
         (one call per course). Not for lists, counts, meeting times or
-        searches across courses - use SQL for those."""
-        return course_facts_text(course)
+        searches across courses - use SQL for those. completed: for "can I
+        take X", the courses the student says they've taken, comma-separated
+        (e.g. 'CS 225, MATH 241'); the result then says which prerequisite
+        lines are met and which are missing."""
+        return course_facts_text(course, completed)
 
     return course_facts
 
@@ -738,7 +800,8 @@ _AGENTS: dict = {}
 _SQL_DBS: dict = {}
 
 _ENV_KEYS = ("LLM_PROVIDER", "GROQ_API_KEY", "GROQ_MODEL", "GROQ_FALLBACK_MODEL",
-             "OPENAI_API_KEY", "OPENAI_MODEL", "DATABASE_URL", "DATABASE_URL_RO")
+             "OPENAI_API_KEY", "OPENAI_MODEL", "DATABASE_URL", "DATABASE_URL_RO",
+             "LLM_MAX_TOKENS")
 
 
 def _env_signature() -> tuple:

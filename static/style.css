@@ -328,10 +328,127 @@ hr.rule { display: none; }
   font-size: 16px;
   color: var(--ink-2);
 }
-.ask-hero .ask-form { margin-bottom: var(--s3); }
-.ask-hero .ask-form input { padding: 13px 15px; font-size: 15px; }
-.ask-hero .ask-form button { padding: 13px 22px; font-size: 14px; }
-.ask-hero .scrollback { margin-bottom: 0; }
+/* ---------- Chat block (Claude/Gemini layout) ----------
+   One framed block: messages scroll in .scrollback, the composer sits at the
+   bottom. Empty state: greeting + composer + chips centred; the first
+   question switches data-state to "active". */
+.chat {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.chat[data-state="active"] { height: min(72vh, 780px); height: min(72dvh, 780px); }
+.chat[data-state="empty"] { justify-content: center; min-height: 340px; padding: var(--s6) 0; }
+
+.chat .scrollback {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  margin: 0;
+  padding: var(--s5) var(--s5) var(--s3);
+  background: none;
+  border: 0;
+  border-radius: 0;
+}
+.chat[data-state="empty"] .scrollback { flex: 0 0 auto; overflow: visible; padding-bottom: var(--s4); }
+.chat[data-state="active"] .chat-empty,
+.chat[data-state="active"] .chips-wrap { display: none; }
+
+.chat-empty { text-align: center; }
+.chat-greet {
+  margin: 0 0 var(--s2);
+  font-family: var(--display);
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.chat-empty .ask-lead { margin: 0 auto; }
+
+.composer-wrap {
+  position: relative;
+  flex: 0 0 auto;
+  width: 100%;
+  max-width: 820px;
+  margin: 0 auto;
+  padding: var(--s3) var(--s5) var(--s4);
+}
+.chat[data-state="active"] .composer-wrap {
+  max-width: none;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+}
+.composer {
+  align-items: flex-end;
+  padding: 6px 6px 6px var(--s4);
+  background: var(--panel);
+  border: 1px solid var(--field-line);
+  border-radius: 22px;
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.composer:focus-within {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
+}
+.composer textarea {
+  flex: 1;
+  min-height: 24px;
+  max-height: 200px;
+  margin: 7px 0;
+  padding: 0;
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  outline: none;
+  resize: none;
+  overflow-y: auto;
+}
+/* The composer itself shows focus; the textarea inside must not draw its own
+   field (theme-genz gives every textarea a radius and a 4px focus ring). */
+.composer textarea,
+.composer textarea:focus { border-radius: 0; box-shadow: none; background: transparent; }
+.composer textarea::placeholder { color: #9aa0a8; }
+.composer .send-btn {
+  flex: 0 0 auto;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border-radius: 50%;
+}
+.composer .send-btn .icon { width: 17px; height: 17px; }
+
+/* Shown only when the reader has scrolled up in a long chat. */
+.jump-latest {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + var(--s2));
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  font-size: 12px;
+  border-radius: 999px;
+  box-shadow: var(--shadow-md);
+}
+.jump-latest .icon { width: 13px; height: 13px; }
+.jump-latest[hidden] { display: none; }
+
+.chips-wrap { margin-top: var(--s4); text-align: center; }
+.chips-wrap .chips { justify-content: center; }
+.composer-wrap .usage-note {
+  margin: var(--s3) 0 0;
+  padding: 0;
+  background: none;
+  border: 0;
+}
+.composer-wrap .usage-note-text { justify-content: center; font-size: 12.5px; color: var(--muted); }
+.composer-wrap .usage-note-text .icon { width: 13px; height: 13px; margin-top: 3px; }
+.composer-wrap .usage-bar-row { max-width: 360px; margin: var(--s2) auto 0; }
 
 .chips {
   display: flex;
@@ -471,16 +588,6 @@ button:disabled { opacity: 0.5; cursor: default; filter: none; transform: none; 
   color: var(--muted);
 }
 .hint a { text-decoration: underline; }
-
-.chips-label {
-  margin: var(--s3) 0 var(--s2);
-  font-family: var(--sans);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--orange);
-}
 
 /* ---------- Results table ---------- */
 .results-wrap {
@@ -695,19 +802,18 @@ tbody tr.course-row:hover .course-name-cell { border-bottom-color: var(--link); 
   word-wrap: break-word;
 }
 .line:last-child { margin-bottom: 0; }
+/* The question: a small right-aligned bubble; the answer runs full width. */
 .line-q {
+  width: fit-content;
+  max-width: 80%;
+  margin-left: auto;
+  padding: 9px 14px;
   font-family: var(--sans);
-  font-weight: 700;
-  color: var(--blue);
-}
-.line-q::before {
-  content: "";
-  display: inline-block;
-  width: 3px; height: 1em;
-  margin-right: 8px;
-  vertical-align: -0.15em;
-  background: var(--orange);
-  border-radius: 2px;
+  font-size: 15px;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px 16px 4px 16px;
 }
 .line-sys {
   font-family: var(--serif);
@@ -1230,12 +1336,20 @@ td .cell-clip.open { white-space: normal; overflow: visible; }
   .panel h2 { font-size: 18px; }
   .ask-hero { padding: var(--s5); }
   .ask-hero h2 { font-size: 20px; }
-  .ask-lead, .ask-hero .ask-form input { font-size: 15px; }
+  .ask-lead { font-size: 15px; }
   .scrollback { max-height: 52vh; }
+  .chat .scrollback { max-height: none; padding: var(--s4) var(--s3) var(--s2); }
+  .chat[data-state="active"] { height: 78vh; height: 78dvh; }
+  .chat[data-state="empty"] { min-height: 0; padding: var(--s5) 0; }
+  .chat-greet { font-size: 23px; }
+  .composer-wrap { padding: var(--s2) var(--s3) var(--s3); }
+  /* 16px keeps iOS Safari from zooming the viewport on focus */
+  .composer textarea { font-size: 16px; }
+  .line-q { max-width: 88%; }
 
-  /* Stack the assistant input + Send, and every filter form, into one column */
-  .ask-form { flex-direction: column; }
-  .ask-form button { width: 100%; justify-content: center; }
+  /* Stack every filter form into one column (the chat composer stays a row) */
+  .ask-form:not(.composer) { flex-direction: column; }
+  .ask-form:not(.composer) button { width: 100%; justify-content: center; }
 
   .field-row { flex-direction: column; align-items: stretch; gap: var(--s3); }
   /* beats the inline `style="flex: 0 1 96px"` on the Limit field */
