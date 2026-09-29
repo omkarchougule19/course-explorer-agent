@@ -194,6 +194,7 @@
     const box = $('ask-input');
     box.style.height = 'auto';
     box.style.height = box.scrollHeight + 'px';
+    box.style.overflowY = box.scrollHeight > box.clientHeight + 1 ? 'auto' : 'hidden';
   }
   $('ask-input').addEventListener('input', autosize);
   // Enter sends, Shift+Enter is a new line (not while an IME is composing).

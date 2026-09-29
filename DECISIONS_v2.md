@@ -248,12 +248,19 @@ questions. Answers stream to the browser.
   Its optional `completed` argument ("CS 225, MATH 241") adds a deterministic
   met/missing check of each prerequisite line: left to the model, one run
   told a student with CS 225 and MATH 241 "you can take CS 444" while two
-  lines were still missing (added 2026-09-29; not yet re-evaluated).
+  lines were still missing. The check line opens "NOT yet eligible" when a
+  line is missing (a run had led with "You can take CS 444, but..."), and
+  the prompt says to lead with it. The block also lists the latest term's
+  drop/withdraw deadlines: on Groq's gpt-oss, "should I drop CS 225" skipped
+  the separate calendar query and said the deadline wasn't shown.
 - **Output cap per LLM call: `LLM_MAX_TOKENS` (4,000).** Normal answers are
   under ~1,600 output tokens (eval p99 762); with no cap, gpt-4o-mini once
   padded a Markdown table header with 2.1 million spaces (16,384 tokens,
   136 s). 4,000 leaves room for gpt-oss's reasoning tokens. The prompt also
-  says not to pad table cells.
+  says not to pad table cells, topic-search results are listed as bullets
+  rather than a table (where the padding happened), every final answer has
+  space and dash runs collapsed (`collapse_padding`), and the stream stops
+  once its last 300 characters are nothing but padding.
 
 - **Hybrid, not either/or.** Pure vector RAG is weak at exact lookups ("who
   teaches CS 225"); pure SQL can't answer "courses about the brain". The owner
@@ -571,7 +578,10 @@ JavaScript, no framework and no build step, served by FastAPI's
   the reader scrolls up, which shows a "Jump to latest" button; asking always
   returns to the end. The "Trending / What everyone's stressing about this
   week" label was removed at the owner's request (the chips stay, still
-  filled from `/ask/trending`).
+  filled from `/ask/trending`). Checked at phone width (390 px, headless
+  Chrome): no sideways scroll, the composer stays one row with 16px text
+  (no iOS zoom), the chip row starts at its first chip (centring had clipped
+  it), and in a conversation only the budget bar stays under the composer.
 - **The chat survives page changes** through `sessionStorage` (last 10 turns,
   answers capped at 8,000 characters), cleared when the tab closes or with
   "New chat". `localStorage` was rejected: it would keep someone's questions
@@ -691,8 +701,15 @@ latency unchanged (~2.4 s); the advice questions use ~8.3K tokens and
 and titles); tool-answer coverage is word-level ("4 hours." matches "4
 credit hours"). Runs after the search fix and output cap: 100% / 97.2% /
 88.9% / 97.2% on 36 questions; the 88.9% run had a wrong eligibility answer
-(q34), which led to the `completed` check - that change hasn't been through
-a full run yet.
+(q34), which led to the `completed` check. Text checks fold Unicode
+spaces and hyphens: gpt-oss writes "CS\u202f440", which had failed four of
+six answers that were right. Final (2026-09-29): 100% / 97.2% on 36
+questions with `gpt-4o-mini` (the miss: q17 listed groups as sub-lists
+without "or"); q31-q36 on Groq's `gpt-oss-120b` 5/6 on the first pass
+(q35 skipped the calendar), then q31 and q35 both passing after the
+deadlines moved into `course_facts`. gpt-oss tends to end with a
+conditional "bottom line" (q31: "could be a good fit"), which the no-verdict
+rule doesn't fully stop; recorded, not yet acted on.
 
 ---
 

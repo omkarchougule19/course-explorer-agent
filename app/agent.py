@@ -173,7 +173,8 @@ TABLES
   descriptions for open-ended "which courses cover X". One call is enough - it
   already expands the topic; group the results by theme. When the question
   names a department ("CS courses about AI"), pass it as subjects. Use the
-  titles it returns, never your own. For a named course, use course_facts.
+  titles it returns, never your own, and list the results as bullets (link,
+  title, one-line summary), not a table. For a named course, use course_facts.
 - course_facts tool: one named course's title, description, credits,
   prerequisites, gen-eds, recent instructors/status and grades in one call.
   Take a course's title only from it or course_label, never from memory.
@@ -185,7 +186,8 @@ HOW TO ANSWER
   sections, times, or who teaches. A named instructor or term is a filter, not
   the topic: "should I take CS 444 with Gupta" is about the course.
 - Prose or a short list by default; a Markdown table only for 3+ fields
-  across several rows, with no spaces padding the cells. Cover every row you list, state how many there are,
+  across several rows, with no padding: no runs of spaces in cells and a
+  short |---| separator row. Cover every row you list, state how many there are,
   and name the term if you chose it. Always write a term with its year
   ("fall 2026"), never the season alone.
 - Link every course as [CS 225](/?course=CS-225) and every instructor as
@@ -199,8 +201,8 @@ HOW TO ANSWER
 - Questions about a named course (what is it about, should I take it, is it
   hard, X or Y, can I take it, should I drop it): call course_facts per course
   and answer what was asked from its facts. Name the prerequisites (for "can
-  I take it", pass the courses they've taken as completed and report its
-  met/missing check as given); for dropping, also query academic_calendar for the drop/withdraw
+  I take it", pass the courses they've taken as completed and lead with its
+  verdict - if lines are missing, they can't take it yet); for dropping, also query academic_calendar for the drop/withdraw
   deadlines. "What is it about" gets 2-3 sentences in your own words. Then
   say what the data can't tell (workload, teaching quality, seats, degree
   rules) and point to an academic advisor or the degree audit (DARS). No
@@ -317,6 +319,26 @@ def _max_tokens() -> int:
         return max(256, int(os.environ.get("LLM_MAX_TOKENS", "4000")))
     except ValueError:
         return 4000
+
+
+_PAD_RUN_RE = re.compile(r"[ \t]{4,}")
+_DASH_RUN_RE = re.compile(r"-{6,}")
+_RUNAWAY_TAIL = 300
+_PAD_CHARS = frozenset(" \t-|:")
+
+
+def collapse_padding(text: str) -> str:
+    """Squeeze the space and dash runs models use to align Markdown tables.
+    They render identically (the renderer ignores alignment), and a model
+    stuck padding a header once produced 2.1 million spaces."""
+    return _DASH_RUN_RE.sub("---", _PAD_RUN_RE.sub(" ", text or ""))
+
+
+def _is_runaway(streamed: list) -> bool:
+    """True when the last _RUNAWAY_TAIL characters are nothing but table
+    padding: the answer has stopped saying anything, so stop generating."""
+    tail = "".join(streamed[-_RUNAWAY_TAIL:])[-_RUNAWAY_TAIL:]
+    return len(tail) == _RUNAWAY_TAIL and set(tail) <= _PAD_CHARS
 
 
 def _new_llm(streaming: bool = False, model: str | None = None, fallback: bool = True):
@@ -558,6 +580,11 @@ def course_facts_text(course: str, completed: str = "") -> str:
             "SUM(COALESCE(a_plus, 0) + COALESCE(a, 0) + COALESCE(a_minus, 0)) AS a_n "
             "FROM grade_distributions WHERE subject = ? AND course_number = ? "
             "GROUP BY primary_instructor", (subj, num)).fetchall()
+        # For "should I drop it": the model skipped a separate calendar query
+        # on Groq's gpt-oss and said the deadline "is not shown here".
+        deadlines = conn.execute(
+            "SELECT year, semester, event_date, title FROM academic_calendar "
+            "WHERE category IN ('drop', 'withdraw') ORDER BY event_date").fetchall()
         instructors = sorted({r["instructor"] for r in secs
                               if r["instructor"] and r["instructor"].strip() not in ("", "-")})
         excellent = []
@@ -615,7 +642,8 @@ def course_facts_text(course: str, completed: str = "") -> str:
                     met.append(next(c for c in courses if c in taken))
                 else:
                     missing.append(" or ".join(r_group))
-            verdict = "all listed course prerequisites met" if not missing else f"{len(missing)} line(s) still missing"
+            verdict = ("all listed course prerequisites met" if not missing
+                       else f"NOT yet eligible - {len(missing)} line(s) still missing")
             out.append(f"Check against the courses given ({', '.join(sorted(taken))}): {verdict}. "
                        f"Met: {'; '.join(met) or 'none'}. Missing: {'; '.join(missing) or 'none'}."
                        + (f" Not checkable from the data: {'; '.join(unchecked)}." if unchecked else ""))
@@ -658,6 +686,12 @@ def course_facts_text(course: str, completed: str = "") -> str:
         out.append("Grades: none loaded for this course.")
     if excellent:
         out.append("Ranked Excellent by students: " + "; ".join(excellent))
+    if deadlines:
+        latest = max((r["year"] or 0, _SEASON_ORDER.get(r["semester"], 9)) for r in deadlines)
+        rows = [r for r in deadlines
+                if (r["year"] or 0, _SEASON_ORDER.get(r["semester"], 9)) == latest][:4]
+        out.append(f"Drop/withdraw deadlines, {rows[0]['semester']} {rows[0]['year']}: "
+                   + "; ".join(f"{r['event_date']} {r['title'][:90]}" for r in rows))
     out.append("Not in this data: workload, exam format, teaching quality beyond the "
                "above, degree/major rules, future offerings or seats.")
     return "\n".join(out)
@@ -1078,7 +1112,7 @@ def ask(question: str, verbose: bool = False, history=None, _model: str | None =
             return ask(question, verbose=verbose, history=history, _model=backup)
         return friendly_error(exc)
 
-    answer = friendly_stop(result.get("output", str(result)))
+    answer = collapse_padding(friendly_stop(result.get("output", str(result)))).rstrip()
     if classify_answer(answer) == "answered":
         answer += sources_footer(cap.source_sql, cap.rag_used, question)
     return answer
@@ -1148,6 +1182,9 @@ async def astream_answer(question: str, history=None, _model: str | None = None)
                 if text:
                     streamed.append(text)
                     yield "token", text
+                    if _is_runaway(streamed):
+                        final = None   # the agent never finished; use what streamed
+                        break
             elif kind == "on_chain_end" and ev.get("name") == "AgentExecutor":
                 out = ev.get("data", {}).get("output")
                 if isinstance(out, dict):
@@ -1167,7 +1204,8 @@ async def astream_answer(question: str, history=None, _model: str | None = None)
         yield "done", friendly_error(exc)
         return
 
-    answer = friendly_stop(final or "".join(streamed) or "I couldn't produce an answer for that.")
+    answer = collapse_padding(friendly_stop(
+        final or "".join(streamed) or "I couldn't produce an answer for that.")).rstrip()
     if classify_answer(answer) == "answered":
         footer = sources_footer(cap.source_sql, cap.rag_used or rag_used, q)
         if footer:

@@ -332,7 +332,7 @@ because other docs cite them.
 - **Done when:** the add/drop row reads 2026-09-04 and a "last day to drop a
   course" question gets the right date.
 
-### 29. Chat UI and answer fixes of 2026-09-28/29 — `paused, uncommitted work saved`
+### 29. Chat UI and answer fixes of 2026-09-28/29 — `done 2026-09-29, deploy pending`
 - **Done (committed as work in progress, not deployed):**
   - Claude/Gemini-style chat block: messages above, composer pinned at the
     bottom, centred empty state, question bubbles, auto-growing input
@@ -343,15 +343,22 @@ because other docs cite them.
   - `LLM_MAX_TOKENS` output cap (4,000) after a 2.1M-space runaway answer.
   - `course_facts(course, completed=...)` met/missing prerequisite check,
     with 7 new offline checks (all pass).
-- **Still to do when resumed:**
-  1. Two full eval runs on the final version (the `completed` check and the
-     word-level coverage metric haven't been through one); q34 must pass
-     every run.
-  2. Check the chat at phone width (Chrome DevTools device mode; the
-     browser tool couldn't resize the maximized window).
-  3. Confirm q31-q36 once on Groq's production model at a quiet time.
-  4. Deploy (`be1ac55`, `23c3264`, `c5c0d2d` and this work) after a local
-     check, then verify in production.
+- **Resumed 2026-09-29:**
+  1. Full runs: q34 now says "You cannot take CS 444 yet" in every run (the
+     check line leads with "NOT yet eligible"); q36 once hit the 4,000-token
+     cap padding a table, fixed by bullets for topic-search results,
+     `collapse_padding` on every answer and a runaway stop in the stream.
+     Final: 100% / 97.2% (36 questions, `gpt-4o-mini`).
+  2. Phone width (390 px, headless Chrome over CDP): chip row clipped by
+     centring, a stray textarea scrollbar and a tall budget note - all fixed
+     and re-checked.
+  3. Groq `gpt-oss-120b`, q31-q36: text checks now fold Unicode spaces
+     (gpt-oss writes "CS\u202f440"); q35 skipped the calendar, so
+     `course_facts` now lists the drop/withdraw deadlines; q31 and q35 pass.
+- **Still to do:** deploy `be1ac55`, `23c3264`, `c5c0d2d`, `ab62540` and this
+  work (needs the owner's Render sign-in), then verify in production.
+- **Open, not planned yet:** gpt-oss ends some judgement answers with a
+  conditional "bottom line" verdict (q31).
 
 ### 22. Compress responses — `todo`
 - **Problem:** nothing is gzipped: the home page is 137 KB raw vs 42.8 KB

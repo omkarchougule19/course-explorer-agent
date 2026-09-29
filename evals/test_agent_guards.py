@@ -160,5 +160,14 @@ finally:
         if v is not None:
             os.environ[k] = v
 
+# 6. runaway table padding (a model once padded a header with 2.1M spaces)
+check("padding runs collapse; the table still parses",
+      agent.collapse_padding("| A    | B      |\n|------|--------|") == "| A | B |\n|---|---|")
+check("ordinary text is left alone",
+      agent.collapse_padding("two  spaces - and --- dashes") == "two  spaces - and --- dashes")
+check("a tail of pure padding counts as a runaway", agent._is_runaway(["ok"] + [" "] * 400))
+check("a short pad or real text does not", not agent._is_runaway([" "] * 50)
+      and not agent._is_runaway(["text " * 100]))
+
 print(f"\n{'all checks passed' if not failures else str(len(failures)) + ' FAILED'}")
 raise SystemExit(1 if failures else 0)

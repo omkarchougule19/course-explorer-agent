@@ -158,7 +158,7 @@ def _usage_capture():
 
 
 def run_prod_arm(item: dict) -> dict:
-    from app.agent import build_agent, build_agent_input, friendly_error
+    from app.agent import build_agent, build_agent_input, collapse_padding, friendly_error
     from app.citations import SQLCapture
     cap = SQLCapture()
     usage = _usage_capture()
@@ -168,6 +168,7 @@ def run_prod_arm(item: dict) -> dict:
         out = agent.invoke({"input": build_agent_input(item["question"])},
                            config={"callbacks": [cap, usage]})
         answer = out.get("output", str(out)) if isinstance(out, dict) else str(out)
+        answer = collapse_padding(answer).rstrip()   # as production does
     except Exception as exc:  # noqa: BLE001
         # A provider rate limit must reach _with_retry (which backs off and
         # retries), not be scored as a wrong answer: before this, parallel runs

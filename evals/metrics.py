@@ -63,9 +63,19 @@ def result_match(gold_rows: "list[dict] | None",
     return {"strict": strict, "loose": loose}
 
 
+# gpt-oss writes "CS 440" and "4‑credit": narrow/no-break spaces and
+# non-breaking hyphens. Fold them so "CS 440" matches what a reader sees.
+_FOLD = str.maketrans({" ": " ", " ": " ", " ": " ", " ": " ",
+                       "‐": "-", "‑": "-", "‒": "-", "–": "-"})
+
+
+def fold(text: str) -> str:
+    return (text or "").translate(_FOLD).lower()
+
+
 def _has(low: str, needle: str) -> bool:
     # "Oct 16|October 16" = any one of the alternatives.
-    return any(alt.lower() in low for alt in needle.split("|"))
+    return any(fold(alt) in low for alt in needle.split("|"))
 
 
 def answer_mentions(answer: str, needles: "list[str] | None") -> bool:
@@ -74,7 +84,7 @@ def answer_mentions(answer: str, needles: "list[str] | None") -> bool:
     True (nothing to check)."""
     if not needles:
         return True
-    low = (answer or "").lower()
+    low = fold(answer)
     return all(_has(low, n) for n in needles)
 
 
@@ -83,7 +93,7 @@ def answer_excludes(answer: str, needles: "list[str] | None") -> bool:
     answer must NOT say: a verdict, an invented title, a section dump."""
     if not needles:
         return True
-    low = (answer or "").lower()
+    low = fold(answer)
     return not any(_has(low, n) for n in needles)
 
 
@@ -93,7 +103,7 @@ def answer_covers_rows(answer: str, rows, max_rows: int = 30) -> bool:
     row appears in the answer. Too many gold rows -> False."""
     if not rows or len(rows) > max_rows:
         return False
-    low = (answer or "").lower()
+    low = fold(answer)
     words = set(re.findall(r"[a-z0-9]+", low))
     for row in rows:
         cells = row.values() if isinstance(row, dict) else row

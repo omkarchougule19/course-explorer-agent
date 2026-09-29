@@ -407,7 +407,7 @@ hr.rule { display: none; }
   border: 0;
   outline: none;
   resize: none;
-  overflow-y: auto;
+  overflow-y: hidden;   /* autosize() turns scrolling on only past max-height */
 }
 /* The composer itself shows focus; the textarea inside must not draw its own
    field (theme-genz gives every textarea a radius and a 4px focus ring). */
@@ -1346,6 +1346,12 @@ td .cell-clip.open { white-space: normal; overflow: visible; }
   /* 16px keeps iOS Safari from zooming the viewport on focus */
   .composer textarea { font-size: 16px; }
   .line-q { max-width: 88%; }
+  /* The chip row scrolls sideways on phones; centring it would clip the
+     first chip where it can't be scrolled back to. */
+  .chips-wrap .chips { justify-content: flex-start; }
+  /* In a conversation, keep only the budget bar under the composer - the
+     four-line note ate the message area. */
+  .chat[data-state="active"] .composer-wrap .usage-note-text { display: none; }
 
   /* Stack every filter form into one column (the chat composer stays a row) */
   .ask-form:not(.composer) { flex-direction: column; }

@@ -37,6 +37,11 @@ CREATE TABLE gen_ed_categories (subject TEXT, course_number TEXT, course_title T
 CREATE TABLE grade_distributions (year INT, subject TEXT, course_number TEXT, primary_instructor TEXT,
   a_plus INT, a INT, a_minus INT, students INT);
 CREATE TABLE teachers_ranked_excellent (year INT, term TEXT, last_name TEXT, first_name TEXT);
+CREATE TABLE academic_calendar (year INT, semester TEXT, event_date TEXT, category TEXT, title TEXT);
+INSERT INTO academic_calendar VALUES
+  (2026, 'spring', '2026-03-01', 'drop', 'Old spring deadline'),
+  (2026, 'fall', '2026-10-16', 'withdraw', 'Deadline for UG to withdraw without W'),
+  (2026, 'fall', '2026-09-04', 'add', 'Add deadline');
 INSERT INTO sections VALUES
   (2026, 'fall',   'CS', '444', '1', 'Gupta, S',    'A',      'Deep Learning for Computer Vision', '3 OR 4 hours.', 'Neural networks.'),
   (2026, 'fall',   'CS', '444', '2', 'Gupta, S',    'P',      'Deep Learning for Computer Vision', '3 OR 4 hours.', 'Neural networks.'),
@@ -84,12 +89,15 @@ try:
     chk = agent.course_facts_text("CS 444", completed="cs225, MATH 241")
     check("eligibility: met lines named", "Met: MATH 241; CS 225." in chk)
     check("eligibility: missing line with its alternatives", "Missing: MATH 257 or MATH 415." in chk)
-    check("eligibility: says lines are still missing", "1 line(s) still missing" in chk)
+    check("eligibility: says plainly it isn't met yet", "NOT yet eligible - 1 line(s) still missing" in chk)
     check("eligibility: a non-course condition is flagged, not judged",
           "Not checkable from the data: junior standing." in chk)
     all_met = agent.course_facts_text("CS 444", completed="MATH 241, MATH 415, CS 225")
     check("eligibility: all course lines met", "all listed course prerequisites met" in all_met)
     check("no completed list, no check line", "Check against" not in out)
+    check("latest term's drop/withdraw deadlines, not add dates or older terms",
+          "Drop/withdraw deadlines, fall 2026: 2026-10-16 Deadline for UG to withdraw without W" in out
+          and "Old spring" not in out and "Add deadline" not in out)
 finally:
     appdb.DB_PATH = saved
 
