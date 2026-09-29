@@ -376,7 +376,7 @@ because other docs cite them.
   student can only take for 4 hours (415, 417, 433, 437, 444, 462, 470) are
   still listed. The eval's loose match doesn't catch it.
 
-### 31. Revise the golden set from student-style questions — `done 2026-09-29, deployed (8e02b31)`
+### 31. Revise the golden set from student-style questions — `done 2026-09-29, deployed (5adf061)`
 - **Input:** `evals/candidates/student_questions.jsonl` - 60 questions from
   the `student-question-writer` agent (7 personas, 9 types).
 - **Done:** 26 gold rows q38-q63 (typos, vague references, schedule clashes,
@@ -426,6 +426,9 @@ because other docs cite them.
 - **Measured:** 93 rows, `gpt-4o-mini`: 93.5% / 93.5% before the last
   fixes, 96.8% on the final prompt (90/93). Groq `gpt-oss-120b`: q49, q53,
   q55, q81 all pass, but slowly (47-74 s: the 8K tokens/min limit).
+- **Production check after deploying 5adf061:** "the ai class who teaches
+  it" answered "CS 440 - Artificial Intelligence" with its fall 2026
+  instructors (41 s on Groq).
 - **Still open:** q74 (PSYC unsynced for fall: says so but doesn't offer
   the spring 2026 sections), q91 ("that intro programming one" picked
   CS 400 over CS 124), q45 once joined meetings without the course keys
