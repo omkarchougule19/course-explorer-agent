@@ -169,6 +169,11 @@ def run_prod_arm(item: dict) -> dict:
                            config={"callbacks": [cap, usage]})
         answer = out.get("output", str(out)) if isinstance(out, dict) else str(out)
     except Exception as exc:  # noqa: BLE001
+        # A provider rate limit must reach _with_retry (which backs off and
+        # retries), not be scored as a wrong answer: before this, parallel runs
+        # turned 8-12 of 30 questions into "rate limit was hit" failures.
+        if "rate limit" in str(exc).lower() or "429" in str(exc):
+            raise
         answer = friendly_error(exc)
     u = usage.summary()
     return _record(
@@ -230,6 +235,9 @@ def score(item: dict, rec: dict) -> dict:
         # no such data, or it declines. Both are acceptable; inventing a
         # column or a number is not.
         answer_ok = (metrics.looks_like_no_data(answer) or refused) and not hallu_final
+        # Optional: a no-data row can also require specific text (e.g. that an
+        # unsynced subject is described as not synced yet, not just 'no data').
+        answer_ok = answer_ok and metrics.answer_mentions(answer, item.get("answer_contains"))
     else:  # "answer"
         answer_ok = bool(match.get("loose")) and metrics.answer_mentions(
             answer, item.get("answer_contains"))

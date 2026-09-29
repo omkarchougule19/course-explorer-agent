@@ -302,7 +302,7 @@ pipeline 2026-09-10.
 the house rules, so a normal answer needs one query call and one answer, with
 no schema discovery. It is organized by purpose: SCOPE, HOW TO QUERY, TABLES,
 HOW TO ANSWER, then a DATA NOTES block built from the live data. It renders
-to about 2,200 tokens and is re-sent on every agent step.
+to about 2,400 tokens and is re-sent on every agent step.
 
 Rules that exist because something went wrong without them:
 
@@ -318,14 +318,23 @@ Rules that exist because something went wrong without them:
 - **A term is always `(semester, year)`**; `course_number` is text, never
   compared to a number; instructor rankings must add `instructor IS NOT NULL`
   (121 unassigned sections once ranked first); gen-ed filters use codes, not
-  category names; "no prerequisites" uses a `NOT EXISTS` recipe.
+  category names; "no prerequisites" uses a full `NOT EXISTS` example that
+  keeps the subject and level filters (a filterless recipe was copied
+  verbatim); prerequisite alternatives are written joined by "or", and the
+  prompt says which columns hold the course vs the requirement (without it
+  the model filtered the wrong side).
 - **Courses vs sections.** Course questions get one line per course; CRNs and
   instructors only for section, time or who-teaches questions. This resolved
   a rule conflict that produced long duplicated tables.
 - **DATA NOTES, derived at startup:** the current year, the terms in the data
   (newest first, the latest named), which terms only carry `A`/`P` codes with
-  the open-seats rule attached to those term names, and which tables are
-  empty. Nothing is hardcoded that would drift after the next scrape.
+  the open-seats rule attached to those term names, which tables are
+  empty, how many subjects the latest term covers (it's partial because
+  syncing is per department; for a subject with no rows there, say it isn't
+  synced yet and offer its latest term - scoped to questions about that term,
+  since an unconditional note made term-less questions filter on it), and any
+  subject-term with sections but no meeting rows. Nothing is hardcoded that
+  would drift after the next scrape.
 - **Fixed sentences for refusals and for missing data** ("I can only answer
   questions about UIUC course data." / "There's no data for that in this
   dataset yet."), so both are recognizable: `ask_log` tags refusals by phrase,
@@ -358,7 +367,10 @@ failures (a first draft was 27% smaller and regressed); per-question prompt
 variants.
 
 **History.** Scope guardrail 2026-08-25; efficiency rules 2026-08-31; rule
-fixes 2026-09-19; rewrite and eval 2026-09-24.
+fixes 2026-09-19; rewrite and eval 2026-09-24; partial-term and
+missing-meetings notes, prerequisite direction and "or" rule 2026-09-28 (30
+questions: 90.0% / 90.0% vs the previous prompt's 93.3% / 90.0%, within noise,
+with the two targeted failures fixed).
 
 ---
 
@@ -550,7 +562,7 @@ the GitHub repository, whose account carries the operator's real name.
 
 **Decision.** Answer quality is measured, not assumed.
 
-- **The eval harness** (`evals/run.py`, 29 questions in `eval_set.jsonl`:
+- **The eval harness** (`evals/run.py`, 30 questions in `eval_set.jsonl`:
   in-scope, hallucination bait, empty data, out of scope). Gold answers are the
   gold SQL executed live in the same run, not frozen rows, because the data is
   a snapshot that changes per sync. Metrics: execution success, result match
@@ -563,7 +575,9 @@ the GitHub repository, whose account carries the operator's real name.
   Groq's shared 200K-token daily budget and take the live assistant offline
   (`--provider openai`). Confirm on Groq with a few targeted questions.
 - **Run a prompt twice before trusting a comparison.** Single runs of the same
-  prompt varied by 7-18 points.
+  prompt varied by 7-18 points. Run them one after another: in parallel,
+  OpenAI rate limits hit, and the prod arm re-raises rate-limit errors so
+  `_with_retry` backs off instead of scoring them as wrong answers.
 - **Offline tests, no LLM or network:** `test_sql_guard`,
   `test_request_guards`, `test_agent_guards`, `test_static_check`,
   `test_graph_routing`, `test_citations`, `test_llm_failover`,
@@ -581,7 +595,9 @@ the GitHub repository, whose account carries the operator's real name.
 practice 2026-09-24; 2026-09-28: `--rescore` now honours `--db` (it had
 always re-run SQL against the local snapshot) and every summary's `db` label
 reflects the database actually used (it was computed before `.env` loaded);
-the prod arm now records input, output and cached tokens per LLM call.
+the prod arm now records input, output and cached tokens per LLM call;
+q04/q17 gold fixed, q30 (unsynced subject) added, `no_data` rows now also
+check `answer_contains`, and prod-arm rate-limit errors are retried.
 The 2026-09-24 prompt comparison was re-scored on Neon for all three runs
 with identical numbers.
 

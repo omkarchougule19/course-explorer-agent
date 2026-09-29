@@ -144,12 +144,20 @@ TABLES
 - prerequisites(subject, course_number, group_index, req_subject,
   req_course_number, relation, condition_text, raw_text)
   Best-effort parse of the description. Groups (group_index) are AND-ed; rows
-  in one group are alternatives. NULL req_* = a non-course requirement in
-  condition_text. relation is 'prereq' or 'concurrent'. "What does X unlock":
-  filter req_subject/req_course_number. No rows = no prerequisites. For
-  "courses with no prerequisites" use NOT EXISTS (SELECT 1 FROM prerequisites
-  p WHERE p.subject = s.subject AND p.course_number = s.course_number) - never
-  scan the whole table. If a structure looks wrong, quote raw_text.
+  in one group are alternatives: always write them joined by "or" ("MATH 221
+  or MATH 234"), never as a flat list that makes every course required. NULL req_*
+  = a non-course requirement in condition_text. relation is 'prereq' or
+  'concurrent'. subject/course_number is the course that HAS the requirement;
+  req_* is the course required. "Prerequisites of X": filter subject/
+  course_number. "What does X unlock": filter req_subject/req_course_number. No
+  rows = no prerequisites. "Courses with no prerequisites": start from sections
+  with EVERY filter the question names, then exclude courses that have rows,
+  e.g. for MATH 300-level:
+    SELECT DISTINCT s.subject, s.course_number, s.course_label FROM sections s
+    WHERE s.subject = 'MATH' AND s.course_number LIKE '3%'
+      AND NOT EXISTS (SELECT 1 FROM prerequisites p
+                      WHERE p.subject = s.subject AND p.course_number = s.course_number)
+  Never scan the whole table. If a structure looks wrong, quote raw_text.
 - academic_calendar(year, semester, event_date, event_end_date, title,
   category, raw_date)
   category: instruction, add, drop, withdraw, break, holiday, finals, grades,
@@ -469,6 +477,12 @@ def _data_notes() -> str:
       it stays right after the next scrape.
     - Which tables are empty. Querying one burns agent steps for nothing; an
       empty grade_distributions once ran a question into the iteration cap.
+    - How many subjects the latest term covers. Syncing is per department and
+      on demand, so the latest term can be partial; without this, a subject
+      that simply hasn't been synced yet reads as "offers nothing".
+    - Subject-terms with sections but no meeting rows (IS and STAT fall 2026
+      were, until 2026-09-28): meeting-time questions there must say the times
+      aren't loaded, not "none".
 
     Process-cached: this only changes on a manual re-scrape, and the app
     restarts on deploy. Fails soft to "" so a DB hiccup at build time just
@@ -485,6 +499,15 @@ def _data_notes() -> str:
             ).fetchall()
             empty = [t for t in INCLUDED_TABLES
                      if conn.execute(f"SELECT COUNT(*) AS n FROM {t}").fetchone()["n"] == 0]
+            subject_terms = conn.execute(
+                "SELECT s.subject, s.year, s.semester, COUNT(*) AS n, "
+                "SUM(CASE WHEN EXISTS (SELECT 1 FROM meetings m WHERE m.year = s.year "
+                "AND m.semester = s.semester AND m.subject = s.subject "
+                "AND m.course_number = s.course_number AND m.crn = s.crn) "
+                "THEN 1 ELSE 0 END) AS with_meetings "
+                "FROM sections s WHERE s.year IS NOT NULL AND s.semester IS NOT NULL "
+                "GROUP BY s.subject, s.year, s.semester"
+            ).fetchall()
         finally:
             conn.close()
     except Exception:
@@ -510,6 +533,30 @@ def _data_notes() -> str:
     if empty:
         notes.append(f"- Empty right now: {', '.join(empty)}. Don't query them; "
                      "give the no-data sentence.")
+
+    latest_year, latest_sem = terms[0]["year"], terms[0]["semester"]
+    all_subjects = {r["subject"] for r in subject_terms}
+    latest_subjects = {r["subject"] for r in subject_terms
+                       if r["year"] == latest_year and r["semester"] == latest_sem}
+    if all_subjects and len(latest_subjects) < len(all_subjects):
+        notes.append(f"- {names[0]} is synced for only {len(latest_subjects)} of "
+                     f"{len(all_subjects)} subjects. Only when a question asks about "
+                     f"{names[0]} (or this/next semester) and the subject has no rows "
+                     f"there: say its {names[0]} schedule hasn't been synced yet (a visitor "
+                     "can press Sync on the Departments page) and offer the latest term it "
+                     "does have - never say the subject offers nothing. A question that "
+                     "names no term (gen-eds, prerequisites, what a course is about) "
+                     "covers every term: don't add a term filter.")
+
+    no_meetings = sorted(
+        (r["year"], _SEASON_ORDER.get(r["semester"], 9), f"{r['subject']} {r['semester']} {r['year']}")
+        for r in subject_terms if r["n"] >= 5 and not (r["with_meetings"] or 0))
+    if no_meetings:
+        shown = [x[2] for x in reversed(no_meetings)][:10]
+        more = f" and {len(no_meetings) - 10} more" if len(no_meetings) > 10 else ""
+        notes.append(f"- Meeting times aren't loaded for: {', '.join(shown)}{more}. For "
+                     "day, time or room questions there, say the meeting times aren't "
+                     "loaded yet - never that the course doesn't meet.")
     return "\n\nDATA NOTES\n" + "\n".join(notes)
 
 

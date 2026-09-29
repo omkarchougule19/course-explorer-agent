@@ -223,7 +223,7 @@ because other docs cite them.
   1.6 s, the slowest concurrent `GET /api` 871 ms → 82 ms. Six new checks in
   `evals/test_agent_guards.py`.
 
-### 19. IS and STAT fall 2026 have no meeting times — `partly done 2026-09-28`
+### 19. IS and STAT fall 2026 have no meeting times — `done 2026-09-28`
 - **Problem:** IS has 340 fall 2026 sections and 0 meeting rows, STAT 163 and
   0 (scraped 08-02/03, before meetings were parsed). Meeting-time questions
   return nothing, and the "No 8ams" / "Done by 5" / "No Fridays" filters let
@@ -237,9 +237,13 @@ because other docs cite them.
   has 335 meeting rows for 342 sections, STAT 167 for 164; fall 2026 sections
   without any meeting row dropped from ~503 to 14. On the live site, STAT's
   "No 8ams" filter now drops exactly the 2 STAT 107 sections at 8:00 AM
-  (before: it passed all 163). Still open: the automatic check.
+  (before: it passed all 163).
+- **Done 2026-09-28:** `_data_notes()` now counts, per subject-term, sections
+  and sections with a meeting row, and lists every subject-term with 5+
+  sections and none (none today), telling the model to say meeting times
+  aren't loaded rather than "none".
 
-### 20. Tell the prompt that fall 2026 is partial — `todo`
+### 20. Tell the prompt that fall 2026 is partial — `done 2026-09-28`
 - **Problem:** DATA NOTES say "the latest is fall 2026", but 107 of 191
   subjects have no fall 2026 rows, so "what does X offer this semester" gets
   "no data" with no hint that the schedule just isn't synced or that spring
@@ -249,8 +253,16 @@ because other docs cite them.
   (a visitor can press Sync on Departments) and offer its latest term. Add a
   gold row. Measure with two full OpenAI runs (the noise rule).
 - **Done when:** the gold row passes and answer-OK doesn't drop.
+- **Done 2026-09-28.** The note is derived from the same per-subject-term
+  counts (today: "fall 2026 is synced for only 84 of 191 subjects") and
+  applies only to questions about that term: the first wording was
+  unconditional and made the model add a fall 2026 filter to term-less
+  questions (q28, ENGL gen-eds, answered "none" in 2 of 2 runs). New gold row
+  q30 ("Which ECE courses are offered this fall?", `no_data`, must mention
+  "synced"); the harness now also checks `answer_contains` on `no_data` rows.
+  q30: 0/2 old prompt, 4/4 new.
 
-### 21. Eval gold fixes and the prerequisite recipe — `todo`
+### 21. Eval gold fixes and the prerequisite recipe — `partly done 2026-09-28`
 - **Problem:** q04 fails every run with a correct answer (its
   `answer_contains` is a frozen "187"; the live count is 191). q17 is labelled
   `no_data`, but prerequisites have been loaded since 09-10; relabelled, it
@@ -263,6 +275,21 @@ because other docs cite them.
   alternatives joined by "or". `--rescore` first (free), then
   `--ids q04,q17,q25` three times on OpenAI.
 - **Done when:** q04 passes on rescore and q17/q25 pass in 3 of 3 runs.
+- **2026-09-28:** q04 and q17 gold fixed (rescore of the 09-24 run: 89.7% →
+  93.1%). Prompt: alternatives in one group must be joined by "or"; the
+  columns' direction is spelled out (subject/course_number has the
+  requirement, req_* is required) after the longer block made the model filter
+  req_* for "prerequisites of CS 233" in 3 of 4 runs; the no-prerequisites
+  recipe is a full example with a subject and level filter. q17 now passes
+  2/2 with "CS 125 or CS 128". **Still open: q25** fails every run, old and
+  new: the model drops a named filter (also seen on q28 dropping ENGL) even
+  though HOW TO QUERY already says to keep every named filter.
+- **Measured** (30 questions, Neon, `gpt-4o-mini`, sequential runs): old
+  prompt 93.3% / 90.0%, new 90.0% / 90.0% - flat within noise, with q17 and
+  q30 fixed and q13 (read terms from `academic_calendar`) and q25/q28
+  (dropped filter) as the misses. Parallel runs are invalid: OpenAI rate
+  limits turned 8-12 answers per run into error messages, which the prod arm
+  scored as wrong; it now re-raises rate-limit errors so the harness retries.
 
 ### 22. Compress responses — `todo`
 - **Problem:** nothing is gzipped: the home page is 137 KB raw vs 42.8 KB
