@@ -437,6 +437,36 @@ because other docs cite them.
   in the afternoon?" (the question that used to hit the iteration cap)
   answered with one query in 22.5 s, clock times shown, no minutes leaked.
 
+### 32. Query-gap classes from the critic — `paused 2026-10-02, not deployed`
+- **Problem:** the `query-gap-critic` agent found 11 classes of failure with
+  evidence: two-step questions (instructor -> similar course), instructor
+  name formats, sections/meetings joins without crn (118/180 in traces),
+  dropped filters, "similar to" crossing departments, departments named in
+  words, follow-up refinements (16% of logged questions), 'Online...'
+  variants, abbreviated titles, semester without year, eval traces missing
+  non-SQL tools; plus prompt conflicts (one-query vs two-step, empty means
+  stop, instructor rules in six places, a wrong example).
+- **Done (general, per class):** data columns (instructor_last/initial,
+  title_search, is_online, subjects table); topic-search arguments
+  (like_course, level, taught_by, department words); deterministic checks in
+  the SQL wrapper (crn-join rejection; dropped-filter, semester, no-term and
+  initial-match notes; on empty results a labelled latest-term rerun, the
+  real matching names, name-format, title-word and subjects hints); history
+  keeps 1,200 characters of the latest answer; prompt cleanup (~210 tokens
+  trimmed after the additions). 18 eval rows q94-q111, several wordings per
+  class; 34 new offline checks (`evals/test_search_fields.py`).
+- **Measured:** 111 rows, gpt-4o-mini on Neon: before the round-2/3 fixes 90.1% / 91.0% (q94-q111 12/18); after them 97.3% / 96.4% with q94-q111 18/18 in both runs (q01-q37 36/37). Input tokens about 9.0K per question (7.3K before items 29-32). A fresh probe of 16 unseen questions: about 11 right first time; its misses led to three more changes that have NOT yet been through a full run - instructor_last/initial literals normalized before execution, comparisons on start_time/end_time text rejected, and sql_db_query_checker removed from the toolkit (the model called it before most queries, spending steps and an LLM call each).
+- **Resume with:** two full runs on the current code (the last three changes
+  above are unmeasured), the probe in the session notes ("STAT classes this
+  fall that end before 11 am" hit the step cap before the checker removal),
+  a Groq check of a few q94-q111 rows, then commit and deploy. Neon already
+  has every new column and the subjects table (app_ro can read it).
+- **Still open:** follow-up refinements are fragile on unseen wordings ("and
+  which of those are 3 credits?" lost the earlier level; "who teaches the
+  second one?" picked the third item). "intro psychology sections" in a term where PSYC isn't
+  synced still matches other departments' psychology titles; input tokens
+  per question are higher than before items 29-32 (see Measured).
+
 ### 22. Compress responses — `todo`
 - **Problem:** nothing is gzipped: the home page is 137 KB raw vs 42.8 KB
   gzipped; `/sections?subject=CS` 44 KB and `/freshness` 45 KB of JSON.

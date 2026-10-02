@@ -193,6 +193,22 @@ once; `db.py` translates for Postgres. Nobody needs Postgres to develop.
   had to copy a four-line CAST(substr(...)) expression for every time
   question and kept unbalancing it ("MATH 241 discussion sections in the
   afternoon" hit the iteration cap on parse errors).
+- **Columns for how students write things** (2026-10-01/02, from the
+  query-gap critic). `sections.instructor_last` / `instructor_initial`
+  (O'Brien -> 'obrien'; names are stored 'Last, F', 430 last names are shared,
+  no first names exist), `sections.title_search` (the 30-character title
+  lowercased, '&' as 'and', unambiguous abbreviations expanded in place -
+  "Intro Computing: Engrg & Sci" -> "intro introduction computing engrg
+  engineering and sci science"; the map was built from the abbreviations that
+  occur, by frequency), `meetings.is_online` (any 'Online...' type: 459 of
+  3,240 online meetings weren't the bare 'Online'), and a `subjects` table
+  (code, name, college_code, college, search_text) loaded from Course
+  Explorer for every term (191 departments; college names mapped from the
+  codes by their departments and websites), so "Gies", "agriculture" or
+  "the iSchool" resolve to codes. `app/searchfields.py`, `app/load_subjects.py`
+  (retries, never erases a stored college, `--seed` from a saved fetch when
+  Course Explorer throttles); backfilled on SQLite and Neon; `app_ro` granted
+  SELECT on subjects.
 
 **Rejected:** per-file backend branching; an ORM (the queries are simple and
 portable SQL was enough).
@@ -237,6 +253,15 @@ across a course's sections.
   titles. The tool also matches course titles directly and ranks those
   first (2026-09-29): "the ai class" had missed CS 440 "Artificial
   Intelligence", whose description ranked below other AI-flavoured courses.
+- **"Like this course" searches** (2026-10-01/02): `like_course` starts from
+  that course's stored embedding (no LLM expansion) and leaves it out;
+  `level` limits course numbers; `taught_by` looks up an instructor's courses
+  by `instructor_last`/initial and starts from those (with the initial-match
+  caveat). Results stay in the starting course's department first, other
+  departments listed separately (CS 225 at the 400 level had ranked CI 487
+  first). `subjects` accepts words ("agriculture", "Gies") and resolves them
+  to every matching department; a call with nothing to search returns an
+  error, not "no matches" (the model had answered "none" from one).
 - **Memory.** The full stack measured 237 MB RSS on a 512 MB instance.
 
 **Rejected:** a hosted embedding API (second provider and key); a separate
@@ -245,7 +270,9 @@ too big for the instance); full query decomposition (2-3 extra LLM calls per
 question for a gain facet expansion already delivers).
 
 **History.** Model chosen 2026-08; RAG verified on Neon 2026-08-31;
-multi-query + RRF 2026-08-31; department filter and titles 2026-09-28.
+multi-query + RRF 2026-08-31; department filter and titles 2026-09-28;
+like_course / level / taught_by, department words resolved through the
+subjects table, same-department-first results 2026-10-01/02.
 
 ---
 
@@ -356,6 +383,22 @@ department sync, marginal at this traffic); a smaller model for the SQL step;
 a non-agent one-shot SQL path (loses robustness); shipping the pipeline to
 production before it wins on the full schema.
 
+- **Deterministic checks on every model query** (`_CappedSQLDatabase.run`,
+  2026-10-01/02, from the query-gap critic; each covers a class of question,
+  not one wording):
+  - rejected: a sections/meetings join without crn (118 of 180 such joins in
+    the eval traces had none - each section got every section's meetings);
+  - notes appended to results: the question names a department or level
+    the query doesn't filter on ("1 credit CS courses" returned ITAL, MUSC);
+    semester without year; the question names no term but the query pins
+    one; rows matched on an instructor initial (may be a different person);
+  - on an empty result: the same query rerun for the latest term that has
+    rows when the departments aren't synced for the latest one (labelled);
+    the instructors that do have that last name; the name format (no first
+    names); title words matched separately; departments found on
+    subjects.search_text.
+  Notes are hints, not rejections: the question may mean otherwise.
+
 **History.** Hybrid agent 2026-08; streaming 2026-08-31; provider order
 changed to Groq → OpenAI → Gemini 2026-09-19; qwen failover 2026-09-20;
 Gemini removed 2026-09-28; `course_facts` tool 2026-09-28;
@@ -389,7 +432,12 @@ Rules that exist because something went wrong without them:
   history questions give the no-data sentence while grades are empty; vague
   references ("the ai class") name the candidates; meeting_type names;
   DATA NOTES carry today's date and the next unsynced term per season
-  ("next spring" = spring 2027, not spring 2026). SCOPE names terms not in
+  ("next spring" = spring 2027, not spring 2026). Since 2026-10-01/02 the
+  instructor rules are one bullet (match on instructor_last/initial, say an
+  initial match may be a different person, instructor questions are in
+  scope); "aim for one query per step" (two-step questions need two); an
+  empty lookup step means check the name or format before "no data";
+  history is for references and refinements. SCOPE names terms not in
   the data and "is it too late to add/drop" as in scope (gpt-oss refused the
   first, gpt-4o-mini the second as a request to act). An empty result for a
   subject with no rows at all in the latest term comes back with a note
@@ -710,6 +758,8 @@ the GitHub repository, whose account carries the operator's real name.
 - **Project subagents** in `.claude/agents/`: `course-agent-qa` (answer
   quality, strict no-retry rules after a retry loop once burned a day's
   budget), `course-app-redteam` (security, local throwaway instance only),
+  `query-gap-critic` (whole classes of query, tool and prompt failure;
+  read-only, SELECT-only, never spends LLM budget; added 2026-10-01),
   `code-critic` (read-only code review), `startup-critic` (measures startup
   cost, read-only, never spends LLM budget) and `improvement-strategist`
   (finds weak points across lighter / faster / better / more accurate, ranks
@@ -738,7 +788,12 @@ passes when its text holds every gold value. Then 30 more rows (q64-q93;
 93 total, four candidates left out as not gradeable automatically), and
 advice rows no longer fail on refusal wording, since a good answer often
 declines one part. Final prompt: 96.8% (90/93); Groq passes the three items
-that had failed there.
+that had failed there. 2026-10-01/02: the `query-gap-critic` agent (read-only,
+SELECT-only, no LLM spend) found 11 classes of query failure with evidence
+from 2,280 eval records and 164 logged questions; 18 rows (q94-q111) cover
+them, several wordings per class, two with conversation history (rows can
+now carry `history`). Eval traces record every tool call with its input
+(the topic search had never appeared in them). 111 rows, gpt-4o-mini on Neon: before the round-2/3 fixes 90.1% / 91.0% (q94-q111 12/18); after them 97.3% / 96.4% with q94-q111 18/18 in both runs (q01-q37 36/37). Input tokens about 9.0K per question (7.3K before items 29-32). A fresh probe of 16 unseen questions: about 11 right first time; its misses led to three more changes that have NOT yet been through a full run - instructor_last/initial literals normalized before execution, comparisons on start_time/end_time text rejected, and sql_db_query_checker removed from the toolkit (the model called it before most queries, spending steps and an LLM call each).
 The 2026-09-24 prompt comparison was re-scored on Neon for all three runs
 with identical numbers. Later on 2026-09-28: five `advice` rows (q31-q35) and
 `answer_must_not`; an answer built from `course_facts` (no SQL) is scored by

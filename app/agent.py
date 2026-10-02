@@ -19,6 +19,7 @@ Or import ask() directly, e.g. from a FastAPI route.
 
 import asyncio
 import contextvars
+import html
 import json
 import os
 import re
@@ -53,6 +54,7 @@ INCLUDED_TABLES = [
     "gen_ed_categories",
     "prerequisites",
     "academic_calendar",
+    "subjects",
 ]
 
 SYSTEM_CONTEXT = """
@@ -78,11 +80,12 @@ SCOPE
   part and decline the rest with that sentence.
 
 HOW TO QUERY
-- The full schema is below. Do not call sql_db_list_tables, sql_db_schema or
-  sql_db_query_checker: write the SQL and run it with sql_db_query. Check the
-  schema only after a "no such table/column" error.
-- Aim for one query. If it errors, fix it in one change; don't retry the same
-  idea or switch to unrelated tables.
+- The full schema is below. Do not call sql_db_list_tables or sql_db_schema:
+  write the SQL and run it with sql_db_query. Check the schema only after a
+  "no such table/column" error.
+- Aim for one query per step (a two-step question - an instructor's courses,
+  then similar ones - takes two). If it errors, fix it in one change; don't
+  retry the same idea or switch to unrelated tables.
 - Put every filter the question names (subject, level, term, instructor, day,
   time) in the WHERE clause ("CS 400-level" = subject = 'CS' AND
   course_number LIKE '4%' - both). semester/term values are lowercase ('fall',
@@ -93,49 +96,54 @@ HOW TO QUERY
   GROUP BY or DISTINCT, select only the columns you'll show, and LIMIT unless
   counting. "[Result truncated ...]" means you have NOT seen every row - narrow
   the query; never present those rows as complete.
-- "Which instructor(s)..." questions (most, top, busiest) MUST include
-  instructor IS NOT NULL - unassigned sections would otherwise rank first. If
-  a top result's instructor is NULL anyway, rerun with that filter; never
-  report it as missing data.
+- Instructors: stored as 'Last, F' (first initial only). Match a name on
+  instructor_last (lowercase letters only: O'Brien -> 'obrien') and
+  instructor_initial (lowercase), e.g. "Margaret Fleck" -> instructor_last =
+  'fleck' AND instructor_initial = 'm', and say a match by initial may be a
+  different person. What an instructor teaches is in scope. Rankings of
+  instructors (most, top, busiest) MUST add instructor IS NOT NULL -
+  unassigned sections would otherwise rank first.
+- Words for things, not codes: a department or college ("Gies", "agriculture",
+  "information sciences") -> subject codes via the subjects table; a course
+  title or topic word ("intro programming") -> title_search.
 - Check the DATA NOTES at the end before querying a table they say is empty.
-- No data (empty table or empty result): begin with "There's no data for
+- No data (the final answer finds nothing): begin with "There's no data for
   that in this dataset yet." and add what is missing in one sentence. Never
-  guess.
+  guess. An empty lookup step (a name, a title word) means check its spelling
+  or format before concluding; follow any [Check: ...] note in a result.
 
 TABLES
 - sections(year, semester, subject, course_number, course_label, crn,
   section_name, instructor, enrollment_status, credit_hours, description,
   part_of_term, section_start_date, section_end_date, credit_min, credit_max,
-  grad_credit, grad_min, grad_max, restriction)
+  grad_credit, grad_min, grad_max, restriction, instructor_last,
+  instructor_initial, title_search)
   One row per section (crn); a course is (subject, course_number).
-  Credits: filter on credit_min/credit_max (numbers; "3 credits" =
-  credit_min <= 3 AND credit_max >= 3), never on the credit_hours text.
-  grad_credit is 'yes'/'no'/NULL (catalog doesn't say - report as unknown);
-  grad_min/grad_max are the hours a graduate student takes it for, so
+  course_label is a 30-character short title ("Intro Computing: Engrg & Sci");
+  search titles on title_search (lowercase, '&' as 'and', abbreviations
+  expanded): title_search LIKE '%introduction%'.
+  Credits: filter credit_min/credit_max ("3 credits" = credit_min <= 3 AND
+  credit_max >= 3), never the credit_hours text. For graduate students use
+  grad_credit ('yes'/'no'/NULL = not stated) and grad_min/grad_max instead:
   "3 credits, open to grad students" = grad_credit = 'yes' AND grad_min <= 3
-  AND grad_max >= 3 (credit_min/max are undergraduate hours there).
-  restriction is the catalog's "Restricted to..." sentence, or NULL.
-  instructor is NULL for unassigned sections: whenever you rank, count or
-  group by instructor you MUST add instructor IS NOT NULL, or "no instructor"
-  comes out on top. description is per course and may be NULL. course_number is TEXT, maybe
-  with a letter ("492A"): never compare it to a number. 100-level =
-  course_number LIKE '1%'; 500+ = graduate.
-  enrollment_status: a word (Open, Closed, Open (Restricted), CrossListOpen,
-  ...) for terms with published registration; a bare code ('A' scheduled,
-  'P' pending) for terms without - see DATA NOTES. 'A' does NOT mean open.
-  Only a question about which sections are open/closed or have seats, on a
-  term with codes, gets no query: say open/closed isn't published yet
-  (sections are scheduled, not confirmed open) and point to UIUC Course
-  Explorer; never say none are open. Other status questions (e.g. a
-  breakdown) are fine: query, and explain the codes in words instead of
-  showing a bare A/P. No term has seat counts.
+  AND grad_max >= 3. restriction: the "Restricted to..." sentence or NULL.
+  instructor and description may be NULL. course_number is TEXT: never
+  compare it to a number; 100-level = LIKE '1%'; 500+ = graduate.
+  enrollment_status: a word (Open, Closed, ...) where registration is
+  published; a code ('A' scheduled, 'P' pending) where not - see DATA NOTES;
+  'A' does NOT mean open. Asked which sections are open/closed or have seats
+  on a coded term: don't query - say it isn't published yet and point to UIUC
+  Course Explorer (never "none are open"). A status breakdown or count is a
+  different question: query it and explain the codes in words. No term has
+  seat counts.
 - meetings(year, semester, subject, course_number, crn, meeting_type,
   days_of_week, start_time, end_time, building, room, instructor, start_min,
-  end_min)
+  end_min, is_online)
   A section may have several rows (lecture + discussion). Join to sections on
   (year, semester, subject, course_number, crn) - all five. meeting_type is
   e.g. 'Lecture', 'Lecture-Discussion', 'Discussion/Recitation', 'Laboratory',
-  'Online': "discussion sections" = meeting_type = 'Discussion/Recitation'. days_of_week uses M T W R F
+  'Online Lecture', ...: "discussion sections" = meeting_type =
+  'Discussion/Recitation'; online = is_online = 1 (any 'Online...' type). days_of_week uses M T W R F
   S U (R = Thursday); only Tuesday and Thursday = 'TR'.
   start_min/end_min are minutes after midnight (NULL when ARRANGED): filter
   and compare on them, but SELECT and show start_time/end_time - never
@@ -157,23 +165,21 @@ TABLES
   term. Join on (subject, course_number).
 - prerequisites(subject, course_number, group_index, req_subject,
   req_course_number, relation, condition_text, raw_text)
-  Best-effort parse of the description. Groups (group_index) are AND-ed; rows
-  in one group are alternatives: always write them joined by "or" ("MATH 221
-  or MATH 234"), one line per group, never as a flat list or under a "Group
-  1" heading that makes every course look required. NULL req_*
-  = a non-course requirement in condition_text. relation is 'prereq' or
-  'concurrent'. subject/course_number is the course that HAS the requirement;
-  req_* is the course required. "Prerequisites of X": call course_facts - it
-  already joins the alternatives with "or". Any SQL on this table must select
-  group_index, or alternatives can't be told from requirements. "What does X unlock": filter req_subject/req_course_number. No
-  rows = no prerequisites. "Courses with no prerequisites": start from sections
-  with EVERY filter the question names, then exclude courses that have rows,
-  e.g. for MATH 300-level:
-    SELECT DISTINCT s.subject, s.course_number, s.course_label FROM sections s
-    WHERE s.subject = 'MATH' AND s.course_number LIKE '3%'
-      AND NOT EXISTS (SELECT 1 FROM prerequisites p
-                      WHERE p.subject = s.subject AND p.course_number = s.course_number)
-  Never scan the whole table. If a structure looks wrong, quote raw_text.
+  Groups (group_index) are AND-ed; rows in one group are alternatives - write
+  each group as one line joined by "or" ("MATH 221 or MATH 234"), never a flat
+  list or "Group 1" headings. NULL req_* = a non-course requirement in
+  condition_text; relation 'prereq' or 'concurrent'. subject/course_number has
+  the requirement; req_* is required. Prerequisites of X: call course_facts.
+  SQL here must select group_index. "What does X unlock": filter req_*. No rows
+  = no prerequisites. "Courses with no prerequisites": sections with every
+  named filter AND NOT EXISTS (SELECT 1 FROM prerequisites p WHERE p.subject =
+  s.subject AND p.course_number = s.course_number). If a structure looks
+  wrong, quote raw_text.
+- subjects(code, name, college_code, college, search_text): every
+  department code with its name and college. Find departments by any word
+  on search_text (lowercase code, name and college): "Gies" -> search_text
+  LIKE '%gies%'; a college's departments -> SELECT code, name FROM subjects
+  WHERE search_text LIKE '%media%'. Count subjects from sections, not here.
 - academic_calendar(year, semester, event_date, event_end_date, title,
   category, raw_date)
   category: instruction, add, drop, withdraw, break, holiday, finals, grades,
@@ -188,6 +194,10 @@ TABLES
   names a department ("CS courses about AI"), pass it as subjects. Use the
   titles it returns, never your own, and list the results as bullets (link,
   title, one-line summary), not a table. For a named course, use course_facts.
+  "Closest to / similar to / like <course>": pass like_course (and level,
+  e.g. '3' for 300-level); "like the course <instructor> teaches": pass
+  taught_by with the name as written. Results from other departments come
+  after the same department's; say which is which.
 - course_facts tool: one named course's title, description, credits,
   prerequisites, gen-eds, recent instructors/status and grades in one call.
   Take a course's title only from it or course_label, never from memory.
@@ -201,8 +211,11 @@ HOW TO ANSWER
 - Prose or a short list by default; a Markdown table only for 3+ fields
   across several rows, with no padding: no runs of spaces in cells and a
   short |---| separator row. Cover every row you list, state how many there are,
-  and name the term if you chose it. Always write a term with its year
-  ("fall 2026"), never the season alone.
+  and name the term if you chose it; if the rows span several terms, say so
+  or give each row's term - never label the whole list with one term. Always
+  write a term with its year ("fall 2026"), never the season alone.
+- Never show SQL, table or column names (grad_credit, start_min, ...) in an
+  answer: say what they mean ("open to graduate students").
 - Link every course as [CS 225](/?course=CS-225) and every instructor as
   [Last, F](/instructor.html?name=Last%2C%20F) (the stored name,
   URL-encoded; no link when it is NULL, empty or '-'). No other link shapes.
@@ -219,15 +232,16 @@ HOW TO ANSWER
   deadlines. "What is it about" gets 2-3 sentences in your own words. Then
   say what the data can't tell (workload, teaching quality, seats, degree
   rules) and point to an academic advisor or the degree audit (DARS). No
-  verdict or recommendation, and nothing about an instructor beyond who
-  teaches when.
+  verdict or recommendation, and never judge an instructor.
 - A vague course reference ("the ai class", "that intro programming one"):
-  find courses whose title matches, spelled out too ('ai' -> 'Artificial
-  Intelligence', 'ml' -> 'Machine Learning'); if several do, name the likeliest by
-  title and list the others, or ask which one - never pick one silently.
-- A conversation-history block may come before the question. Use it only to
-  resolve references ("it", "that course", "the second one"); never re-answer
-  it.
+  search title_search, spelled out too ('ai' -> 'artificial intelligence',
+  'intro programming' -> '%introduction%' and '%programming%' or
+  '%computer science%'); if several match, name the likeliest by title and
+  list the others, or ask which one - never pick one silently.
+- A conversation-history block may come before the question. Use it to
+  resolve references ("it", "the second one") and refinements ("which of
+  those are from CS?" = the earlier list with one more filter: rerun that
+  query with the filter added); never re-answer it.
 """.strip()
 
 
@@ -302,9 +316,208 @@ def _unsynced_note(sql: str):
             "latest term; don't try other queries for it.]")
 
 
-def new_query_log() -> None:
-    """Start a fresh repeat-query log for one answer."""
+_FULL_NAME_RE = re.compile(r"\binstructor\s*(?:=|I?LIKE)\s*'%?([A-Za-z'\- ]+),\s*([A-Za-z]{2,})[A-Za-z%]*'",
+                           re.IGNORECASE)
+
+
+def _instructor_note(sql: str):
+    """For an empty result on any instructor lookup: names are stored as last
+    name + first initial, with no first names. "a course closest to one heng
+    ji teaches" queried instructor = 'Ji, Heng' until the iteration cap;
+    "what does Prof Vishal teach" (a first name) answered "couldn't find"
+    without saying why."""
+    if not re.search(r"\binstructor(?:_last)?\b", sql, re.IGNORECASE):
+        return None
+    m = _FULL_NAME_RE.search(sql)
+    hint = (f" e.g. instructor_last = '{re.sub('[^a-z]', '', m.group(1).lower())}' AND "
+            f"instructor_initial = '{m.group(2)[0].lower()}'." if m else "")
+    return ("[No rows. Names are stored as last name + first initial ('Last, F'); there are "
+            "no first names. Match on instructor_last (lowercase letters only, O'Brien -> "
+            f"'obrien') and instructor_initial.{hint} If the student gave only a first name, "
+            "say so and ask for the last name.]")
+
+
+_INITIAL_NAME_RE = re.compile(r"\binstructor\s*(?:=|I?LIKE)\s*'%?([A-Za-z'\- ]+),\s*([A-Za-z])%?'",
+                              re.IGNORECASE)
+
+
+def _initial_note(sql: str):
+    """Rows found for an instructor given as 'Last, F': the data can't tell
+    two people with the same last name and initial apart. "A course closest
+    to one heng ji teaches" matched 'Ji, H' (two ADV courses) and the answer
+    called them Heng Ji's without saying the match was by initial."""
+    m = _INITIAL_NAME_RE.search(sql)
+    if not m:
+        return None
+    name = f"{m.group(1).strip()}, {m.group(2).upper()}"
+    return (f"[Note: '{name}' is a last name plus first initial; if the question gave a full "
+            "name, say these rows are the data's match by initial and may be a different "
+            "person.]")
+
+
+_QUESTION: contextvars.ContextVar = contextvars.ContextVar("agent_question", default="")
+
+
+def new_query_log(question: str = "") -> None:
+    """Start a fresh per-answer context: the repeat-query log and the
+    question the checks below compare queries against."""
     _QUERY_LOG.set({})
+    _QUESTION.set(question or "")
+
+
+_QUESTION_CODE_RE = re.compile(r"\b([A-Za-z]{2,4})\s?-?\s?\d{3}\b")
+_QUESTION_SUBJECT_RE = re.compile(
+    r"\b([A-Za-z]{2,4})\b(?=\s+(?:\d00\s*-?\s*level|courses?|classes|class|sections?|"
+    r"departments?|dept|majors?|electives?|offerings?)\b)", re.IGNORECASE)
+_QUESTION_LEVEL_RE = re.compile(r"\b([1-5])00\s*-?\s*level\b|\b([1-5])xx\b", re.IGNORECASE)
+_FILTERED_TABLES_RE = re.compile(r"\b(sections|meetings|prerequisites|gen_ed_categories)\b", re.IGNORECASE)
+
+
+def _question_filters(question: str):
+    """(subject codes, level digit) a question names: codes written before a
+    course number ("cs225") or before a word like courses/classes/level ("1
+    credit CS courses"), kept only if they're real subject codes."""
+    try:
+        _, newest = _subject_coverage()
+    except Exception:
+        newest = {}
+    found = [m.upper() for m in _QUESTION_CODE_RE.findall(question or "")]
+    found += [m.upper() for m in _QUESTION_SUBJECT_RE.findall(question or "")]
+    subjects = [s for s in dict.fromkeys(found) if s in newest]
+    lm = _QUESTION_LEVEL_RE.search(question or "")
+    level = (lm.group(1) or lm.group(2)) if lm else None
+    return subjects, level
+
+
+def _dropped_filter_note(sql: str):
+    """When the question names a department or level and a query on the
+    catalog tables doesn't filter on it, say so. "1 credit CS courses"
+    returned ITAL, ME and MUSC courses; "CS 100- and 200-level" lost the
+    level. A note, not a rejection: the question may mean otherwise."""
+    question = _QUESTION.get()
+    if not question or not _FILTERED_TABLES_RE.search(sql):
+        return None
+    subjects, level = _question_filters(question)
+    low = sql.lower()
+    missing = [s for s in subjects if f"'{s.lower()}'" not in low]
+    parts = []
+    if missing:
+        parts.append(f"subject {', '.join(missing)}")
+    if level and f"'{level}%'" not in low and f"'{level}00'" not in low and "course_number" in low:
+        parts.append(f"{level}00-level (course_number LIKE '{level}%')")
+    elif level and "course_number" not in low:
+        parts.append(f"{level}00-level (course_number LIKE '{level}%')")
+    if not parts:
+        return None
+    return (f"[Check: the question names {' and '.join(parts)}, but this query doesn't filter "
+            "on it. Add the filter unless the question clearly means otherwise.]")
+
+
+_TITLE_PHRASE_RE = re.compile(r"\b(?:title_search|course_label)\s+I?LIKE\s+'%([a-z]+(?:\s+[a-z]+)+)%'",
+                              re.IGNORECASE)
+
+
+def _title_note(sql: str):
+    """An empty title search on a multi-word phrase: titles are 30-character
+    short forms ("Intro Psych"), so a phrase rarely occurs as written; match
+    the words separately. "intro psychology" found nothing for PSYC 100."""
+    m = _TITLE_PHRASE_RE.search(sql)
+    if not m:
+        return None
+    words = m.group(1).lower().split()
+    cond = " AND ".join(f"title_search LIKE '%{w}%'" for w in words)
+    return f"[No rows for the phrase. Match title words separately: {cond}.]"
+
+
+_SUBJECT_WORD_RE = re.compile(r"\b(?:name|college|college_code|code)\s*(?:=|I?LIKE)\s*'%?([^'%]+)%?'",
+                              re.IGNORECASE)
+
+
+def _subjects_note(sql: str):
+    """An empty lookup in the subjects table on a single column: "Gies" is
+    only in the college name and college_code is a two-letter code, so
+    name ILIKE '%gies%' and college_code = 'MEDIA' found nothing and were
+    answered "not synced". search_text holds code, name and college."""
+    if not re.search(r"\bsubjects\b", sql, re.IGNORECASE) or "search_text" in sql.lower():
+        return None
+    m = _SUBJECT_WORD_RE.search(sql)
+    word = (m.group(1).strip().lower() if m else "the word")
+    return (f"[No rows. Find departments on search_text (code, name and college together): "
+            f"SELECT code, name FROM subjects WHERE search_text LIKE '%{word}%'. This empty "
+            "result says nothing about syncing.]")
+
+
+_SEMESTER_EQ_RE = re.compile(r"\bsemester\s*(?:=|IN)\s*\(?\s*'", re.IGNORECASE)
+_TERM_WORDS_RE = re.compile(
+    r"\b(fall|spring|summer|winter|semester|sem|term|20\d\d|now|currently|current|"
+    r"this year|next year|upcoming|right now)\b", re.IGNORECASE)
+
+
+def _term_note(sql: str):
+    """The question names no term but the query is pinned to one. "Which ENGL
+    courses satisfy a humanities gen-ed?" and "what courses are offered by
+    Gies" were filtered to fall 2026, came back empty (not synced) and were
+    answered "no data" - a question with no term covers every term."""
+    question = _QUESTION.get()
+    if not question or _TERM_WORDS_RE.search(question) or not _SEMESTER_EQ_RE.search(sql):
+        return None
+    return ("[Check: the question names no term, but this query filters one. Unless the "
+            "conversation set a term, drop the term filter so every term counts.]")
+
+
+def _semester_note(sql: str):
+    """A term is (semester, year): filtering 'fall' alone mixes years once a
+    second year is loaded."""
+    if _SEMESTER_EQ_RE.search(sql) and "year" not in sql.lower():
+        return "[Check: this filters semester without year; a term is (semester, year).]"
+    return None
+
+
+_NAME_LITERAL_RE = re.compile(r"(\binstructor_last\s*(?:=|I?LIKE)\s*')([^']*)(')", re.IGNORECASE)
+_INITIAL_LITERAL_RE = re.compile(r"(\binstructor_initial\s*=\s*')([^']*)(')", re.IGNORECASE)
+
+
+def _normalize_name_literals(sql: str) -> str:
+    """instructor_last holds lowercase letters only and instructor_initial
+    one lowercase letter; rewrite the literals the model wrote to match
+    ('fagen-ulmschneider' -> 'fagenulmschneider', 'O' -> 'o'). '%' wildcards
+    are kept. A hyphenated name otherwise found nothing."""
+    def last(m):
+        return m.group(1) + re.sub(r"[^a-z%]", "", m.group(2).lower()) + m.group(3)
+
+    def initial(m):
+        return m.group(1) + m.group(2).strip().lower()[:1] + m.group(3)
+
+    return _INITIAL_LITERAL_RE.sub(initial, _NAME_LITERAL_RE.sub(last, sql))
+
+
+_TIME_TEXT_CMP_RE = re.compile(r"\b(?:\w+\.)?(start_time|end_time)\s*(<=|>=|<|>)\s*'", re.IGNORECASE)
+
+
+def _join_issue(sql: str):
+    """sections and meetings joined without crn pairs every section with
+    every meeting of the course (another section's times). 118 of 180 such
+    joins in the eval traces had no crn. Returns a rejection reason or None."""
+    low = sql.lower()
+    if "sections" not in low or "meetings" not in low:
+        return None
+    try:
+        import sqlglot
+        from sqlglot import exp
+        tree = sqlglot.parse_one(sql, read="postgres" if db.is_postgres() else "sqlite")
+    except Exception:
+        return None
+    tables = {t.name.lower() for t in tree.find_all(exp.Table)}
+    if not {"sections", "meetings"} <= tables:
+        return None
+    for eq in tree.find_all(exp.EQ):
+        left, right = eq.left, eq.right
+        if (isinstance(left, exp.Column) and isinstance(right, exp.Column)
+                and left.name.lower() == "crn" and right.name.lower() == "crn"):
+            return None
+    return ("sections and meetings must be joined on all five keys (year, semester, subject, "
+            "course_number, crn) - without crn each section gets every section's meetings. "
+            "Add s.crn = m.crn (or use an EXISTS on meetings with all five).")
 
 
 class _CappedSQLDatabase(SQLDatabase):
@@ -329,16 +542,118 @@ class _CappedSQLDatabase(SQLDatabase):
                 reason = sql_guard.check_select(command, self.dialect, self.get_usable_table_names())
                 if reason:
                     raise _GuardRejected(f"Query rejected: {reason}")
+                join_reason = _join_issue(command)
+                if join_reason:
+                    raise _GuardRejected(f"Query rejected: {join_reason}")
+                if _TIME_TEXT_CMP_RE.search(command):
+                    # Text order isn't time order ('ARRANGED', '09:00 AM' vs
+                    # '09:00AM'): "lectures after 2 pm" listed ARRANGED ones.
+                    raise _GuardRejected(
+                        "Query rejected: compare start_min/end_min (minutes after midnight, "
+                        "NULL when ARRANGED), never start_time/end_time text - e.g. after 2 pm "
+                        "= start_min >= 840.")
+                command = _normalize_name_literals(command)
             result = self._capped(super().run(command, fetch=fetch, **kwargs))
         except Exception as exc:
             if log is not None and key:
                 log[key] = (False, str(exc))
             raise
         if isinstance(command, str) and not (result or "").strip():
-            result = _unsynced_note(command) or result
+            result = (self._latest_term_rerun(command, **kwargs) or _unsynced_note(command)
+                      or self._name_matches(command) or _instructor_note(command)
+                      or _title_note(command) or _subjects_note(command) or result)
+        if isinstance(command, str):
+            notes = [n for n in (_initial_note(command) if (result or "").strip() else None,
+                                 _dropped_filter_note(command), _semester_note(command),
+                                 _term_note(command)) if n]
+            if notes:
+                result = "\n".join([result] + notes) if (result or "").strip() else "\n".join(notes)
         if log is not None and key:
             log[key] = (True, result if isinstance(result, str) else str(result))
         return result
+
+    def _name_matches(self, command: str):
+        """An empty lookup on instructor_last: list the instructors that do
+        have that last name (or contain it), so a wrong initial or spelling
+        doesn't end in "no courses". "courses taught by O'Brien" was queried
+        with instructor_initial = 'o' (from "O'") and found nothing, while
+        O'Brien, C / D / W exist."""
+        m = re.search(r"\binstructor_last\s*(?:=|I?LIKE)\s*'%?([a-z]+)%?'", command, re.IGNORECASE)
+        if not m:
+            return None
+        last = m.group(1).lower()
+        try:
+            conn = db.get_readonly_connection()
+            try:
+                rows = conn.execute("SELECT DISTINCT instructor FROM sections WHERE instructor_last = ? "
+                                    "ORDER BY instructor LIMIT 12", (last,)).fetchall()
+                if not rows and len(last) >= 4:
+                    rows = conn.execute("SELECT DISTINCT instructor FROM sections WHERE instructor_last "
+                                        "LIKE ? ORDER BY instructor LIMIT 12", (f"%{last}%",)).fetchall()
+            finally:
+                conn.close()
+        except Exception:
+            return None
+        if not rows:
+            return None
+        names = "; ".join(r["instructor"] for r in rows)
+        return (f"[No rows for that exact name. Instructors whose last name matches '{last}': {names}. "
+                "Query by instructor_last alone (or the right initial) and say which one(s) you used.]")
+
+    def _latest_term_rerun(self, command: str, **kwargs):
+        """An empty result for a subject that has no rows in the latest term:
+        rerun the same query for that subject's latest synced term and return
+        those rows, labelled. The note alone wasn't enough - "what courses are
+        offered by Gies" and "intro psychology sections" stopped at "not
+        synced" instead of offering the term that has data."""
+        try:
+            latest, newest = _subject_coverage()
+        except Exception:
+            return None
+        if not latest:
+            return None
+        season, year = latest.split()
+        missing = [s.upper() for s in _SQL_SUBJECT_RE.findall(command)
+                   if s.upper() in newest and newest[s.upper()] != latest]
+        via_subjects = re.search(r"\bsubjects\b", command, re.IGNORECASE) is not None
+        if not missing and not via_subjects:
+            return None
+        terms = sorted(set(newest.values()) - {latest},
+                       key=lambda t: (int(t.split()[1]), _SEASON_ORDER.get(t.split()[0], 0)), reverse=True)
+        if missing:
+            terms = [max((newest[s] for s in missing),
+                         key=lambda t: (int(t.split()[1]), _SEASON_ORDER.get(t.split()[0], 0)))]
+        for target in terms:
+            rows = self._run_for_term(command, season, year, target, **kwargs)
+            if rows:
+                who = ", ".join(dict.fromkeys(missing)) or "These departments"
+                return (f"[{who} had no {latest} rows for this query (the {latest} schedule may not "
+                        f"be synced for them yet). The same query for {target} returned the rows "
+                        f"below - say so in the answer.]\n{rows}")
+        return None
+
+    def _run_for_term(self, command: str, season: str, year: str, target: str, **kwargs):
+        t_season, t_year = target.split()
+        try:
+            import sqlglot
+            from sqlglot import exp
+            tree = sqlglot.parse_one(command, read=self.dialect if self.dialect != "postgresql" else "postgres")
+            changed = False
+            for eq in tree.find_all(exp.EQ):
+                col, lit = eq.left, eq.right
+                if not (isinstance(col, exp.Column) and isinstance(lit, exp.Literal)):
+                    continue
+                if col.name.lower() == "semester" and lit.this.lower() == season:
+                    eq.set("expression", exp.Literal.string(t_season)); changed = True
+                elif col.name.lower() == "year" and lit.this == year:
+                    eq.set("expression", exp.Literal.number(t_year)); changed = True
+            if not changed:
+                return None
+            rows = self._capped(super().run(tree.sql(dialect="postgres" if db.is_postgres() else "sqlite"),
+                                            **kwargs))
+        except Exception:
+            return None
+        return rows if (rows or "").strip() else None
 
     @staticmethod
     def _capped(result):
@@ -437,6 +752,14 @@ def collapse_padding(text: str) -> str:
     They render identically (the renderer ignores alignment), and a model
     stuck padding a header once produced 2.1 million spaces."""
     return _DASH_RUN_RE.sub("---", _PAD_RUN_RE.sub(" ", text or ""))
+
+
+def tidy_answer(text: str) -> str:
+    """The final answer as shown to the student: HTML entities the model
+    wrote decoded ("Programming Languages &amp; Compilers" showed the
+    entity literally - the page's renderer escapes everything itself, so
+    decoding here is safe), padding runs squeezed, trailing space trimmed."""
+    return collapse_padding(html.unescape(text or "")).rstrip()
 
 
 def _is_runaway(streamed: list) -> bool:
@@ -604,6 +927,75 @@ def _title_matches(conn, phrases, subjects=None, per_phrase: int = 5) -> list:
     return out
 
 
+def _resolve_subjects(conn, subjects: str):
+    """Subject codes from what the model passed: real codes are kept; any
+    other word ("agriculture", "media", or an invented code like 'AGRI') is
+    looked up in subjects.search_text. Returns (codes, words that matched
+    nothing). An agriculture search once passed AGRI, CULT and URE - none of
+    them codes - and found nothing."""
+    tokens = [t for t in re.split(r"[,;/]+|\s+and\s+", subjects or "") if t.strip()]
+    if not tokens:
+        return [], []
+    try:
+        known = {r["code"] for r in conn.execute("SELECT code FROM subjects").fetchall()}
+    except Exception:
+        known = set()
+    codes, unresolved = [], []
+    for tok in tokens:
+        t = tok.strip()
+        if t.upper() in known or (not known and re.fullmatch(r"[A-Za-z]{2,4}", t)):
+            codes.append(t.upper())
+            continue
+        rows = []
+        if known:
+            rows = conn.execute("SELECT code FROM subjects WHERE search_text LIKE ? ORDER BY code",
+                                (f"%{t.lower()}%",)).fetchall()
+            if not rows and len(t) > 4:
+                # "agriculture" vs "agricultural": try the word's stem
+                rows = conn.execute("SELECT code FROM subjects WHERE search_text LIKE ? ORDER BY code",
+                                    (f"%{t.lower()[:-3]}%",)).fetchall()
+        if rows:
+            codes += [r["code"] for r in rows]
+        else:
+            unresolved.append(t)
+    return list(dict.fromkeys(codes)), unresolved
+
+
+def _courses_taught_by(conn, name: str, limit: int = 4):
+    """Courses an instructor teaches, from a name as students write it
+    ("Lawrence Angrave", "Angrave", "O'Brien, K"): matched on instructor_last
+    and, when given, the first initial. Returns ([(subject, course_number)],
+    a label naming the matches and the initial caveat) or ([], a reason)."""
+    from app.searchfields import normalize_last_name
+    raw = (name or "").strip()
+    if "," in raw:
+        last, _, first = raw.partition(",")
+    else:
+        parts = raw.split()
+        last, first = (parts[-1], " ".join(parts[:-1])) if parts else ("", "")
+    last_n, initial = normalize_last_name(last), (first.strip()[:1].lower() or None)
+    if not last_n:
+        return [], "ERROR - give an instructor's last name."
+    sql = ("SELECT subject, course_number, MAX(instructor) AS instructor, MAX(year) AS y "
+           "FROM sections WHERE instructor_last = ?")
+    params = [last_n]
+    if initial:
+        sql += " AND instructor_initial = ?"
+        params.append(initial)
+    rows = conn.execute(sql + " GROUP BY subject, course_number ORDER BY y DESC, subject, course_number LIMIT ?",
+                        params + [limit]).fetchall()
+    if not rows:
+        return [], (f"No instructor matching '{raw}' in the data (names are stored as last name "
+                    "and first initial).")
+    names = sorted({r["instructor"] for r in rows if r["instructor"]})
+    found = [(r["subject"], r["course_number"]) for r in rows]
+    return found, (f"Courses taught by {', '.join(names)} (the data's match by last name"
+                   f"{' and initial' if initial else ''}; may be a different person): "
+                   f"{', '.join(f'{s} {n}' for s, n in found)}. [Open the answer with: "
+                   f"\"{', '.join(names)} (matched by last name{' and initial' if initial else ''}, "
+                   f"so possibly a different person) teaches {', '.join(f'{s} {n}' for s, n in found)}.\"]")
+
+
 def _course_titles(conn, keys) -> dict:
     """{(subject, course_number): course_label} for the given courses, newest
     label first; one query."""
@@ -630,45 +1022,104 @@ def _make_course_content_search_tool(tool_llm):
     from app import embeddings as emb
 
     @tool
-    def course_content_search(query: str, subjects: str = "") -> str:
+    def course_content_search(query: str = "", subjects: str = "", level: str = "",
+                              like_course: str = "", taught_by: str = "") -> str:
         """Semantic search over course catalog descriptions - use this for
         open-ended 'what courses cover X' / 'find courses about Y' questions,
         not for looking up a specific already-named course. The query is
         automatically expanded into related facets and the results merged.
-        subjects: the department code(s) the question names, comma-separated
-        (e.g. 'CS' or 'CS,ECE'); leave empty to search every department."""
-        wanted = [s for s in re.findall(r"[A-Za-z]{2,4}", subjects or "")]
+        subjects: the department(s) the question names, comma-separated - codes
+        ('CS,ECE') or words as the student wrote them ('agriculture', 'Gies',
+        'media'): words become every matching department. Empty = all.
+        level: one digit for a course level ('3' = 300-level), or empty.
+        like_course: for "closest to / similar to / like <course>", that
+        course's code (e.g. 'ADV 281'); the search then starts from its
+        description and leaves it out of the results.
+        taught_by: for "like the course(s) <instructor> teaches", the name as
+        the student wrote it (e.g. 'Lawrence Angrave'); the search starts from
+        that instructor's courses."""
+        lvl = (re.search(r"\d", level or "") or [None])[0]
+        like = _COURSE_ARG_RE.search(like_course or "")
+        like_key = (like.group(1).upper(), like.group(2).upper()) if like else None
+        if not (query or "").strip() and not like_key and not (taught_by or "").strip():
+            # Filters alone search nothing; answering "none" from this was
+            # wrong ("a 200-level course like the one Angrave teaches" was
+            # called with only subjects and level). Not phrased as a result.
+            return ("ERROR - nothing was searched: pass query (the topic), like_course (e.g. "
+                    "'CS 341') or taught_by (an instructor's name), plus any subjects/level.")
         conn = db.get_connection()
+        head = ""
         try:
-            phrases = _expand_query(tool_llm, query, _RAG_SUBQUERIES)
-            vectors = emb.embed_texts(phrases) if phrases else []
+            wanted, unresolved = _resolve_subjects(conn, subjects)
+            if unresolved and not wanted:
+                return (f"ERROR - no department matches {', '.join(unresolved)}. Look departments "
+                        "up in the subjects table (LOWER(search_text) LIKE '%word%') and pass their codes.")
+            phrases, vectors, starts = [], [], []
+            if taught_by and taught_by.strip():
+                found, label = _courses_taught_by(conn, taught_by)
+                if not found:
+                    return label
+                starts = found
+                head = label + "\n\n"
+            elif like_key:
+                starts = [like_key]
+            for key in starts:
+                row = conn.execute("SELECT embedding FROM course_embeddings WHERE subject = ? "
+                                   "AND course_number = ?", key).fetchone()
+                if row is not None:
+                    emb_value = row["embedding"]
+                    vectors.append(emb_value if not isinstance(emb_value, str)
+                                   else [float(x) for x in emb_value.strip("[]").split(",")])
+            if starts and not vectors:
+                return f"{', '.join(f'{s} {n}' for s, n in starts)} has no description to compare against."
+            if query:
+                phrases = _expand_query(tool_llm, query, _RAG_SUBQUERIES)
+                vectors += emb.embed_texts(phrases) if phrases else []
+            # A "like <course>" search stays in that course's department unless
+            # subjects are given; other departments are listed separately
+            # (CS 225 at the 400 level ranked CI 487 first).
+            same_dept = sorted({s for s, _ in starts}) if starts and not wanted else []
             result_lists = [
-                emb.search_similar_by_vector(conn, v, _RAG_K_PER, subjects=wanted or None)
+                emb.search_similar_by_vector(conn, v, _RAG_K_PER, subjects=(wanted or same_dept) or None,
+                                             level=lvl, exclude=starts or None)
                 for v in vectors if v is not None
             ]
+            others = []
+            if same_dept:
+                for v in vectors:
+                    others += [r for r in emb.search_similar_by_vector(conn, v, _RAG_K_PER, level=lvl,
+                                                                       exclude=starts)
+                               if r["subject"] not in same_dept]
             # Courses whose title contains a phrase outrank description
             # neighbours: "the ai class" missed CS 440 "Artificial
             # Intelligence" because its description ranked below other
             # AI-flavoured courses. Listed twice so fusion ranks them first.
-            titles = _title_matches(conn, [query] + list(phrases), wanted)
+            titles = (_title_matches(conn, [query] + list(phrases), wanted)
+                      if query and not like_key and not lvl else [])
             if titles:
                 result_lists = [titles, titles] + result_lists
             matches = _rrf_merge(result_lists, top_n=_RAG_K_RETURN)
-            titles = _course_titles(conn, [(m["subject"], m["course_number"]) for m in matches])
+            others = _rrf_merge([others], top_n=3) if others else []
+            titles = _course_titles(conn, [(m["subject"], m["course_number"]) for m in matches + others])
         finally:
             conn.close()
         if not matches:
             where = f" in {', '.join(w.upper() for w in wanted)}" if wanted else ""
             return f"No matching course descriptions found{where}."
+        if starts:
+            head += (f"Closest by description to {', '.join(f'{s} {n}' for s, n in starts)}"
+                     f"{f', {lvl}00-level only' if lvl else ''}"
+                     f"{f' (same department: {', '.join(same_dept)})' if same_dept else ''}:\n\n")
         # The title comes from the data: without it the model named courses
         # itself (CS 441 "Machine Learning Techniques"; it's Applied Machine
         # Learning).
-        return "\n\n".join(
-            f"{m['subject']} {m['course_number']}"
-            f"{' - ' + titles[(m['subject'], m['course_number'])] if (m['subject'], m['course_number']) in titles else ''}"
-            f": {m['description']}"
-            for m in matches
-        )
+        fmt = lambda m: (f"{m['subject']} {m['course_number']}"
+                         f"{' - ' + titles[(m['subject'], m['course_number'])] if (m['subject'], m['course_number']) in titles else ''}"
+                         f": {m['description']}")
+        body = "\n\n".join(fmt(m) for m in matches)
+        if others:
+            body += "\n\nOther departments:\n\n" + "\n\n".join(fmt(m) for m in others)
+        return head + body
 
     return course_content_search
 
@@ -1072,7 +1523,7 @@ def _new_agent(verbose: bool = False, streaming: bool = False, model: str | None
     try:
         agent = create_sql_agent(
             llm=llm,
-            db=sql_db,
+            toolkit=_toolkit(sql_db, llm),
             agent_type="tool-calling",
             verbose=verbose,
             # Formatted by create_sql_agent itself ({dialect}, {top_k}).
@@ -1098,6 +1549,25 @@ def _new_agent(verbose: bool = False, streaming: bool = False, model: str | None
     except Exception as exc:
         raise RuntimeError(f"Couldn't build the SQL agent (provider: {provider}): {exc}") from exc
     return agent
+
+
+_DROPPED_SQL_TOOLS = ("sql_db_query_checker",)
+
+
+def _toolkit(sql_db, llm):
+    """The SQL toolkit without sql_db_query_checker. The prompt said not to
+    call it, but the model called it before nearly every query; each call is
+    an extra LLM round trip and an agent step, so "STAT classes this fall that
+    end before 11 am" spent its six steps on check-then-run pairs and hit the
+    cap. The SQL guard and the errors returned by a bad query cover what the
+    checker did."""
+    from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
+
+    class _Toolkit(SQLDatabaseToolkit):
+        def get_tools(self):
+            return [t for t in super().get_tools() if t.name not in _DROPPED_SQL_TOOLS]
+
+    return _Toolkit(db=sql_db, llm=llm)
 
 
 _AGENT_SUFFIX = ("I know the schema from my instructions. I'll write the SQL and run it "
@@ -1172,19 +1642,23 @@ def setup_unavailable(exc: Exception) -> str:
 _HISTORY_MAX_TURNS = 3
 _HISTORY_Q_CHARS = 200
 _HISTORY_A_CHARS = 250
+# The latest answer is kept much longer: a refinement ("which of those are
+# from CS?", "give a description for each") needs the list it refers to.
+# 26 of 164 logged questions were follow-ups like that.
+_HISTORY_LAST_A_CHARS = 1200
 
 
 def _format_history(history) -> str:
     if not isinstance(history, (list, tuple)) or not history:
         return ""
     lines = []
-    for turn in list(history)[-_HISTORY_MAX_TURNS:]:
-        if not isinstance(turn, dict):
-            continue
+    turns = [t for t in list(history)[-_HISTORY_MAX_TURNS:] if isinstance(t, dict)]
+    for i, turn in enumerate(turns):
         q = str(turn.get("q", "")).strip().replace("\n", " ")[:_HISTORY_Q_CHARS]
         a = str(turn.get("a", "")).strip().replace("\n", " ")
-        if len(a) > _HISTORY_A_CHARS:
-            a = a[:_HISTORY_A_CHARS].rstrip() + "…"
+        cap = _HISTORY_LAST_A_CHARS if i == len(turns) - 1 else _HISTORY_A_CHARS
+        if len(a) > cap:
+            a = a[:cap].rstrip() + "…"
         if q:
             lines.append(f"Student: {q}")
         if a:
@@ -1199,7 +1673,7 @@ def build_agent_input(question: str, history=None) -> str:
     if not hist:
         return question
     return (
-        "Conversation history (context only - do not re-answer these):\n"
+        "Conversation history (for references and refinements - don't re-answer it):\n"
         f"{hist}\n\n"
         f"Current question: {question}"
     )
@@ -1265,7 +1739,7 @@ def ask(question: str, verbose: bool = False, history=None, _model: str | None =
     from app.citations import SQLCapture, sources_footer
 
     cap = SQLCapture()
-    new_query_log()
+    new_query_log(question)
     try:
         result = agent.invoke(
             {"input": build_agent_input(question, history)},
@@ -1277,7 +1751,7 @@ def ask(question: str, verbose: bool = False, history=None, _model: str | None =
             return ask(question, verbose=verbose, history=history, _model=backup)
         return friendly_error(exc)
 
-    answer = collapse_padding(friendly_stop(result.get("output", str(result)))).rstrip()
+    answer = tidy_answer(friendly_stop(result.get("output", str(result))))
     if classify_answer(answer) == "answered":
         answer += sources_footer(cap.source_sql, cap.rag_used, question)
     return answer
@@ -1316,7 +1790,7 @@ async def astream_answer(question: str, history=None, _model: str | None = None)
     streamed: list[str] = []
     final: str | None = None
     tool_depth = 0
-    new_query_log()
+    new_query_log(q)
     try:
         async for ev in agent.astream_events(
             {"input": build_agent_input(q, history)},
@@ -1370,8 +1844,8 @@ async def astream_answer(question: str, history=None, _model: str | None = None)
         yield "done", friendly_error(exc)
         return
 
-    answer = collapse_padding(friendly_stop(
-        final or "".join(streamed) or "I couldn't produce an answer for that.")).rstrip()
+    answer = tidy_answer(friendly_stop(
+        final or "".join(streamed) or "I couldn't produce an answer for that."))
     if classify_answer(answer) == "answered":
         footer = sources_footer(cap.source_sql, cap.rag_used or rag_used, q)
         if footer:

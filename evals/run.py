@@ -158,18 +158,18 @@ def _usage_capture():
 
 
 def run_prod_arm(item: dict) -> dict:
-    from app.agent import build_agent, build_agent_input, collapse_padding, friendly_error, new_query_log
+    from app.agent import build_agent, build_agent_input, friendly_error, new_query_log, tidy_answer
     from app.citations import SQLCapture
     cap = SQLCapture()
     usage = _usage_capture()
     t0 = time.monotonic()
     try:
         agent = build_agent()
-        new_query_log()   # as production does, per answer
-        out = agent.invoke({"input": build_agent_input(item["question"])},
+        new_query_log(item["question"])   # as production does, per answer
+        out = agent.invoke({"input": build_agent_input(item["question"], item.get("history"))},
                            config={"callbacks": [cap, usage]})
         answer = out.get("output", str(out)) if isinstance(out, dict) else str(out)
-        answer = collapse_padding(answer).rstrip()   # as production does
+        answer = tidy_answer(answer)   # as production does
     except Exception as exc:  # noqa: BLE001
         # A provider rate limit must reach _with_retry (which backs off and
         # retries), not be scored as a wrong answer: before this, parallel runs
@@ -183,6 +183,7 @@ def run_prod_arm(item: dict) -> dict:
         final_sql=cap.queries[-1] if cap.queries else None,
         first_sql=cap.queries[0] if cap.queries else None,
         trace=[{"step": "sql_db_query", "sql": q} for q in cap.queries],
+        tools=cap.tool_calls,
         tokens=u["input"] + u["output"], usage=u,
         facts_used=bool(cap.fact_sql),
     )
@@ -446,7 +447,7 @@ def _catch_writeups(critic_recs: list[dict]) -> str:
 
 _RAW_KEYS = ("arm", "answer", "outcome", "final_sql", "first_sql", "attempts",
              "exec_error", "rows", "trace", "latency_ms", "tokens", "usage",
-             "facts_used")
+             "facts_used", "tools")
 
 
 def _rescore(ts: str, use_sqlite: bool = True) -> int:

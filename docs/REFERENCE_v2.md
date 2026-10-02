@@ -325,6 +325,7 @@ header only. Red-team passes: [`../security_findings.md`](../security_findings.m
 | `gen_ed_categories` | course | category codes (`hum` = `HP`/`LA`, `qr` = `QR1`/`QR2`, ...); one snapshot |
 | `prerequisites` | course × requirement group × option | parsed from descriptions; groups are AND-ed, rows in a group are alternatives; `raw_text` kept |
 | `academic_calendar` | term × event | registrar dates by category (instruction, add, drop, withdraw, break, holiday, finals, grades, registration, commencement, other) |
+| `subjects` | department | code, name, college_code, college, search_text (code + name + college, lowercase) - maps "Gies", "agriculture" to codes; `python -m app.load_subjects` |
 | `course_embeddings` | course (Postgres only) | 384-dim vector of the description, HNSW cosine index |
 | `ask_log` · `answer_feedback` · `site_feedback` · `sync_requests` | app bookkeeping | never visible to the assistant |
 

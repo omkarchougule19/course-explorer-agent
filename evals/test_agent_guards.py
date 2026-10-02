@@ -118,6 +118,17 @@ try:
 finally:
     agent._subject_coverage = real_cov
 
+# 4d. empty result for a full-first-name instructor
+n = agent._instructor_note("SELECT * FROM sections WHERE instructor = 'Ji, Heng'")
+check("a full first name gets the last-name + initial hint",
+      bool(n) and "instructor_last = 'ji' AND instructor_initial = 'h'" in n)
+check("any empty instructor lookup gets the format hint",
+      "no first names" in (agent._instructor_note("SELECT * FROM sections WHERE instructor LIKE '%Vishal%'") or ""))
+check("queries without an instructor get no hint", agent._instructor_note("SELECT * FROM sections WHERE subject = 'CS'") is None)
+check("rows for 'Last, F' carry the initial-match note",
+      "match by initial" in (agent._initial_note("SELECT * FROM sections WHERE instructor = 'Ji, H'") or ""))
+check("no initial note for other queries", agent._initial_note("SELECT * FROM sections WHERE subject = 'CS'") is None)
+
 # 5. the agent is built once per process and never blocks the event loop
 import asyncio
 import time
@@ -198,6 +209,10 @@ finally:
 # 6. runaway table padding (a model once padded a header with 2.1M spaces)
 check("padding runs collapse; the table still parses",
       agent.collapse_padding("| A    | B      |\n|------|--------|") == "| A | B |\n|---|---|")
+check("tidy_answer decodes entities the model wrote",
+      agent.tidy_answer("Programming Languages &amp; Compilers  ") == "Programming Languages & Compilers")
+check("tidy_answer leaves markup as text for the renderer to escape",
+      agent.tidy_answer("&lt;b&gt;x&lt;/b&gt;") == "<b>x</b>")
 check("ordinary text is left alone",
       agent.collapse_padding("two  spaces - and --- dashes") == "two  spaces - and --- dashes")
 check("a tail of pure padding counts as a runaway", agent._is_runaway(["ok"] + [" "] * 400))

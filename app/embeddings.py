@@ -138,37 +138,52 @@ def save_course_embedding(conn: db.Connection, subject: str, course_number: str,
 
 
 def search_similar_by_vector(conn: db.Connection, vector: Optional[List[float]], k: int = 5,
-                             subjects: Optional[List[str]] = None) -> List[dict]:
+                             subjects: Optional[List[str]] = None, level: Optional[str] = None,
+                             exclude: Optional[tuple] = None) -> List[dict]:
     """Cosine-nearest course descriptions to an already-computed embedding.
     Lets a multi-query search embed all of its sub-queries in one batch
     (embed_texts) and reuse the vectors here instead of re-embedding per
     query. `subjects` limits the search to those departments ("CS courses
     about AI" once returned BSE, BDI, ANSC...). Empty list on SQLite or if
-    `vector` is missing."""
-    if conn.backend != "postgres" or not vector:
+    `vector` is missing. `level` ('3' = 300-level) limits course numbers;
+    `exclude` is one (subject, course_number) to leave out - the course a
+    "closest to X" search starts from."""
+    if conn.backend != "postgres" or vector is None or len(vector) == 0:
         return []
 
     from pgvector import Vector
     from pgvector.psycopg2 import register_vector
     register_vector(conn._raw)
 
-    if subjects:
-        # Exact search over the named departments' rows (at most a few
-        # hundred). OFFSET 0 keeps the planner off the HNSW index, which
-        # filters *after* picking ~40 global neighbours and so could return
-        # few or none of a small department's courses.
+    if subjects or level or exclude:
+        # Exact search over the filtered rows (a department, or one level:
+        # at most ~1,500). OFFSET 0 keeps the planner off the HNSW index,
+        # which filters *after* picking ~40 global neighbours and so could
+        # return few or none of a small department's or level's courses.
+        where, params = [], [Vector(vector)]
+        if subjects:
+            where.append("subject = ANY(?)")
+            params.append([s.upper() for s in subjects])
+        if level:
+            where.append("course_number LIKE ?")
+            params.append(f"{level[:1]}%")
+        if exclude:
+            pairs = [exclude] if isinstance(exclude[0], str) else list(exclude)
+            where.append("NOT (" + " OR ".join("(subject = ? AND course_number = ?)" for _ in pairs) + ")")
+            for subj, num in pairs:
+                params += [subj.upper(), num.upper()]
         rows = conn.execute(
-            """
+            f"""
             SELECT * FROM (
                 SELECT subject, course_number, description, embedding <=> ? AS distance
                 FROM course_embeddings
-                WHERE subject = ANY(?)
+                WHERE {' AND '.join(where)}
                 OFFSET 0
             ) t
             ORDER BY distance
             LIMIT ?
             """,
-            (Vector(vector), [s.upper() for s in subjects], k),
+            params + [k],
         ).fetchall()
         return [dict(r) for r in rows]
 

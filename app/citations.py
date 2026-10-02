@@ -71,6 +71,9 @@ class SQLCapture(BaseCallbackHandler):
         # (which evals score against gold SQL), but the Sources footer
         # still needs to know which tables and subject it read.
         self.fact_sql: list[str] = []
+        # Every tool call with its input, for eval traces (topic-search calls
+        # never appeared in them, so its failures were invisible).
+        self.tool_calls: list[dict] = []
 
     @property
     def source_sql(self) -> list[str]:
@@ -82,6 +85,7 @@ class SQLCapture(BaseCallbackHandler):
             name = serialized.get("name", "")
         name = name or kwargs.get("name", "") or ""
         raw = input_str if isinstance(input_str, str) else str(input_str)
+        self.tool_calls.append({"tool": name, "input": raw[:500]})
         if "course_content_search" in name:
             self.rag_used = True
             return

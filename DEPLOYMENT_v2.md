@@ -169,7 +169,7 @@ GRANT USAGE ON SCHEMA public TO app_ro;
 -- those hold other users' IPs and questions.
 GRANT SELECT ON sections, meetings, grade_distributions,
     teachers_ranked_excellent, gen_ed_categories, prerequisites,
-    academic_calendar TO app_ro;
+    academic_calendar, subjects TO app_ro;    -- subjects since 2026-10-02
 ALTER ROLE app_ro SET default_transaction_read_only = on;
 ALTER ROLE app_ro SET statement_timeout = '8s';
 ```

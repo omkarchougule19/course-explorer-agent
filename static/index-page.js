@@ -330,7 +330,7 @@
   let pendingQuestion = null;   // asked but not yet answered (the page was left mid-reply)
   const HISTORY_TURNS_SENT = 3;
   const HISTORY_TURNS_KEPT = 10;
-  const HISTORY_ANSWER_CLIP = 600;
+  const HISTORY_ANSWER_CLIP = 1500;   // the server keeps ~1,200 of the latest answer for follow-ups
   const CHAT_KEY = 'illini-chat-v1';
   const TRANSCRIPT_ANSWER_CAP = 8000;
 
