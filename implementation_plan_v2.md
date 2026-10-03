@@ -536,6 +536,18 @@ because other docs cite them.
   limit; the notices now show it); an answer once explained the link format
   to the student; a follow-up's list was labelled with one term without a
   term filter.
+- **Deployed** d2793c1 (2026-10-03). Production check: "intro psychology
+  sections in fall 2026" showed four busy notices (10, 35, 2, 38 s) and ran
+  the PSYC query; a follow-up "which of those are online?" with a basis reran
+  it with the meetings join and is_online = 1 (19 s).
+- **Found in that check - empty final answer** (existed before: also logged
+  2026-09-29 and 2026-10-01, all long Groq runs of 100-170 s): after the
+  tools ran, the model's last message was empty, so the student got "I
+  couldn't produce an answer for that." - and ask_log counted it as
+  answered, with a sources footer. Proposed general fix: on an empty final
+  after tool calls, one extra model call that writes the answer from the
+  question and the tool results already gathered; and classify the fallback
+  text as a failure, not an answer.
 
 ### 22. Compress responses — `todo`
 - **Problem:** nothing is gzipped: the home page is 137 KB raw vs 42.8 KB
