@@ -473,7 +473,7 @@ because other docs cite them.
   synced still matches other departments' psychology titles; input tokens
   per question are higher than before items 29-32 (see Measured).
 
-### 33. Groq's per-minute limit failed broad questions — `done 2026-10-03`
+### 33. Groq's per-minute limit failed broad questions — `done 2026-10-03, deployed (94db7fb)`
 - **Problem:** "what courses are offered by gies" failed in production after
   145 s. Each agent call costs ~4.3K input tokens against 8K tokens/minute, so
   multi-call questions must wait; the SDK gave up after 2 retries and the
@@ -484,6 +484,10 @@ because other docs cite them.
   daily limit. Offline checks in `evals/test_llm_failover.py` (daily fails
   over, per-minute doesn't, retries configurable). Locally on Groq the Gies
   question now answers in ~70 s (waits of 10 s and 52 s).
+- **Production check after deploying 94db7fb:** "what courses are offered by
+  gies" answered correctly (6 departments, 268 courses) in 111 s with no
+  failover; before, it errored after 145 s. The answer said "the subjects
+  table" - an internal name the no-internals rule should have kept out.
 - **Next lever (not done):** fewer tokens per call - the prompt is ~3.45K
   tokens and tool descriptions ~0.8K, re-sent on every call; and a status
   line while waiting ("Busy, waiting for capacity...") so a 60 s pause
