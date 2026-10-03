@@ -437,7 +437,7 @@ because other docs cite them.
   in the afternoon?" (the question that used to hit the iteration cap)
   answered with one query in 22.5 s, clock times shown, no minutes leaked.
 
-### 32. Query-gap classes from the critic — `paused 2026-10-02, not deployed`
+### 32. Query-gap classes from the critic — `done 2026-10-03`
 - **Problem:** the `query-gap-critic` agent found 11 classes of failure with
   evidence: two-step questions (instructor -> similar course), instructor
   name formats, sections/meetings joins without crn (118/180 in traces),
@@ -455,15 +455,11 @@ because other docs cite them.
   keeps 1,200 characters of the latest answer; prompt cleanup (~210 tokens
   trimmed after the additions). 18 eval rows q94-q111, several wordings per
   class; 34 new offline checks (`evals/test_search_fields.py`).
-- **Measured:** 111 rows, gpt-4o-mini on Neon: before the round-2/3 fixes 90.1% / 91.0% (q94-q111 12/18); after them 97.3% / 96.4% with q94-q111 18/18 in both runs (q01-q37 36/37). Input tokens about 9.0K per question (7.3K before items 29-32). A fresh probe of 16 unseen questions: about 11 right first time; its misses led to three more changes that have NOT yet been through a full run - instructor_last/initial literals normalized before execution, comparisons on start_time/end_time text rejected, and sql_db_query_checker removed from the toolkit (the model called it before most queries, spending steps and an LLM call each).
-- **Resume with:** two full runs on the current code (the last three changes
-  above are unmeasured), the probe in the session notes ("STAT classes this
-  fall that end before 11 am" hit the step cap before the checker removal),
-  a Groq check of a few q94-q111 rows, then commit and deploy. Neon already
-  has every new column and the subjects table (app_ro can read it).
+- **Measured:** 111 rows, gpt-4o-mini on Neon: before the round-2/3 fixes 90.1% / 91.0% (q94-q111 12/18); after them 97.3% / 96.4% with q94-q111 18/18 in both runs (q01-q37 36/37). Input tokens about 9.0K per question (7.3K before items 29-32). A fresh probe of 16 unseen questions: about 11 right first time; its misses led to three more changes - instructor_last/initial literals normalized before execution, comparisons on start_time/end_time text rejected, and sql_db_query_checker removed from the toolkit (the model called it before most queries, spending steps and an LLM call each). Final (2026-10-03): 98.2% / 97.3% on 111 rows, q94-q111 18/18 in both, about 1.1 tool calls and 8.5K input tokens per question (from ~9.0K), none at the step cap; the probe that had hit the cap ("STAT classes this fall that end before 11 am") answers in two queries; Groq gpt-oss-120b 4/5 on q94/q96/q100/q103/q109 (q94 omitted the starting course while keeping the name caveat; q100 took 200 s on the 8K tokens/minute limit).
 - **Still open:** follow-up refinements are fragile on unseen wordings ("and
   which of those are 3 credits?" lost the earlier level; "who teaches the
-  second one?" picked the third item). "intro psychology sections" in a term where PSYC isn't
+  second one?" picked the third item). Some instructor links come out as
+  "?/instructor.html..." (shown as plain text by md.js, so harmless). "intro psychology sections" in a term where PSYC isn't
   synced still matches other departments' psychology titles; input tokens
   per question are higher than before items 29-32 (see Measured).
 
