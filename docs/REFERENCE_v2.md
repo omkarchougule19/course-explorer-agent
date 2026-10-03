@@ -223,9 +223,11 @@ to 10 turns in `sessionStorage` and sends the last 3; the server re-trims them
 ### Providers and failover
 
 `GROQ_MODEL` (default `openai/gpt-oss-120b`) and `OPENAI_MODEL`
-(`gpt-4o-mini`); `LLM_PROVIDER` forces one. On a Groq 429
-the question is retried once on `GROQ_FALLBACK_MODEL` (default
-`qwen/qwen3.8-27b`; `off` disables), before any answer text is streamed.
+(`gpt-4o-mini`); `LLM_PROVIDER` forces one. A Groq 429 for the per-minute
+limit is retried in place up to `GROQ_MAX_RETRIES` (6) times, waiting
+Groq's retry-after; one that names a daily limit is retried once on
+`GROQ_FALLBACK_MODEL` (default `qwen/qwen3.8-27b`; `off` disables), before
+any answer text is streamed.
 
 ### Citations
 
@@ -360,7 +362,8 @@ calendar events, 5,464 embeddings; grades and rankings 0.
 | `GROQ_API_KEY` · `OPENAI_API_KEY` | — | LLM provider, tried in that order |
 | `LLM_PROVIDER` | auto | force `groq` / `openai` |
 | `GROQ_MODEL` · `OPENAI_MODEL` | `openai/gpt-oss-120b` · `gpt-4o-mini` | model per provider |
-| `GROQ_FALLBACK_MODEL` | `qwen/qwen3.8-27b` | retried once on a Groq 429; `off` disables |
+| `GROQ_FALLBACK_MODEL` | `qwen/qwen3.8-27b` | retried once on a Groq 429 for a daily limit; `off` disables |
+| `GROQ_MAX_RETRIES` | `6` | Groq client retries on a 429 (per-minute limit), each honouring retry-after |
 | `LLM_MAX_TOKENS` | `4000` | output cap per LLM call |
 | `ADMIN_TOKEN` | unset (admin always 403) | admin dashboard and routes |
 | `ENABLE_DOCS` | unset | exposes `/docs`, `/redoc`, `/openapi.json` |

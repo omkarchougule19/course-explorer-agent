@@ -708,15 +708,40 @@ def _groq_primary_model() -> str:
     return os.environ.get("GROQ_MODEL") or "openai/gpt-oss-120b"
 
 
+def _is_daily_limit(exc: Exception) -> bool:
+    """True when a Groq 429 says a per-day limit ("tokens per day (TPD)",
+    "requests per day (RPD)") was hit; False for per-minute limits, which
+    refill within the minute."""
+    text = str(exc).lower()
+    return "per day" in text or "(tpd)" in text or "(rpd)" in text
+
+
 def _fallback_model_for(exc: Exception) -> str | None:
-    """If `exc` is a Groq rate-limit error, the model to retry on (else None)."""
+    """The model to retry on after a Groq rate-limit error, or None. Only a
+    daily limit fails over: the backup model has its own daily budget, but
+    the same 8K tokens/minute (and only ~1K output tokens/minute), so it
+    can't absorb per-minute pressure - "what courses are offered by gies"
+    hit gpt-oss's per-minute limit, failed over, and failed again on qwen.
+    Per-minute limits are waited out by the client (_groq_max_retries)."""
     try:
         import groq
     except ImportError:
         return None
-    if not isinstance(exc, groq.RateLimitError):
+    if not isinstance(exc, groq.RateLimitError) or not _is_daily_limit(exc):
         return None
     return _groq_fallback_model(_groq_primary_model())
+
+
+def _groq_max_retries() -> int:
+    """Retries the Groq client makes on 429s, each honouring Groq's
+    retry-after. Every agent call costs ~4.3K input tokens against 8K tokens
+    a minute, so a question with several calls must wait for the budget to
+    refill; the SDK default of 2 gave up after ~60 s (the Gies question
+    needed three waits: 15 s, 48 s, 17 s)."""
+    try:
+        return max(0, int(os.environ.get("GROQ_MAX_RETRIES", "6")))
+    except ValueError:
+        return 6
 
 
 _LLMS: dict = {}
@@ -805,7 +830,7 @@ def _new_llm(streaming: bool = False, model: str | None = None, fallback: bool =
         from langchain_groq import ChatGroq
         name = model or _groq_primary_model()
         primary = ChatGroq(model=name, temperature=0, api_key=groq_key, streaming=streaming,
-                           max_tokens=_max_tokens())
+                           max_tokens=_max_tokens(), max_retries=_groq_max_retries())
         # Groq's daily token cap is per model, so a 429 on the primary can be
         # answered by a different model on the same key. This wrapper only
         # suits callers that .invoke() the model (the SQL pipeline, RAG query
@@ -815,7 +840,8 @@ def _new_llm(streaming: bool = False, model: str | None = None, fallback: bool =
         if backup_name:
             import groq
             backup = ChatGroq(model=backup_name, temperature=0, api_key=groq_key,
-                              streaming=streaming, max_tokens=_max_tokens())
+                              streaming=streaming, max_tokens=_max_tokens(),
+                              max_retries=_groq_max_retries())
             return (primary.with_fallbacks([backup], exceptions_to_handle=(groq.RateLimitError,)),
                     "Groq")
         return primary, "Groq"
@@ -1448,7 +1474,7 @@ _CACHE_LOCK = threading.RLock()
 _AGENTS: dict = {}
 _SQL_DBS: dict = {}
 
-_ENV_KEYS = ("LLM_PROVIDER", "GROQ_API_KEY", "GROQ_MODEL", "GROQ_FALLBACK_MODEL",
+_ENV_KEYS = ("LLM_PROVIDER", "GROQ_API_KEY", "GROQ_MODEL", "GROQ_FALLBACK_MODEL", "GROQ_MAX_RETRIES",
              "OPENAI_API_KEY", "OPENAI_MODEL", "DATABASE_URL", "DATABASE_URL_RO",
              "LLM_MAX_TOKENS")
 

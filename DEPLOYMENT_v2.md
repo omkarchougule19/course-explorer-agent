@@ -121,7 +121,8 @@ python -m app.sync_requests --list     # lists every department (191 today) with
 | `ALLOW_RW_AGENT_DB` | no | Temporary override: lets the assistant run without `DATABASE_URL_RO` on Render. The SQL guard still applies. |
 | `LLM_PROVIDER` | no | Force `groq` or `openai`. Unset = auto-detect, Groq first. Its own key must be set. |
 | `GROQ_MODEL` | no (`openai/gpt-oss-120b`) | Groq model. The daily cap is per model, so another model has its own budget on the same key. `OPENAI_MODEL` (`gpt-4o-mini`) does the same. |
-| `GROQ_FALLBACK_MODEL` | no (`qwen/qwen3.8-27b`) | Retried once after a Groq 429 on the primary; `off` disables. |
+| `GROQ_FALLBACK_MODEL` | no (`qwen/qwen3.8-27b`) | Retried once after a Groq 429 that names a **daily** limit; `off` disables. |
+| `GROQ_MAX_RETRIES` | no (6) | Retries on a Groq 429, each waiting Groq's retry-after; covers the 8K tokens/minute limit. |
 | `LLM_MAX_TOKENS` | no (4000) | Output cap per LLM call (reasoning tokens included); stops a runaway answer. |
 | `MAX_QUERY_RESULT_CHARS` | no (6000) | A single SQL result sent back to the model is cut here, with a note to narrow the query. |
 | `RAG_MULTIQUERY` / `RAG_SUBQUERIES` / `RAG_K_PER` / `RAG_K_RETURN` | no (on / 3 / 6 / 10) | Multi-query expansion and Reciprocal Rank Fusion for semantic search. `RAG_MULTIQUERY=0` falls back to a single query. |

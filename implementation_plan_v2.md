@@ -473,6 +473,22 @@ because other docs cite them.
   synced still matches other departments' psychology titles; input tokens
   per question are higher than before items 29-32 (see Measured).
 
+### 33. Groq's per-minute limit failed broad questions — `done 2026-10-03`
+- **Problem:** "what courses are offered by gies" failed in production after
+  145 s. Each agent call costs ~4.3K input tokens against 8K tokens/minute, so
+  multi-call questions must wait; the SDK gave up after 2 retries and the
+  question failed over to qwen, which has the same per-minute limit (and ~1K
+  output tokens/minute) and failed too. Daily budgets were fine.
+- **Done:** `GROQ_MAX_RETRIES` (default 6) on the Groq clients, each retry
+  honouring retry-after; failover to the backup only when the 429 names a
+  daily limit. Offline checks in `evals/test_llm_failover.py` (daily fails
+  over, per-minute doesn't, retries configurable). Locally on Groq the Gies
+  question now answers in ~70 s (waits of 10 s and 52 s).
+- **Next lever (not done):** fewer tokens per call - the prompt is ~3.45K
+  tokens and tool descriptions ~0.8K, re-sent on every call; and a status
+  line while waiting ("Busy, waiting for capacity...") so a 60 s pause
+  doesn't look frozen.
+
 ### 22. Compress responses — `todo`
 - **Problem:** nothing is gzipped: the home page is 137 KB raw vs 42.8 KB
   gzipped; `/sections?subject=CS` 44 KB and `/freshness` 45 KB of JSON.

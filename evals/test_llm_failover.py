@@ -25,9 +25,10 @@ def check(name, cond):
         failures.append(name)
 
 
-def _rate_limit_error():
+def _rate_limit_error(message="Rate limit reached on tokens per day (TPD): Limit 200000"):
+    """A Groq 429; daily by default, since only daily limits fail over."""
     req = httpx.Request("POST", "https://api.groq.com/x")
-    return groq.RateLimitError("429", response=httpx.Response(429, request=req), body=None)
+    return groq.RateLimitError(message, response=httpx.Response(429, request=req), body=None)
 
 
 class _Raises(FakeListChatModel):
@@ -73,6 +74,24 @@ try:
 except ValueError:
     check("non-429 error still raises", True)
 
+# 2b. which 429s fail over: only daily limits; per-minute ones are retried in place
+def _rl(message):
+    req = httpx.Request("POST", "https://api.groq.com/x")
+    return groq.RateLimitError(message, response=httpx.Response(429, request=req), body=None)
+
+
+_env(GROQ_API_KEY="k")
+tpd = _rl("Rate limit reached for model `openai/gpt-oss-120b` on tokens per day (TPD): Limit 200000")
+tpm = _rl("Rate limit reached for model `openai/gpt-oss-120b` on tokens per minute (TPM): Limit 8000, "
+          "Used 6123, Requested 4312. Please try again in 18.3s.")
+check("daily limit (TPD) -> fail over", agent._fallback_model_for(tpd) == agent.DEFAULT_GROQ_FALLBACK)
+check("per-minute limit (TPM) -> no failover", agent._fallback_model_for(tpm) is None)
+check("not a rate limit -> no failover", agent._fallback_model_for(ValueError("x")) is None)
+check("the Groq client retries 429s six times by default",
+      agent._build_llm(fallback=False)[0].max_retries == 6)
+_env(GROQ_API_KEY="k", GROQ_MAX_RETRIES="3")
+check("GROQ_MAX_RETRIES overrides it", agent._build_llm(fallback=False)[0].max_retries == 3)
+
 # 3. the agent still builds around the wrapper (tool-calling needs bind_tools)
 _env(GROQ_API_KEY="k")
 try:
@@ -89,6 +108,9 @@ import asyncio
 _calls = []
 
 
+_ERROR = {"message": "Rate limit reached on tokens per day (TPD): Limit 200000"}
+
+
 class _FakeAgent:
     def __init__(self, model, fail):
         self.model, self.fail = model, fail
@@ -96,7 +118,7 @@ class _FakeAgent:
     def invoke(self, *a, **k):
         _calls.append(("invoke", self.model))
         if self.fail:
-            raise _rate_limit_error()
+            raise _rate_limit_error(_ERROR["message"])
         return {"output": f"answer from {self.model or 'primary'}"}
 
     async def astream_events(self, *a, **k):
@@ -137,6 +159,14 @@ agent.build_agent = _fake_build()
 _calls.clear()
 agent.ask("who teaches CS 225")
 check("ask(): fallback off -> no retry", len(_calls) == 1)
+
+_env(GROQ_API_KEY="k")
+_ERROR["message"] = "Rate limit reached on tokens per minute (TPM): Limit 8000. Please try again in 9s."
+agent.build_agent = _fake_build()
+_calls.clear()
+agent.ask("who teaches CS 225")
+check("ask(): a per-minute 429 that outlasted the client's retries doesn't fail over", len(_calls) == 1)
+_ERROR["message"] = "Rate limit reached on tokens per day (TPD): Limit 200000"
 
 _env(GROQ_API_KEY="k")
 

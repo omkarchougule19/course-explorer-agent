@@ -326,10 +326,23 @@ questions. Answers stream to the browser.
   Production runs Groq. The Groq key is shared by production, development and
   evals, and Groq's free tier caps **tokens per day per model** (about 200K),
   not just requests.
-- **429 failover on Groq.** When the primary model is rate-limited, the
-  question is retried once on `GROQ_FALLBACK_MODEL` (default
-  `qwen/qwen3.8-27b`, `off` disables), which has its own daily budget on the
-  same key. The agent path rebuilds the agent on the fallback (LangChain's SQL
+- **Per-minute limits are waited out; only daily limits fail over**
+  (2026-10-03). Every agent call costs ~4.3K input tokens (prompt plus tool
+  descriptions) against Groq's 8K tokens a minute, so any question needing
+  two or more calls has to wait for the budget to refill. The Groq client
+  retries 429s `GROQ_MAX_RETRIES` times (default 6, was the SDK's 2), each
+  honouring Groq's retry-after. Failover to the backup model happens only when
+  the 429 names a daily limit (TPD/RPD): the backup has its own daily budget
+  but the same per-minute limit and ~1K output tokens a minute, so it can't
+  absorb per-minute pressure. Before: "what courses are offered by gies" hit
+  the per-minute limit in production, gave up after two retries, failed over
+  to qwen, and failed again after 145 s; after: answered in ~70 s on Groq
+  (two waits, 10 s and 52 s). Slow broad questions remain; the lever is fewer
+  tokens per call.
+- **429 failover on Groq (daily limits).** When the primary model's daily
+  budget is spent, the question is retried once on `GROQ_FALLBACK_MODEL`
+  (default `qwen/qwen3.8-27b`, `off` disables), which has its own daily
+  budget on the same key. The agent path rebuilds the agent on the fallback (LangChain's SQL
   toolkit rejects a `with_fallbacks` wrapper); the SQL pipeline and the RAG
   expansion use `with_fallbacks`. A stream only retries if no answer text has
   gone out yet. Exactly one retry. qwen's free-tier output limit is about 1,000
