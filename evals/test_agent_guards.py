@@ -206,6 +206,31 @@ finally:
         if v is not None:
             os.environ[k] = v
 
+# 5b. a client's retry wait shows up as a status while the stream is blocked
+import logging as _logging
+
+
+async def _merged():
+    q = asyncio.Queue()
+    agent._NOTICE_TARGET.set((asyncio.get_running_loop(), q))
+
+    async def source():
+        yield {"event": "first"}
+        _logging.getLogger("groq._base_client").info(
+            "Retrying request to /openai/v1/chat/completions in 2.400000 seconds")
+        await asyncio.sleep(0.3)          # the client sleeping before its retry
+        yield {"event": "second"}
+
+    return [x async for x in agent._with_notices(source(), q)]
+
+
+out = asyncio.run(_merged())
+check("a retry wait becomes a notice before the next event",
+      [k for k, _ in out] == ["event", "notice", "event"] and "waiting about 2 s" in out[1][1])
+agent._NOTICE_TARGET.set(None)
+_logging.getLogger("groq._base_client").info("Retrying request to /x in 5 seconds")   # no target: ignored
+check("no stream waiting -> the log line is ignored", True)
+
 # 6. runaway table padding (a model once padded a header with 2.1M spaces)
 check("padding runs collapse; the table still parses",
       agent.collapse_padding("| A    | B      |\n|------|--------|") == "| A | B |\n|---|---|")
@@ -213,6 +238,14 @@ check("tidy_answer decodes entities the model wrote",
       agent.tidy_answer("Programming Languages &amp; Compilers  ") == "Programming Languages & Compilers")
 check("tidy_answer leaves markup as text for the renderer to escape",
       agent.tidy_answer("&lt;b&gt;x&lt;/b&gt;") == "<b>x</b>")
+check("internal comparisons become plain words",
+      agent.tidy_answer("courses where `grad_credit = 'yes'` in the subjects table") ==
+      "courses where open to graduate students in the department list")
+check("bare column names become plain words", "course titles" in agent.tidy_answer("matched on title_search"))
+check("mangled instructor links are repaired",
+      agent.tidy_answer("[Sun, E](?/instructor.html?name=Sun%2C%20E) and [Hall, G](https://instructor.html?name=Hall)")
+      == "[Sun, E](/instructor.html?name=Sun%2C%20E) and [Hall, G](/instructor.html?name=Hall)")
+check("good links are untouched", agent.tidy_answer("[CS 225](/?course=CS-225)") == "[CS 225](/?course=CS-225)")
 check("ordinary text is left alone",
       agent.collapse_padding("two  spaces - and --- dashes") == "two  spaces - and --- dashes")
 check("a tail of pure padding counts as a runaway", agent._is_runaway(["ok"] + [" "] * 400))

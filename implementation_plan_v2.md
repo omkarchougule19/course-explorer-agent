@@ -493,6 +493,50 @@ because other docs cite them.
   line while waiting ("Busy, waiting for capacity...") so a 60 s pause
   doesn't look frozen.
 
+### 34. Fewer tokens per call — `tried and reverted 2026-10-03`
+- **Tried:** drop the schema tools and the default sql_db_query text, shorter
+  tool descriptions, empty tables' schema left out of the prompt: fixed
+  overhead per call 4,394 -> ~3,680 tokens (input per question ~8.5K ->
+  ~7.25K, -15%).
+- **Measured cost:** answer-OK 98.2% / 97.3% before; 91.9% / 93.7% with the
+  cut, 95.5% / 94.6% with the usage guidance back in the prompt, 95.5% /
+  95.5% with the topic-search description's "when to use" phrase restored -
+  a steady ~2.5-point loss. The owner chose accuracy: reverted.
+- **Kept from it:** a [Check] note for title/description searches on a 1-3
+  letter fragment ('%ai%' matched "Tech and Advertising Campaigns").
+- **Lessons:** tool descriptions decide which tool the model picks - cutting
+  "use this for 'what courses cover X'" sent topic questions to SQL; usage
+  rules weigh more in the system prompt than in tool text. A future attempt
+  should undo one cut at a time.
+
+### 35. Waiting notices, answer cleanup, follow-ups, departments in words — `done 2026-10-03`
+- **Busy notices:** the Groq/OpenAI clients log "Retrying request ... in N
+  seconds" before waiting out a 429; a log handler passes it, through a
+  per-request context variable, to the stream that is waiting, which shows
+  "Busy - waiting about N s for the AI model..." (the page had sat on
+  "Running SQL..." for a minute). Local end to end on Groq: notices at each
+  wait (11, 43, 48, 46 s).
+- **Answer cleanup** (`tidy_answer`): internal names in plain words
+  ("grad_credit = 'yes'" -> "open to graduate students", "the subjects
+  table" -> "the department list", bare column names) and mangled link
+  targets repaired ("?/instructor.html", "https://instructor.html").
+- **Follow-ups:** the stream sends a "basis" event (the query or tool call
+  the answer came from); the page keeps it with the turn and sends it back;
+  the history shows it for the latest turn, and the prompt says to rerun it
+  with the filter added and that "the second one" is the second item listed.
+  End to end: "which of those are 400 level?" reran the Gies query with
+  course_number LIKE '4%'.
+- **Departments in words:** a department name written out ("intro
+  psychology", "chemistry courses", "psych classes") counts as that
+  department for the dropped-filter note and the latest-term rerun - only
+  when the wording points at a department, so "engineering students" isn't
+  the ENG department.
+- **Measured:** answer-OK 95.5% / 94.6% / 97.3% over three runs (98.2% single baseline run). The misses (q12, q28, q40, q49, q64, q77, q91, q98) all also appear in earlier runs without these changes - run-to-run noise on advice questions, not a regression. q98's query, rerun through the wrapper, returns the right rows; the model misread them.
+- **Still open:** broad questions still take 1-3 minutes on Groq (per-minute
+  limit; the notices now show it); an answer once explained the link format
+  to the student; a follow-up's list was labelled with one term without a
+  term filter.
+
 ### 22. Compress responses — `todo`
 - **Problem:** nothing is gzipped: the home page is 137 KB raw vs 42.8 KB
   gzipped; `/sections?subject=CS` 44 KB and `/freshness` 45 KB of JSON.

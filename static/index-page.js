@@ -341,8 +341,11 @@
     } catch (e) { /* storage blocked or full: the chat just won't survive navigation */ }
   }
 
-  function recordTurn(q, a) {
-    chatHistory.push({ q, a: String(a || '').slice(0, HISTORY_ANSWER_CLIP) });
+  // `basis` is the query the answer came from (the stream's "basis" event):
+  // sent back with the next question so "which of those..." can reuse it.
+  function recordTurn(q, a, basis) {
+    chatHistory.push({ q, a: String(a || '').slice(0, HISTORY_ANSWER_CLIP),
+                       basis: String(basis || '').slice(0, 600) });
     if (chatHistory.length > HISTORY_TURNS_KEPT) chatHistory = chatHistory.slice(-HISTORY_TURNS_KEPT);
     transcript.push({ q, a: String(a || '').slice(0, TRANSCRIPT_ANSWER_CAP) });
     if (transcript.length > HISTORY_TURNS_KEPT) transcript = transcript.slice(-HISTORY_TURNS_KEPT);
@@ -416,7 +419,7 @@
     let status = addLine('', 'line-sys');
     status.innerHTML = '<span class="st-text">Checking the catalog</span><span class="bounce" aria-hidden="true"><i></i><i></i><i></i></span>';
 
-    let raw = '', streaming = false, settled = false;
+    let raw = '', streaming = false, settled = false, basis = '';
     const scroll = () => scrollToLatest(false);
     scrollToLatest(true);   // asking always brings the chat back to the end
 
@@ -435,7 +438,7 @@
         const answer = text || 'I couldn’t produce an answer for that.';
         answerLine.innerHTML = window.renderMarkdown(answer);
         if (!asError) {
-          recordTurn(question, answer);
+          recordTurn(question, answer, basis);
           attachFeedback(answerLine, question, answer);
           if (window.Motion) Motion.celebrateOnce('first-answer', answerLine);
         }
@@ -472,7 +475,9 @@
         if (done) break;
         buf += decoder.decode(value, { stream: true });
         buf = drainSSE(buf, (name, data) => {
-          if (name === 'status') {
+          if (name === 'basis') {
+            basis = data;
+          } else if (name === 'status') {
             if (!streaming && status) status.querySelector('.st-text').textContent = data;
           } else if (name === 'token') {
             if (!streaming) { streaming = true; if (status) { status.remove(); status = null; } }

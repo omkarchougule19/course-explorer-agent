@@ -21,6 +21,7 @@ import asyncio
 import contextvars
 import html
 import json
+import logging
 import os
 import re
 import sys
@@ -239,9 +240,10 @@ HOW TO ANSWER
   '%computer science%'); if several match, name the likeliest by title and
   list the others, or ask which one - never pick one silently.
 - A conversation-history block may come before the question. Use it to
-  resolve references ("it", "the second one") and refinements ("which of
-  those are from CS?" = the earlier list with one more filter: rerun that
-  query with the filter added); never re-answer it.
+  resolve references ("the second one" = the second item listed in the
+  latest answer) and refinements ("which of those are from CS?" = the
+  earlier query with one filter added: rerun what the latest answer "came
+  from", keeping all its filters); never re-answer it.
 """.strip()
 
 
@@ -373,16 +375,54 @@ _QUESTION_LEVEL_RE = re.compile(r"\b([1-5])00\s*-?\s*level\b|\b([1-5])xx\b", re.
 _FILTERED_TABLES_RE = re.compile(r"\b(sections|meetings|prerequisites|gen_ed_categories)\b", re.IGNORECASE)
 
 
+_COURSE_WORDS = r"(?:courses?|classes|class|sections?|departments?|dept|majors?|electives?|offerings?)"
+
+
+@lru_cache(maxsize=1)
+def _department_name_patterns() -> tuple:
+    """(compiled pattern, code) for each department name in the subjects
+    table, plus the common abbreviations of its name ('psych', 'chem'). A
+    name only counts when the wording points at a department - followed by a
+    course word ("psychology sections") or after "intro"/"introduction to"
+    ("intro psychology") - because many names are ordinary words: "a
+    computing class for engineering students" is not the ENG department."""
+    from app.searchfields import _ABBREVIATIONS
+    try:
+        conn = db.get_readonly_connection()
+        try:
+            rows = conn.execute("SELECT code, name FROM subjects WHERE name IS NOT NULL").fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        return ()
+    by_word = {}
+    for abbr, full in _ABBREVIATIONS.items():
+        by_word.setdefault(full, []).append(abbr)
+    out = []
+    for r in rows:
+        name = re.sub(r"\s+", " ", r["name"].replace("--", " ")).strip().lower()
+        if len(name) < 5:
+            continue
+        forms = [re.escape(name)] + [re.escape(a) for a in by_word.get(name, []) if len(a) >= 4]
+        alt = "|".join(forms)
+        pat = re.compile(rf"\b(?:{alt})\s+{_COURSE_WORDS}\b|\b(?:intro|introductory|introduction to)\s+(?:{alt})\b",
+                         re.IGNORECASE)
+        out.append((pat, r["code"]))
+    return tuple(out)
+
+
 def _question_filters(question: str):
     """(subject codes, level digit) a question names: codes written before a
     course number ("cs225") or before a word like courses/classes/level ("1
-    credit CS courses"), kept only if they're real subject codes."""
+    credit CS courses"), kept only if they're real subject codes; and
+    department names written out ("intro psychology", "chemistry courses")."""
     try:
         _, newest = _subject_coverage()
     except Exception:
         newest = {}
     found = [m.upper() for m in _QUESTION_CODE_RE.findall(question or "")]
     found += [m.upper() for m in _QUESTION_SUBJECT_RE.findall(question or "")]
+    found += [code for pat, code in _department_name_patterns() if pat.search(question or "")]
     subjects = [s for s in dict.fromkeys(found) if s in newest]
     lm = _QUESTION_LEVEL_RE.search(question or "")
     level = (lm.group(1) or lm.group(2)) if lm else None
@@ -445,6 +485,22 @@ def _subjects_note(sql: str):
     return (f"[No rows. Find departments on search_text (code, name and college together): "
             f"SELECT code, name FROM subjects WHERE search_text LIKE '%{word}%'. This empty "
             "result says nothing about syncing.]")
+
+
+_SHORT_LIKE_RE = re.compile(r"\b(title_search|course_label|description)\s+I?LIKE\s+'%([a-z0-9]{1,3})%'",
+                            re.IGNORECASE)
+
+
+def _short_like_note(sql: str):
+    """A title/description search on a 1-3 letter fragment matches inside
+    other words: '%ai%' found "Tech and Advertising Campaigns" for "cs
+    courses with ai in it". Topics belong to course_content_search."""
+    m = _SHORT_LIKE_RE.search(sql)
+    if not m:
+        return None
+    return (f"[Check: LIKE '%{m.group(2)}%' matches inside other words. For a topic use "
+            "course_content_search; for a title, a whole word or its spelled-out form "
+            "('ai' -> 'artificial intelligence').]")
 
 
 _SEMESTER_EQ_RE = re.compile(r"\bsemester\s*(?:=|IN)\s*\(?\s*'", re.IGNORECASE)
@@ -565,7 +621,7 @@ class _CappedSQLDatabase(SQLDatabase):
         if isinstance(command, str):
             notes = [n for n in (_initial_note(command) if (result or "").strip() else None,
                                  _dropped_filter_note(command), _semester_note(command),
-                                 _term_note(command)) if n]
+                                 _term_note(command), _short_like_note(command)) if n]
             if notes:
                 result = "\n".join([result] + notes) if (result or "").strip() else "\n".join(notes)
         if log is not None and key:
@@ -779,12 +835,52 @@ def collapse_padding(text: str) -> str:
     return _DASH_RUN_RE.sub("---", _PAD_RUN_RE.sub(" ", text or ""))
 
 
+# Internal names a student should never see, and what they mean. Column
+# comparisons first ("grad_credit = 'yes'"), then bare names. Answers had
+# said "the subjects table" and "`grad_credit = 'yes'`".
+_INTERNAL_PHRASES = (
+    (r"`?\bgrad_credit\s*=\s*'yes'`?", "open to graduate students"),
+    (r"`?\bgrad_credit\s*=\s*'no'`?", "no graduate credit"),
+    (r"`?\bis_online\s*=\s*1`?", "online"),
+    (r"\bthe subjects table\b", "the department list"),
+    (r"\bsubjects table\b", "department list"),
+    (r"\bthe sections table\b", "the schedule"),
+    (r"\bthe meetings table\b", "the meeting times"),
+    (r"\bthe prerequisites table\b", "the prerequisite list"),
+    (r"\bthe academic_calendar table\b", "the academic calendar"),
+    (r"\bthe gen_ed_categories table\b", "the gen-ed list"),
+)
+_INTERNAL_WORDS = {
+    "title_search": "course titles", "instructor_last": "last name", "instructor_initial": "first initial",
+    "search_text": "department names", "credit_min": "minimum credit hours", "credit_max": "maximum credit hours",
+    "grad_credit": "graduate credit", "grad_min": "graduate credit hours", "grad_max": "graduate credit hours",
+    "start_min": "start time", "end_min": "end time", "is_online": "online", "course_label": "course title",
+    "enrollment_status": "enrollment status", "academic_calendar": "academic calendar",
+    "gen_ed_categories": "gen-ed list", "course_number": "course number",
+}
+_INTERNAL_WORD_RE = re.compile(r"`?\b(" + "|".join(_INTERNAL_WORDS) + r")\b`?")
+# Link targets the model mangles: "?/instructor.html", "https://instructor.html",
+# "instructor.html?..." without the slash, and the same for "?course=".
+_LINK_FIXES = (
+    (re.compile(r"\]\((?:\?|https?://)?/?instructor\.html\?"), "](/instructor.html?"),
+    (re.compile(r"\]\((?:https?://)?\?course="), "](/?course="),
+)
+
+
 def tidy_answer(text: str) -> str:
     """The final answer as shown to the student: HTML entities the model
     wrote decoded ("Programming Languages &amp; Compilers" showed the
     entity literally - the page's renderer escapes everything itself, so
-    decoding here is safe), padding runs squeezed, trailing space trimmed."""
-    return collapse_padding(html.unescape(text or "")).rstrip()
+    decoding here is safe), internal column/table names put in plain words,
+    mangled instructor/course link targets repaired, padding runs squeezed,
+    trailing space trimmed."""
+    out = html.unescape(text or "")
+    for pattern, plain in _INTERNAL_PHRASES:
+        out = re.sub(pattern, plain, out, flags=re.IGNORECASE)
+    out = _INTERNAL_WORD_RE.sub(lambda m: _INTERNAL_WORDS[m.group(1)], out)
+    for pattern, fixed in _LINK_FIXES:
+        out = pattern.sub(fixed, out)
+    return collapse_padding(out).rstrip()
 
 
 def _is_runaway(streamed: list) -> bool:
@@ -1672,6 +1768,12 @@ _HISTORY_A_CHARS = 250
 # from CS?", "give a description for each") needs the list it refers to.
 # 26 of 164 logged questions were follow-ups like that.
 _HISTORY_LAST_A_CHARS = 1200
+# The query (or tool call) the latest answer came from, sent back by the page
+# so "which of those are 3 credits?" can rerun it with one filter added
+# instead of rebuilding it from the answer text ("and which of those..."
+# lost the earlier list's level). Context only: any SQL the model then writes
+# still goes through sql_guard and the read-only role.
+_HISTORY_BASIS_CHARS = 600
 
 
 def _format_history(history) -> str:
@@ -1689,7 +1791,22 @@ def _format_history(history) -> str:
             lines.append(f"Student: {q}")
         if a:
             lines.append(f"Assistant: {a}")
+        basis = " ".join(str(turn.get("basis") or "").split())[:_HISTORY_BASIS_CHARS]
+        if basis and i == len(turns) - 1:
+            lines.append(f"(That answer came from: {basis})")
     return "\n".join(lines)
+
+
+def _answer_basis(cap) -> str:
+    """What the answer came from: the last SQL run, or else the last tool
+    call - sent to the page with the answer and back with the next question
+    (see _HISTORY_BASIS_CHARS)."""
+    if cap.queries:
+        return " ".join(cap.queries[-1].split())[:_HISTORY_BASIS_CHARS]
+    calls = [c for c in cap.tool_calls if not c["tool"].startswith("sql_db")]
+    if calls:
+        return f"{calls[-1]['tool']}({calls[-1]['input']})"[:_HISTORY_BASIS_CHARS]
+    return ""
 
 
 def build_agent_input(question: str, history=None) -> str:
@@ -1783,10 +1900,79 @@ def ask(question: str, verbose: bool = False, history=None, _model: str | None =
     return answer
 
 
+# --- "busy" notices while a provider client waits to retry -----------------
+# The Groq/OpenAI clients wait out a 429 themselves (honouring retry-after,
+# up to ~60 s per wait) and log "Retrying request to ... in N seconds" first.
+# Without a notice the page showed "Running SQL..." for a minute and looked
+# frozen. A log handler hands the line to the stream that is waiting - found
+# through a per-request context variable, so concurrent students never see
+# each other's notices - and the stream interleaves it as a status event.
+_NOTICE_TARGET: contextvars.ContextVar = contextvars.ContextVar("agent_notice_target", default=None)
+_RETRY_LOG_RE = re.compile(r"Retrying request to .* in ([\d.]+) seconds")
+
+
+class _RetryNotices(logging.Handler):
+    def emit(self, record):
+        target = _NOTICE_TARGET.get()
+        if not target:
+            return
+        m = _RETRY_LOG_RE.search(record.getMessage())
+        if not m:
+            return
+        loop, queue = target
+        secs = max(1, round(float(m.group(1))))
+        try:
+            loop.call_soon_threadsafe(queue.put_nowait,
+                                      f"Busy - waiting about {secs} s for the AI model…")
+        except RuntimeError:   # loop already closed
+            pass
+
+
+for _name in ("groq._base_client", "openai._base_client"):
+    _lg = logging.getLogger(_name)
+    if not any(isinstance(h, _RetryNotices) for h in _lg.handlers):
+        _lg.addHandler(_RetryNotices())
+    if _lg.level == logging.NOTSET or _lg.level > logging.INFO:
+        _lg.setLevel(logging.INFO)
+
+
+async def _with_notices(source, notices: "asyncio.Queue"):
+    """Merge an async iterator with a notice queue: yields ("event", item)
+    for each source item and ("notice", text) whenever a notice arrives,
+    even while the source is blocked (a client sleeping before a retry)."""
+    it = source.__aiter__()
+    next_item = asyncio.ensure_future(it.__anext__())
+    try:
+        while True:
+            next_note = asyncio.ensure_future(notices.get())
+            done, _ = await asyncio.wait({next_item, next_note}, return_when=asyncio.FIRST_COMPLETED)
+            if next_note in done:
+                yield "notice", next_note.result()
+            else:
+                next_note.cancel()
+            if next_item in done:
+                try:
+                    item = next_item.result()
+                except StopAsyncIteration:
+                    return
+                yield "event", item
+                next_item = asyncio.ensure_future(it.__anext__())
+    finally:
+        next_item.cancel()
+        aclose = getattr(it, "aclose", None)
+        if aclose:
+            try:
+                await aclose()
+            except Exception:  # noqa: BLE001 - closing a finished/cancelled stream
+                pass
+
+
 async def astream_answer(question: str, history=None, _model: str | None = None):
     """Async generator yielding (kind, text) tuples for the /ask/stream route:
 
-        ("status", label)  - the agent started a tool; show it as progress
+        ("status", label)  - the agent started a tool, or the model client is
+                             waiting out a rate limit; show it as progress
+        ("basis",  text)   - the query the answer came from, for follow-ups
         ("token",  delta)  - a piece of the answer text, as the LLM writes it
         ("done",   text)   - the authoritative full answer (or a setup/error
                              message); always emitted exactly once, last
@@ -1817,12 +2003,18 @@ async def astream_answer(question: str, history=None, _model: str | None = None)
     final: str | None = None
     tool_depth = 0
     new_query_log(q)
+    notices: asyncio.Queue = asyncio.Queue()
+    _NOTICE_TARGET.set((asyncio.get_running_loop(), notices))
     try:
-        async for ev in agent.astream_events(
+        async for source, ev in _with_notices(agent.astream_events(
             {"input": build_agent_input(q, history)},
             version="v2",
             config={"callbacks": [cap]},
-        ):
+        ), notices):
+            if source == "notice":
+                if not streamed:          # once text flows, a status would only flicker
+                    yield "status", ev
+                continue
             kind = ev.get("event")
             if kind == "on_tool_start":
                 tool_depth += 1
@@ -1877,6 +2069,9 @@ async def astream_answer(question: str, history=None, _model: str | None = None)
         if footer:
             yield "token", footer          # show it live in the UI
             answer += footer
+    basis = _answer_basis(cap)
+    if basis:
+        yield "basis", basis
     yield "done", answer
 
 

@@ -339,6 +339,13 @@ questions. Answers stream to the browser.
   to qwen, and failed again after 145 s; after: answered in ~70 s on Groq
   (two waits, 10 s and 52 s). Slow broad questions remain; the lever is fewer
   tokens per call.
+- **Waits are visible** (2026-10-03): while a client waits out a 429 the
+  stream shows "Busy - waiting about N s for the AI model..." (a log handler
+  on the clients' retry message, routed per request through a context
+  variable).
+- **Token cut rejected** (2026-10-03): trimming the per-call overhead by
+  ~15% cost ~2.5 points of answer-OK across four runs; the owner chose
+  accuracy. Lesson kept: a tool's description decides when the model uses it.
 - **429 failover on Groq (daily limits).** When the primary model's daily
   budget is spent, the question is retried once on `GROQ_FALLBACK_MODEL`
   (default `qwen/qwen3.8-27b`, `off` disables), which has its own daily
@@ -450,7 +457,12 @@ Rules that exist because something went wrong without them:
   initial match may be a different person, instructor questions are in
   scope); "aim for one query per step" (two-step questions need two); an
   empty lookup step means check the name or format before "no data";
-  history is for references and refinements. SCOPE names terms not in
+  history is for references and refinements; since 2026-10-03 the latest
+  turn carries the query its answer came from (the stream's "basis" event,
+  kept by the page and sent back), so a refinement reruns it with one filter
+  added. Final answers pass through tidy_answer, which also turns internal
+  column/table names into plain words and repairs mangled link targets.
+  SCOPE names terms not in
   the data and "is it too late to add/drop" as in scope (gpt-oss refused the
   first, gpt-4o-mini the second as a request to act). An empty result for a
   subject with no rows at all in the latest term comes back with a note

@@ -72,6 +72,21 @@ try:
 finally:
     agent._subject_coverage = real_cov
 
+# -- department names written out --------------------------------------------
+import re as _re
+real_pats = agent._department_name_patterns
+mk = lambda name, code: (_re.compile(rf"\b(?:{name})\s+{agent._COURSE_WORDS}\b|\b(?:intro|introductory|introduction to)\s+(?:{name})\b", _re.IGNORECASE), code)
+agent._department_name_patterns = lambda: (mk("psychology|psych", "PSYC"), mk("chemistry|chem", "CHEM"), mk("engineering", "ENG"))
+agent._subject_coverage = lambda: ("fall 2026", {s: "fall 2026" for s in ("PSYC", "CHEM", "ENG")})
+try:
+    check("'intro psychology sections' -> PSYC", "PSYC" in agent._question_filters("intro psychology sections that start after 10")[0])
+    check("abbreviation 'chem classes' -> CHEM", "CHEM" in agent._question_filters("any chem classes on fridays")[0])
+    check("'engineering students' is not the ENG department",
+          agent._question_filters("an intro to computing class for engineering students")[0] == [])
+finally:
+    agent._department_name_patterns = real_pats
+    agent._subject_coverage = real_cov
+
 # -- semester without year, joins without crn --------------------------------
 check("semester alone gets a note", bool(agent._semester_note("SELECT * FROM sections WHERE semester = 'fall'")))
 check("semester with year gets none",
@@ -127,6 +142,12 @@ check("other literals untouched", agent._normalize_name_literals("WHERE subject 
 check("text time comparison is caught", bool(agent._TIME_TEXT_CMP_RE.search("WHERE m.start_time > '02:00 PM'")))
 check("minute comparison is fine", not agent._TIME_TEXT_CMP_RE.search("WHERE m.start_min >= 840"))
 check("selecting the time text is fine", not agent._TIME_TEXT_CMP_RE.search("SELECT m.start_time, m.end_time FROM meetings m"))
+
+# -- short LIKE fragments ---------------------------------------------------
+check("a 2-letter title fragment gets a note",
+      "matches inside other words" in (agent._short_like_note("SELECT * FROM sections WHERE title_search LIKE '%ai%'") or ""))
+check("a whole word gets none",
+      agent._short_like_note("SELECT * FROM sections WHERE title_search LIKE '%intelligence%'") is None)
 
 # -- empty multi-word title searches ----------------------------------------
 n = agent._title_note("SELECT * FROM sections WHERE title_search LIKE '%intro psychology%'")
@@ -186,6 +207,19 @@ long = "CS 400 ... " * 100
 hist = agent._format_history([{"q": "a", "a": long}, {"q": "b", "a": long}])
 first, last = [l for l in hist.splitlines() if l.startswith("Assistant:")]
 check("older answers stay short, the latest is kept long", len(first) < 300 and len(last) > 1000)
+hist = agent._format_history([{"q": "a", "a": "x", "basis": "SELECT 1 FROM old"},
+                              {"q": "b", "a": "y", "basis": "SELECT DISTINCT subject FROM sections WHERE subject = 'CS'"}])
+check("the latest turn's basis is shown", "(That answer came from: SELECT DISTINCT subject FROM sections WHERE subject = 'CS')" in hist)
+check("older turns' bases are not", "SELECT 1 FROM old" not in hist)
+
+
+class _Cap:
+    queries, tool_calls = [], [{"tool": "course_content_search", "input": "{'query': 'ai'}"}]
+
+
+check("basis falls back to the last non-SQL tool call", agent._answer_basis(_Cap()) == "course_content_search({'query': 'ai'})")
+_Cap.queries = ["SELECT  a\n FROM sections"]
+check("basis prefers the last SQL, whitespace squeezed", agent._answer_basis(_Cap()) == "SELECT a FROM sections")
 
 print(f"\n{'all checks passed' if not failures else str(len(failures)) + ' FAILED'}")
 raise SystemExit(1 if failures else 0)

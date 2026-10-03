@@ -706,6 +706,8 @@ async def ask_agent_stream(payload: AskRequest, request: Request):
                     yield _sse("token", text)
                 elif kind == "status":
                     yield _sse("status", text)
+                elif kind == "basis":
+                    yield _sse("basis", text)
                 elif kind == "done":
                     final_text = text
                     yield _sse("done", text)
