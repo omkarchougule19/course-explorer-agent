@@ -215,10 +215,24 @@ expansion.
 
 ### Streaming and conversation
 
-`POST /ask/stream` emits SSE frames: `status`, `token`, one final `done`, or
-`error`. LLM calls made inside a tool are never streamed. The browser keeps up
-to 10 turns in `sessionStorage` and sends the last 3; the server re-trims them
-(question 200 chars, answer 250).
+`POST /ask/stream` emits SSE frames: `status`, `token`, `basis`, one final
+`done`, or `error`. LLM calls made inside a tool are never streamed. A
+`status` also comes while a provider client waits out a 429 ("Busy - waiting
+about N s for the AI model…"): a log handler on the client's "Retrying
+request … in N seconds" line hands it, through a per-request context
+variable, to the stream that is waiting. `basis` is what the answer came from
+(the last SQL run, or the last tool call), at most 600 chars.
+
+The browser keeps up to 10 turns in `sessionStorage` (each `{q, a, basis}`)
+and sends the last 3; the server re-trims them (question 200 chars, answer
+250, the latest answer 1,200) and shows the latest turn's basis as "(That
+answer came from: …)", so a refinement reruns that query with one filter
+added and "the second one" means the second item listed.
+
+Final answers pass through `tidy_answer`: HTML entities unescaped, internal
+column and table names turned into plain words ("grad_credit" -> "graduate
+credit", "the subjects table" -> "the department list"), mangled link targets
+repaired, runaway table padding collapsed.
 
 ### Providers and failover
 
@@ -395,7 +409,11 @@ recipe: [`../DEPLOYMENT_v2.md`](../DEPLOYMENT_v2.md).
 - **Cold starts.** The free instance sleeps when idle; the first visit after
   that waits for Render plus about 2 s of app startup (open plan item).
 - **Answer speed on Groq's free tier.** Per-minute token limits make
-  multi-step questions and simultaneous users slow.
+  multi-step questions and simultaneous users slow (1-3 minutes for broad
+  questions; the page now shows each wait).
+- **Empty final answers.** On some long Groq runs the model's last message
+  is empty after its tools ran, and the student gets "I couldn't produce an
+  answer for that." (logged as answered). Open; fix proposed in plan item 35.
 - **Grades and instructor rankings are empty** until the upstream datasets
   publish terms inside the window; the assistant says so.
 - **Fall 2026 coverage is partial**: 84 of 191 subjects synced so far.

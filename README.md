@@ -30,9 +30,11 @@ pgvector · self-hosted embeddings · sqlglot · Server-Sent Events · Render.
   used and how fresh they are, built by parsing the SQL the agent actually ran
   (no extra model call).
 - **Streams, with memory.** Answers arrive token by token over SSE with live
-  status labels ("Running SQL…"). The chat survives moving between pages; the
-  server is stateless and uses the last few turns only so "that course"
-  resolves.
+  status labels ("Running SQL…", and "Busy - waiting about N s" while the
+  model's rate limit is waited out). The chat survives moving between pages;
+  the server is stateless and uses the last few turns, plus the query the
+  latest answer came from, so "that course" resolves and "which of those are
+  online?" reruns the same search with one filter added.
 - **Wider than chat.** Prerequisites (parsed from free text), the academic
   calendar, grade trends, a schedule builder with conflict checks, and
   "No 8ams / Done by 5 / No Fridays" filters that never touch the LLM.

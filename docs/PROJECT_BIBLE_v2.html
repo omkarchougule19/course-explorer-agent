@@ -304,7 +304,7 @@
 
   <h2 id="agent">8. The agent in detail (<code>agent.py</code>)</h2>
   <ul class="plain">
-    <li><b>Provider by key:</b> <code>GROQ_API_KEY</code>, then <code>OPENAI_API_KEY</code>; <code>LLM_PROVIDER</code> forces one. Production: Groq <code>openai/gpt-oss-120b</code>, with one retry on <code>qwen/qwen3.8-27b</code> after a rate limit (before any answer text is streamed).</li>
+    <li><b>Provider by key:</b> <code>GROQ_API_KEY</code>, then <code>OPENAI_API_KEY</code>; <code>LLM_PROVIDER</code> forces one. Production: Groq <code>openai/gpt-oss-120b</code>, a per-minute 429 is waited out in place (up to <code>GROQ_MAX_RETRIES</code>=6, with a "Busy - waiting about N s" status on the page); a daily-limit 429 retries once on <code>qwen/qwen3.8-27b</code> (before any answer text is streamed).</li>
     <li><b>Budget:</b> Groq's free tier caps about 200K tokens per day per model and 8,000 per minute, shared by production, development and evals. The prompt (~2,200 tokens) is re-sent every step, so steps are capped at 6 and any tool result at 6,000 characters.</li>
     <li><b>The prompt</b> is organized as scope, how to query, tables, how to answer, and live DATA NOTES; it has fixed sentences for refusals and missing data so both are recognizable. It scored 89.7% answer-OK on 29 questions against the live database (62.1% for the previous version).</li>
     <li><b>SQL access is sandboxed</b> by the guard and the role (section 11), not just by the prompt.</li>
@@ -374,7 +374,8 @@
   <h2 id="limits">13. Known limitations</h2>
   <ul class="plain">
     <li>Cold starts: the free instance sleeps; the first visit waits for Render plus about 2 s of app startup.</li>
-    <li>Groq's free per-minute token limit makes multi-step questions and simultaneous users slow (4-56 s observed).</li>
+    <li>Groq's free per-minute token limit makes multi-step questions and simultaneous users slow (broad questions 1-3 minutes; the page shows "Busy - waiting about N s" during each wait).</li>
+    <li>On some long Groq runs the model's final message is empty and the student gets "I couldn't produce an answer for that." (open, plan item 35).</li>
     <li>Grades and instructor rankings are empty until upstream publishes terms in the window.</li>
     <li>Fall 2026 is synced for 84 of 191 subjects.</li>
     <li>Fall 2026 enrollment status is only a scheduling code; no term has seat counts.</li>

@@ -178,11 +178,11 @@
 
   <h2>4. How a question is answered</h2>
   <ol class="flow">
-    <li><span class="n">1</span><b>Browser → <code>POST /ask/stream</code></b> — sends <code>{ question, history }</code>. The chat is kept in the tab's <code>sessionStorage</code>; <code>history</code> is its last 3 turns.</li>
+    <li><span class="n">1</span><b>Browser → <code>POST /ask/stream</code></b> — sends <code>{ question, history }</code>. The chat is kept in the tab's <code>sessionStorage</code>; <code>history</code> is its last 3 turns, each <code>{ q, a, basis }</code> (basis = the query the answer came from).</li>
     <li><span class="n">2</span><b>Cheap refusals first</b> — a body over 256 KB gets 413; if the concurrency ceiling is full (2 in production) the request gets an immediate 503 "busy".</li>
     <li><span class="n">3</span><b>Guardrails, with a reserved slot</b> — a question over 500 characters is rejected; otherwise a <code>pending</code> row is written to <code>ask_log</code> <i>before</i> any model call, and the shared daily cap (250) and per-IP limits (10/hour, 60/day) are checked by counting rows in reservation order. Parallel requests therefore can't all slip past on one count. Blocked → a plain JSON error, no stream.</li>
-    <li><span class="n">4</span><b>Build the agent input</b> — the trimmed history (question ≤ 200 chars, answer ≤ 250) is prepended as "context only, do not re-answer". The system prompt carries the schema, the house rules and live DATA NOTES (current year, terms in the data, which terms have unpublished registration, which tables are empty).</li>
-    <li><span class="n">5</span><b>The agent picks a tool</b> — a LangChain tool-calling agent on Groq <code>openai/gpt-oss-120b</code> (one retry on <code>qwen/qwen3.8-27b</code> after a rate limit). One of three tools per question:
+    <li><span class="n">4</span><b>Build the agent input</b> — the trimmed history (question ≤ 200 chars, answer ≤ 250, the latest answer ≤ 1,200, plus "(That answer came from: …)" for the latest turn) is prepended as "context only, do not re-answer"; a refinement reruns that query with one filter added. The system prompt carries the schema, the house rules and live DATA NOTES (current year, terms in the data, which terms have unpublished registration, which tables are empty).</li>
+    <li><span class="n">5</span><b>The agent picks a tool</b> — a LangChain tool-calling agent on Groq <code>openai/gpt-oss-120b</code> (a per-minute 429 is waited out in place, up to 6 times, with a "Busy - waiting about N s" status on the page; a daily-limit 429 retries once on <code>qwen/qwen3.8-27b</code>). One of three tools per question:
       <div class="split">
         <div class="branch sql">
           <h4>sql_db_query</h4>
@@ -201,7 +201,7 @@
         </div>
       </div>
     </li>
-    <li><span class="n">6</span><b>Generate, cite and stream</b> — the answer streams back as Server-Sent Events (<code>status</code> → <code>token</code> → <code>done</code>). If it answered, a footer names the datasets the executed SQL touched and each subject's last sync. The reserved <code>ask_log</code> row is rewritten to the real outcome and latency, and the concurrency slot is released.</li>
+    <li><span class="n">6</span><b>Generate, cite and stream</b> — the answer streams back as Server-Sent Events (<code>status</code> → <code>token</code> → <code>basis</code> → <code>done</code>); the final text passes through <code>tidy_answer</code> (internal names in plain words, link targets repaired). If it answered, a footer names the datasets the executed SQL touched and each subject's last sync. The reserved <code>ask_log</code> row is rewritten to the real outcome and latency, and the concurrency slot is released.</li>
   </ol>
 
   <h2>5. Keeping model-written SQL safe</h2>

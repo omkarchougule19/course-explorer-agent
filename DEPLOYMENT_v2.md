@@ -316,7 +316,9 @@ few targeted questions on Groq.
 ### 5.1 What's enforced on `/ask` (and `/ask/stream`)
 
 The site calls `POST /ask/stream` (Server-Sent Events: live "Running SQL…"
-status, then the answer token by token, then its sources). `POST /ask` is the
+status - or "Busy - waiting about N s" during a rate-limit wait - then the
+answer token by token, then its sources, the query it came from, and the
+final answer). `POST /ask` is the
 non-streaming JSON fallback. Both run the same checks, in this order, before
 any model call; a blocked stream request gets a normal JSON error.
 
