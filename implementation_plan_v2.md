@@ -734,6 +734,27 @@ because other docs cite them.
   the production key says so once. The dev key must come from a different
   Groq account - limits are per organization. Not yet created by the owner,
   so nothing changes until it is.
+- **"That question pulled in more data than I can read" in production,
+  2026-10-10 (rows 456, 457: "grad courses in badm", "grad course related to
+  business in badm"), on the backup model.** Cause: the data budget assumed
+  the primary's ceiling for every model. The backup (qwen) allows 7,000
+  input tokens a minute, counted in its own tokenizer (~13% more tokens for
+  the same text: 5,224 for a bare question against 4,631), and 1,000 output
+  tokens a minute; a request whose expected reply is larger is refused
+  outright, and that expectation follows recent replies (after one
+  1,141-token answer the next question was refused before it started).
+  **Done on branch `backup-model-budget`:** a ceiling per model
+  (`_MODEL_REQUEST_LIMITS`); the backup's replies capped at 900 tokens; and,
+  for every model, once an answer's data budget is used up a further tool
+  call returns "answer now from what you have" instead of a few more rows
+  (the model had the full list after one query, ran two more, and the extras
+  took the request to 7,055 of 7,000). Re-tested on the backup model: both
+  questions answer (largest request 6,570 tokens); the long list is cut at
+  the 900-token reply cap and says it is partial. Room for data on the
+  backup is ~960 tokens, against ~1,470 on the primary - it cannot be
+  raised on the free tier; the fixed prompt and tools are 5,200 of its
+  7,000. Not fixed: "grad course in IS" on the backup still echoes the
+  opening line (reported as no answer).
 - **Confirmation eval (`163526Z`): answer-OK 98.2%**, result-match 95.5%
   loose, refusals and no-data 100%, no raw columns; misses q28 and q64 only
   (2 of 12 and 5 of 12 in baseline runs). Latency 3.0 s, tokens 1.03M.

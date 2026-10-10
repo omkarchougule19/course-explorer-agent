@@ -361,10 +361,25 @@ def _fixed_request_tokens() -> int:
     return int(prose / _PROSE_OVERCOUNT) + _TOOL_DEF_TOKENS * _TOOL_TEXT["count"]
 
 
-def _start_data_budget(agent_input: str = "") -> None:
+# Models whose ceiling is not the default (8,000 tokens a minute, counted as
+# input plus a reply allowance). The backup model, qwen, allows 7,000 INPUT
+# tokens a minute and counts them with its own tokenizer, which makes ~13%
+# more tokens of the same text (prompt and tools: 5,218 against 4,650); its
+# reply is limited separately. Budgeted as if it had the primary's ceiling,
+# it was sent requests it refuses: in production on 2026-10-10, with the
+# primary's daily limit spent, "grad courses in badm" and "grad course
+# related to business in badm" both ended in "That question pulled in more
+# data than I can read at once".
+_MODEL_REQUEST_LIMITS = {
+    "qwen/qwen3.8-27b": {"limit": 7000, "reply": 0, "scale": 1.13, "margin": 400, "max_output": 900},
+}
+
+
+def _start_data_budget(agent_input: str = "", model: str | None = None) -> None:
     """Set how many tokens of tool results this answer may hold: the request
-    limit minus the reply allowance and what every request carries anyway
-    (prompt, tool definitions, the question and its history)."""
+    ceiling of the model that is answering (`model`, or the primary), minus
+    the reply allowance and what every request carries anyway (prompt, tool
+    definitions, the question and its history)."""
     limit = _request_token_limit()
     if not limit:
         _DATA_BUDGET.set(None)
@@ -374,7 +389,10 @@ def _start_data_budget(agent_input: str = "") -> None:
     except Exception:
         _DATA_BUDGET.set(None)
         return
-    room = limit - _REPLY_RESERVE_TOKENS - fixed - _est_tokens(agent_input)
+    spec = {} if os.environ.get("LLM_REQUEST_TOKEN_LIMIT", "").strip() else \
+        _MODEL_REQUEST_LIMITS.get(model or _groq_primary_model(), {})
+    room = (int(spec.get("limit", limit) / spec.get("scale", 1.0)) - spec.get("reply", _REPLY_RESERVE_TOKENS)
+            - spec.get("margin", 0) - fixed - _est_tokens(agent_input))
     _DATA_BUDGET.set({"left": max(room, _MIN_ANSWER_DATA_TOKENS)})
 
 
@@ -397,10 +415,29 @@ def _spend(text) -> None:
         budget["left"] -= _est_tokens(text) + 40   # + the tool call that asked for it
 
 
+BUDGET_SPENT = ("[No room left for more data in this answer - nothing was run. Answer now from the "
+                "results you already have, and say plainly what you could not check.]")
+
+
+def _budget_spent() -> bool:
+    """True once this answer's data budget is used up. From then on a tool
+    call returns BUDGET_SPENT instead of data. Handing back "a few rows"
+    each time did not hold the line: on the backup model, "grad course
+    related to business in badm" had the full list after one query, ran two
+    more, and the small results plus the tool-call messages took the request
+    to 7,055 of 7,000 tokens - refused, and the student got an error instead
+    of the list it already had."""
+    budget = _DATA_BUDGET.get()
+    return budget is not None and budget["left"] <= 0
+
+
 def fit_budget(text: str) -> str:
     """A non-SQL tool's result cut to the room left in this answer (at a
     paragraph or line break), with a note, and charged to the budget. SQL
     results are cut in _CappedSQLDatabase, which keeps whole rows."""
+    if _budget_spent():
+        _spend(BUDGET_SPENT)
+        return BUDGET_SPENT
     room = _data_room(text)
     if room is not None and isinstance(text, str) and len(text) > room:
         head = text[:room]
@@ -534,7 +571,7 @@ def _note_tool_call() -> int:
     return state["tool_calls"] - 1
 
 
-def new_query_log(question: str = "", agent_input: str = "") -> None:
+def new_query_log(question: str = "", agent_input: str = "", model: str | None = None) -> None:
     """Start a fresh per-answer context: the repeat-query log, the question
     the checks below compare queries against, the tool-call count and the
     data budget (agent_input is the question with its history, as sent to
@@ -542,7 +579,7 @@ def new_query_log(question: str = "", agent_input: str = "") -> None:
     _QUERY_LOG.set({})
     _QUESTION.set(question or "")
     _ANSWER.set({"tool_calls": 0, "direct": None})
-    _start_data_budget(agent_input or question)
+    _start_data_budget(agent_input or question, model)
 
 
 @lru_cache(maxsize=1)
@@ -847,6 +884,9 @@ class _CappedSQLDatabase(SQLDatabase):
         # include_tables. The error subclasses SQLAlchemyError so the toolkit's
         # run_no_throw hands the reason back to the model as a tool error.
         _note_tool_call()   # rejected and repeated queries count too
+        if _budget_spent():
+            _spend(BUDGET_SPENT)
+            return BUDGET_SPENT
         log = _QUERY_LOG.get()
         key = " ".join(command.split()) if isinstance(command, str) else None
         if log is not None and key in log:
@@ -1161,15 +1201,24 @@ def _build_llm(streaming: bool = False, model: str | None = None, fallback: bool
                    lambda: _new_llm(streaming=streaming, model=model, fallback=fallback))
 
 
-def _max_tokens() -> int:
+def _max_tokens(model: str | None = None) -> int:
     """Output cap per LLM call. A normal answer is under ~1,600 output
     tokens (eval p99: 762); without a cap, gpt-4o-mini once padded a Markdown
     table header with 2 million spaces (16,384 tokens, 136 s) before stopping.
-    Generous enough for gpt-oss's reasoning tokens, which count against it."""
+    Generous enough for gpt-oss's reasoning tokens, which count against it.
+
+    Lower for a model with its own output ceiling (_MODEL_REQUEST_LIMITS):
+    the backup allows 1,000 output tokens a minute and refuses outright any
+    request whose expected reply is larger - and its expectation follows
+    recent replies, so after one 1,141-token answer the next question was
+    refused before it started ("expected output tokens exceed the enforced
+    limit; reduce max_tokens"). Capped below the ceiling, a long list is cut
+    short instead of every following question failing."""
     try:
-        return max(256, int(os.environ.get("LLM_MAX_TOKENS", "4000")))
+        cap = max(256, int(os.environ.get("LLM_MAX_TOKENS", "4000")))
     except ValueError:
-        return 4000
+        cap = 4000
+    return min(cap, _MODEL_REQUEST_LIMITS.get(model or "", {}).get("max_output", cap))
 
 
 _PAD_RUN_RE = re.compile(r"[ \t]{4,}")
@@ -1277,7 +1326,7 @@ def _new_llm(streaming: bool = False, model: str | None = None, fallback: bool =
         _groq_key(warn=True)   # a Groq client is being built: say once if it is on production's key
         name = model or _groq_primary_model()
         primary = ChatGroq(model=name, temperature=0, api_key=groq_key, streaming=streaming,
-                           max_tokens=_max_tokens(), max_retries=_groq_max_retries())
+                           max_tokens=_max_tokens(name), max_retries=_groq_max_retries())
         # Groq's daily token cap is per model, so a 429 on the primary can be
         # answered by a different model on the same key. This wrapper only
         # suits callers that .invoke() the model (the SQL pipeline, RAG query
@@ -1287,7 +1336,7 @@ def _new_llm(streaming: bool = False, model: str | None = None, fallback: bool =
         if backup_name:
             import groq
             backup = ChatGroq(model=backup_name, temperature=0, api_key=groq_key,
-                              streaming=streaming, max_tokens=_max_tokens(),
+                              streaming=streaming, max_tokens=_max_tokens(backup_name),
                               max_retries=_groq_max_retries())
             return (primary.with_fallbacks([backup], exceptions_to_handle=(groq.RateLimitError,)),
                     "Groq")
@@ -2575,7 +2624,7 @@ def ask(question: str, verbose: bool = False, history=None, _model: str | None =
 
     cap = SQLCapture()
     agent_input = build_agent_input(question, history)
-    new_query_log(question, agent_input)
+    new_query_log(question, agent_input, _model)
     try:
         result = agent.invoke(
             {"input": agent_input},
@@ -2696,7 +2745,7 @@ async def astream_answer(question: str, history=None, _model: str | None = None)
     final: str | None = None
     tool_depth = 0
     agent_input = build_agent_input(q, history)
-    new_query_log(q, agent_input)
+    new_query_log(q, agent_input, _model)
     notices: asyncio.Queue = asyncio.Queue()
     _NOTICE_TARGET.set((asyncio.get_running_loop(), notices))
     try:
