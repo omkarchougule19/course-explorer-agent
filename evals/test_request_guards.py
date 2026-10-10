@@ -148,6 +148,57 @@ check("stream gets a fast 503 when all slots are busy", r.status_code == 503)
 api._ask_slots = threading.BoundedSemaphore(4)
 clear_log()
 
+# a browser that goes away mid-answer (the student retypes during a long wait)
+# must not leave its row `pending`: that row counts against the rate limits.
+# Production rows 440 and 444 (2026-10-10) were left that way.
+import asyncio  # noqa: E402
+import json as _json  # noqa: E402
+
+
+async def slow_stream(question, history=None, _model=None):
+    yield "status", "Running SQL…"
+    await asyncio.sleep(30)
+    yield "done", "never reached"
+
+
+async def ask_then_disconnect():
+    body = _json.dumps({"question": "days?"}).encode()
+    got_chunk, state = asyncio.Event(), {"sent_body": False}
+
+    async def receive():
+        if not state["sent_body"]:
+            state["sent_body"] = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        await got_chunk.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        if message["type"] == "http.response.body" and message.get("body"):
+            got_chunk.set()
+
+    scope = {"type": "http", "asgi": {"version": "3.0", "spec_version": "2.3"}, "http_version": "1.1",
+             "method": "POST", "path": "/ask/stream", "raw_path": b"/ask/stream", "query_string": b"",
+             "root_path": "", "scheme": "http", "client": ("9.9.9.9", 1234), "server": ("testserver", 80),
+             "headers": [(b"content-type", b"application/json"), (b"host", b"testserver"),
+                         (b"content-length", str(len(body)).encode())]}
+    await asyncio.wait_for(api.app(scope, receive, send), timeout=10)
+
+
+agent.astream_answer = slow_stream
+asyncio.run(ask_then_disconnect())
+time.sleep(0.3)
+o = outcomes()
+check(f"a stream the browser dropped is logged as cancelled, not left pending ({o})", o == {"cancelled": 1})
+got = [api._ask_slots.acquire(blocking=False) for _ in range(4)]
+check("... and its permit was released", all(got))
+for g in got:
+    if g:
+        api._ask_slots.release()
+check("a cancelled question still counts toward the limits (a model call was started)",
+      "'cancelled'" in ask_log_mod._SPENDING)
+agent.astream_answer = fake_stream
+clear_log()
+
 # 3. no exception text in responses
 real_get_connection = db.get_connection
 db.get_connection = lambda *a, **k: (_ for _ in ()).throw(

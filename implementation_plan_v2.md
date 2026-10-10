@@ -549,6 +549,156 @@ because other docs cite them.
   question and the tool results already gathered; and classify the fallback
   text as a failure, not an answer.
 
+### 36. Request too large on broad questions; whole-department questions — `done locally 2026-10-09, eval and deploy pending`
+- **Problem:** in production "tell me about badm sections" failed after 66 s
+  with the generic error. Reproduced locally: Groq 413 "Request too large ...
+  Limit 8000, Requested 8728" on the third agent step - the prompt, the
+  history and two broad results no longer fitted in one request. Not a
+  comprehension failure: the first query already filtered subject = 'BADM'.
+  Without history the same question took 158 s and four queries and answered
+  with a count per term. Same session: "sections of bad," -> "BAD does not
+  exist"; "badm i mean" and one later question left `pending`; "try again"
+  re-answered an earlier CS 225 question.
+- **Done (general, each covers a class):**
+  - a data budget per answer in estimated tokens, with room kept for the
+    reply (`_start_data_budget`, `fit_budget`, `_CappedSQLDatabase._capped`;
+    `LLM_REQUEST_TOKEN_LIMIT`) - applies to every question and every tool;
+  - a `department_overview` tool for whole-department and whole-college
+    questions, and a [Check] note that steers a cut-off whole-department
+    SQL listing to it;
+  - closest real codes for a department code that doesn't exist;
+  - a 413 is reported as "pulled in more data than I can read at once" and
+    tagged `error`.
+- **Done (narrower - prompt wording):** one sentence saying a correction or
+  retry ("badm i mean", "try again") is the latest question asked again.
+- **Done, same day - more room in the same limit:** query results as a
+  header line and "|"-separated rows (18-26% fewer tokens for the same rows,
+  exact counts); history sent back without link targets, table rules, bold
+  and the Sources footer, and capped at 700 characters when its query came
+  with it (674 -> 429 tokens on the logged session). The token estimate was
+  re-tuned against exact counts after Groq's count turned out to equal the
+  o200k tokenizer's; the first version undercounted the new layout by ~10%.
+  All offline-verified only: both change what the model reads, so they are
+  part of the same eval run.
+- **Checked:** offline suites pass, including the new
+  `evals/test_department_overview.py` and the budget checks in
+  `evals/test_agent_guards.py`. Live on Groq: "show me sections under badm"
+  -> one `department_overview` call, 50 s, all 70 fall 2026 courses with
+  section counts (before: 158 s, four queries). The with-history question
+  stayed at 6,557 input tokens over four steps (before: refused at 8,728),
+  then hit the daily token limit (200K) before its final step - the testing
+  for this item used up the day's budget on the primary model.
+- **Done, same day - one model call for whole-department answers:**
+  `department_overview` returns its text as the answer (`return_direct`).
+  Live through `/ask/stream`'s generator: "show me sections under badm" in
+  5.7 s with all 70 fall 2026 courses; "Who teaches CS 225 this fall?" still
+  answers through SQL. Found while doing it: the stream never matched the
+  agent executor's end event (wrong name), so answers came only from
+  streamed tokens; fixed, which also lets the iteration-cap message through.
+  This may be part of the "empty final answer" finding in item 35 - not
+  confirmed.
+- **Measured, not acted on - daily capacity:** a two-step question is now
+  ~9,600 tokens (4,631 + 4,709 input), so Groq's 200K tokens/day is about 20
+  questions on the primary model before failover, not the 80-100 the comment
+  in `_new_llm` gives (that dates from ~2,750 tokens per call).
+- **Local environment:** `langchain-google-genai`, `google-genai` and
+  `google-auth` (left from the Gemini support removed 2026-09-28) were
+  uninstalled from the local `.venv`; they were never in `requirements.txt`,
+  so Render was not installing them.
+- **Done, same day - four latent bugs found by reading the pipeline:**
+  - *Dropped streams left `pending` rows.* When the browser went away
+    mid-answer the stream was cancelled, and in a cancelled task the
+    `ask_log.finish()` await never ran; the row stayed `pending` and counted
+    against the rate limits. Reproduced with a raw ASGI disconnect
+    (`evals/test_request_guards.py`), then fixed with a shielded write and a
+    new `cancelled` outcome (still counted: a model call was started).
+  - *Yesterday's date in the prompt.* DATA NOTES ("Today is ...") and the
+    agent built from them were cached for the life of the process; they are
+    now cached per day. Deadline questions depend on that date.
+  - *The empty-answer fallback was logged as an answer* (item 35's finding):
+    it is now an error marker, so it isn't charged to the rate limit and
+    gets no Sources footer. The cause of the empty final message is still
+    open.
+  - *The eval harness sized the data budget from the question alone*, not
+    the question plus history as production does.
+- **Done, same day - two more:**
+  - *Sync status was cached until restart.* Which departments are synced for
+    which term, department names, DATA NOTES (with the agents built from
+    them) and the Sources footer's sync dates were cached for the life of
+    the process, so after a sync the assistant went on saying "not synced
+    yet". `refresh_catalog_caches()` now compares the newest scrape time and
+    row count of `sections` at most every `CATALOG_CHECK_SECONDS` (600) and
+    drops those caches when it changes; called from `build_agent`, off the
+    event loop. One small query (24 ms on an open connection).
+  - *Only the first code of `subject IN (...)` was read.*
+    `sql_guard.subject_codes()` returns every code (also `s.subject`,
+    `UPPER(subject)`), used by the unsynced note, the latest-term rerun, the
+    unknown-department note, the whole-department note and the Sources
+    footer. On the live data a Gies-wide fall 2026 query now gets "FIN, MBA
+    has no fall 2026 rows"; before, it read ACCY alone and said nothing.
+- **Eval run 2026-10-10** (`20261010T150017Z`, prod arm, OpenAI, Neon, 111
+  questions; the data budget is off on OpenAI, so it is not exercised):
+  answer-OK 95.5% (baseline runs 94.6-98.2%), result-match 86.4% loose
+  (81.8-90.9%), refusals and no-data 100%. The five misses (q12, q28, q40,
+  q64, q68) all also fail in baseline runs. Average latency 3.2 s (3.9-4.9 s);
+  tokens 1.07M (0.83-0.99M), tool calls 130 (110-125).
+  **Two regressions the scorer did not catch, found by reading answers:**
+  - *The direct overview answered a question it shouldn't have.* q74 ("no
+    class before 10am, which intro psychology sections would work") ran a
+    rejected SQL query, then called `department_overview('PSYC')`, whose
+    table became the answer - a course list for summer 2026, not sections by
+    time. Scored OK. Also q35, q44, q78 (drop / credit questions) called it
+    alongside `course_facts`; with two calls in one step the direct return
+    doesn't fire, so those answers were right but carried a ~100-course list
+    for nothing (part of the token rise).
+  - *The "|" result layout is copied into answers as a table.* q40 and q98
+    showed raw column names as headers (year | semester | subject ...), q40
+    with start/end as minutes (720 | 770). None of the six baseline runs
+    did either.
+  Not deployable as is. Open: make the direct return conditional (first and
+  only tool call) or drop it; change the row delimiter to one that doesn't
+  read as a Markdown table.
+- **Three more full runs the same day, and the outcome:**
+  - Run 2 (`151427Z`; direct answer only as the first and only tool call;
+    tab-separated rows with a header): 95.5%. q74 answered properly. q40 and
+    q98 still showed raw columns - they now selected every column and listed
+    them under the column names. q30 (ECE, unsynced fall) missed: right in
+    substance, without the no-data wording.
+  - Run 3 (`152527Z`; header line removed, unsynced wording fixed): 95.5%,
+    no raw columns, q30 passes. But six repeats of q98 were right only 2
+    times: same correct query, rows misread ("there are none").
+  - Tuples restored as the default (`SQL_RESULT_LAYOUT=tabs` opts in): q98
+    right 7 times in 8, q74 8 in 8, q40 1 in 8 (it is 5 of 12 in baseline
+    runs).
+  - **Final run (`155455Z`, tuples): answer-OK 96.4%** (twelve baseline runs:
+    91.9-98.2%, median 95.5%), result-match 90.9% loose, refusals and
+    no-data 100%, no raw columns or minutes in any answer, average latency
+    2.9 s (3.7-4.9 s), tokens 1.06M (0.82-0.99M), tool calls 124 (108-128).
+    Misses: q28, q40, q64 (fail in most baseline runs) and q39 (12 of 12 in
+    baseline; 8 of 8 on repeat, so run-to-run variance). The overview
+    answered directly twice, both whole-department questions (q30, q100).
+  - **Still open:** the model calls `department_overview` beside
+    `course_facts` on drop / credit questions (q35, q44, q78) and after SQL
+    on q74 - answers right, tokens wasted (the ~8% token rise). The data
+    budget is not exercised by this eval (it is off on OpenAI); it was
+    checked live on Groq on 2026-10-09. Live Groq checks of "sections of
+    bad," and "badm i mean" are still owed.
+- **Not yet done - before deploying:** (1) the eval run. This adds a tool
+  and ~260 prompt/tool tokens per call, and item 34 showed tool and prompt
+  text move answer-OK by points; it needs the usual full run against the
+  98.2% / 95.5% baseline. (2) Live checks that could not be run after the
+  daily limit: the with-history question to its final answer (after the
+  [Check] note was added), "what courses are offered by gies", "sections of
+  bad,", "badm i mean" as a follow-up. (3) eval rows for the class.
+- **Still open, not addressed here:** every agent step re-sends ~4,630
+  tokens against 8,000 a minute, so any question with more than one step
+  waits ~30-60 s per extra step. The budget stops the failure, not the wait;
+  the levers are a provider tier or model with a higher per-minute limit, or
+  a smaller prompt (item 34 tried that and lost ~2.5 points). Rows left
+  `pending` when the browser drops a stream (ids 440, 444): the stream's
+  cleanup doesn't write the outcome when the request is cancelled, and a
+  `pending` row counts against the rate limit.
+
 ### 22. Compress responses — `todo`
 - **Problem:** nothing is gzipped: the home page is 137 KB raw vs 42.8 KB
   gzipped; `/sections?subject=CS` 44 KB and `/freshness` 45 KB of JSON.

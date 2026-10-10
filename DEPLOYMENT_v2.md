@@ -125,6 +125,9 @@ python -m app.sync_requests --list     # lists every department (191 today) with
 | `GROQ_MAX_RETRIES` | no (6) | Retries on a Groq 429, each waiting Groq's retry-after; covers the 8K tokens/minute limit. |
 | `LLM_MAX_TOKENS` | no (4000) | Output cap per LLM call (reasoning tokens included); stops a runaway answer. |
 | `MAX_QUERY_RESULT_CHARS` | no (6000) | A single SQL result sent back to the model is cut here, with a note to narrow the query. |
+| `CATALOG_CHECK_SECONDS` | no (600) | How often the assistant checks whether the catalog changed (a department was synced) and, if so, drops what it had cached about it: sync status per department, the prompt's DATA NOTES, the Sources footer's sync dates. |
+| `SQL_RESULT_LAYOUT` | no (tuples) | `tabs` shows query rows to the model one per line, tab-separated: 23-25% fewer tokens, but the model read them worse in the 2026-10-10 evals. Leave unset. |
+| `LLM_REQUEST_TOKEN_LIMIT` | no (8000 on Groq, none on OpenAI) | The most tokens one LLM request may hold. All tool results of one answer share what is left after the prompt, history and a reply allowance, so a request is never refused as too large (Groq 413). `0` turns it off, e.g. on a paid tier. |
 | `RAG_MULTIQUERY` / `RAG_SUBQUERIES` / `RAG_K_PER` / `RAG_K_RETURN` | no (on / 3 / 6 / 10) | Multi-query expansion and Reciprocal Rank Fusion for semantic search. `RAG_MULTIQUERY=0` falls back to a single query. |
 | `ANSWER_CITATIONS` | no (on) | The "Sources: …" footer on answers. `0` disables it. |
 | `ENABLE_DOCS` | no | Any value exposes `/docs`, `/redoc`, `/openapi.json` (off by default). |
@@ -333,7 +336,7 @@ any model call; a blocked stream request gets a normal JSON error.
    `429`. Friction only: the IP is the first `X-Forwarded-For` hop, which a
    caller can forge.
 
-Steps 5 and 6 count `answered`, `refused` and `pending` rows **in reservation
+Steps 5 and 6 count `answered`, `refused`, `pending` and `cancelled` rows **in reservation
 order**, so a burst of parallel requests can't all pass on the same count.
 Provider errors don't count, so a Groq outage never locks anyone out. After
 the answer, the reserved row is rewritten with the real outcome and latency.

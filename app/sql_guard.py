@@ -28,6 +28,7 @@ matching (a `WITH d AS (DELETE ... RETURNING *) SELECT ...` starts with
 """
 
 import os
+import re
 from typing import Iterable, Optional
 
 import sqlglot
@@ -138,3 +139,21 @@ def readonly_engine(engine):
         def _query_only(dbapi_conn, _record):
             dbapi_conn.execute("PRAGMA query_only = ON")
     return engine
+
+
+_SUBJECT_EQ_RE = re.compile(r"\bsubject\s*\)?\s*=\s*'([A-Za-z]{2,4})'", re.IGNORECASE)
+_SUBJECT_IN_RE = re.compile(r"\bsubject\s*\)?\s+IN\s*\(([^)]*)\)", re.IGNORECASE)
+_QUOTED_CODE_RE = re.compile(r"'([A-Za-z]{2,4})'")
+
+
+def subject_codes(sql: str) -> list:
+    """Every subject code a query filters on, uppercase, in order, once each:
+    subject = 'CS', s.subject = 'cs', UPPER(subject) = 'CS' and each code of
+    subject IN ('ACCY', 'BADM', 'FIN'). The checks built on this used to read
+    only the first code of an IN list, so a college-wide query (Gies = six
+    departments) got its "not synced" and "no such department" notes, and
+    its Sources line, from ACCY alone."""
+    text = sql or ""
+    found = [(m.start(), [m.group(1)]) for m in _SUBJECT_EQ_RE.finditer(text)]
+    found += [(m.start(), _QUOTED_CODE_RE.findall(m.group(1))) for m in _SUBJECT_IN_RE.finditer(text)]
+    return list(dict.fromkeys(c.upper() for _, codes in sorted(found) for c in codes))

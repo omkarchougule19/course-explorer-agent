@@ -419,10 +419,106 @@ production before it wins on the full schema.
     subjects.search_text.
   Notes are hints, not rejections: the question may mean otherwise.
 
+- **A data budget per answer, not only per result** (2026-10-09). Every
+  agent step re-sends the prompt, the history and all earlier tool results
+  in one request, and Groq's free tier refuses any single request over 8,000
+  tokens - a hard 413, not a wait. "tell me about badm sections" (production,
+  2026-10-10 UTC) ran two broad queries and its third step was refused
+  ("Limit 8000, Requested 8728"); the student saw "Something went wrong".
+  The model had understood the question; the request no longer fitted.
+  Measured: prompt + tool definitions are ~4,630 tokens before any data, and
+  Groq's "Requested" is the input plus an allowance for the reply (a
+  7,000-token input with `max_tokens=1500` was refused as 8,578; with the
+  default cap the allowance is an estimate that reached ~1,550).
+  So: `limit - 1,700 (reply) - prompt - tools - question and history` is the
+  room for data in one answer (~1,500 tokens with no history, ~1,050 with a
+  full one); every SQL result, `course_facts`, `department_overview` and
+  topic-search result is cut to what is left (whole rows, with a note saying
+  it is partial) and charged to it. Tokens are estimated without a tokenizer
+  (words, 3-digit chunks, punctuation runs, line breaks). Groq's count for
+  this model equals the o200k tokenizer's exactly (checked with refused
+  oversize requests, which cost nothing); against it the estimate runs
+  1.00-1.21x on rows, tool output, history and the prompt - high, never low.
+  The fixed part is discounted for that and comes to 4,805 against 4,631
+  measured.
+  `LLM_REQUEST_TOKEN_LIMIT` sets the limit (default 8000 on Groq, none on
+  OpenAI; `0` turns it off, e.g. on a paid tier). A 413 that still gets
+  through is answered with "pulled in more data than I can read at once"
+  and logged as an error, not shown as a generic failure.
+  *Rejected:* lowering the per-result cap (one full list of ~110 courses
+  still needs it); retrying a 413 (the same request can't fit). *Open
+  choice:* `tiktoken` is already installed (a LangChain dependency) and
+  would make the count exact, recovering ~170 tokens of room per answer, but
+  it downloads its vocabulary file on first use after each boot.
+- **Query results stay in LangChain's list-of-tuples layout** (decided
+  2026-10-10, after trying to replace it). A denser layout is 18-26% fewer
+  tokens for the same rows (exact counts: "|"-separated 18-26%, tabs
+  23-25%), and three variants were evaluated on the full set. Each scored
+  the same overall (95.5%) and each made answers worse in a way the scorer
+  missed: "|" rows with a header were copied into answers as a table, times
+  as minutes (720 | 770); tabs with a header made two questions select every
+  column and show them under the column names; tabs without a header made
+  the model misread rows - "which PSYC 100-level sections start at 10 or
+  later" ran the same correct query and was right 2 times in 6, against 7
+  in 8 with tuples (9 of 12 in earlier baseline runs). The tab layout
+  remains available (`SQL_RESULT_LAYOUT=tabs`) but is off. Lesson: a score
+  that doesn't move is not evidence a formatting change is safe; read the
+  answers, and repeat the sensitive questions.
+- **History is sent back without page markup, and shorter when its query
+  came with it** (2026-10-09). Link targets, table rule rows, bold marks and
+  the Sources footer are dropped from earlier answers (`_plain_answer`), and
+  the latest answer is capped at 700 characters instead of 1,200 when the
+  page also sent the query it came from - a refinement reruns that query,
+  and the text is only needed for references like "the second one". The
+  logged session's history went from 674 to 429 tokens. Every history token
+  is re-sent on each step and comes out of the room for data.
+- **`department_overview` tool, whose text is the answer** (2026-10-09):
+  what a whole department or college offers - each course, linked, with its
+  number of sections for the term asked, else the department's latest term
+  with rows. One department is listed in full; several are listed up to 80
+  courses in all, and above that get a row of totals each and a prompt to
+  pick one. When the tool is the first and only tool call of an answer,
+  its Markdown goes to the student with no second model call
+  (`_direct_answer_executor`); called after or beside another tool it is an
+  ordinary result. That second call only re-typed the list, cost ~5,500
+  more tokens against 8,000 a minute, and forced the list to be cut to the
+  data budget first. An unconditional `return_direct` was tried first and
+  failed in the eval: "no class before 10am, which intro psychology sections
+  would work" had its SQL rejected, fell back to this tool, and the PSYC
+  course list became the answer. Measured live through the stream: "show me sections
+  under badm" in 5.7 s, all 70 courses (50 s with the second call; 158 s and
+  four queries with SQL only; a 413 error in production). Every branch is
+  therefore worded for the student (unknown department: "Did you mean
+  BADM (Business Administration)?"). *Not done for `course_facts`:* its
+  questions (should I take it, is it hard, can I take it) need the answer
+  rules applied to the facts, which is the model's job; a direct return
+  would hand the student a fact sheet. *Trade-off:* a question that asks
+  for the list and something else ends at the list; the tool description
+  restricts it to list-only questions. Whole-department
+  questions were the slowest and least reliable class in the log: "tell me
+  about badm sections" took four queries and 158 s locally to answer with a
+  per-term count, and "what courses are offered by gies" failed or took
+  110-160 s on three tries (item 33). Same reasoning as `course_facts`: a
+  fixed query beats the model assembling it. Departments resolve as in topic
+  search (codes or words such as "Gies"). A cut-off SQL listing of a whole
+  department gets a [Check] note pointing at the tool.
+- **A mistyped department code gets the closest real ones** (2026-10-09):
+  an empty result on a `subject` that isn't in the department list names the
+  nearest codes ("BAD" -> BADM; "PYSC" -> PSYC), in SQL results and in
+  `department_overview`. "sections of bad," had been answered "BAD does not
+  exist".
+
 **History.** Hybrid agent 2026-08; streaming 2026-08-31; provider order
 changed to Groq → OpenAI → Gemini 2026-09-19; qwen failover 2026-09-20;
 Gemini removed 2026-09-28; `course_facts` tool 2026-09-28;
-pipeline 2026-09-10.
+pipeline 2026-09-10; per-answer data budget, `department_overview` tool,
+closest-code note, history trimming and the direct overview answer
+2026-10-09; evaluated 2026-10-10, which made the direct answer conditional
+and sent the result layout back to tuples (see plan item 36). Same day: the stream took the final answer only from streamed
+tokens, because it looked for a chain named "AgentExecutor" and
+create_sql_agent names it "SQL Agent Executor"; it now takes the outermost
+chain's output, so the iteration-cap message reaches the student on the
+streaming path too (it had come out as "I couldn't produce an answer").
 
 ---
 

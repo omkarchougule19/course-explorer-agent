@@ -265,7 +265,7 @@ Explorer (CS synced 2026-08-25)."*, built by parsing the SQL the agent ran.
 
 Each question reserves a `pending` row in `ask_log` before the model runs, and
 the caps count rows in reservation order, so parallel requests can't all pass
-on one count. Only `answered`, `refused` and `pending` count, so a provider
+on one count. Only `answered`, `refused`, `pending` and `cancelled` (the browser dropped the stream) count, so a provider
 outage never locks users out. Every attempt is logged with its outcome
 (`answered`, `refused`, `rate_limited`, `global_limited`, `too_long`, `error`,
 `pending`) and latency.
@@ -388,6 +388,7 @@ calendar events, 5,464 embeddings; grades and rankings 0.
 | `SITE_FEEDBACK_MAX_CHARS` · `SITE_FEEDBACK_PER_IP_DAY` | 2000 · 5 | feedback box caps |
 | `SQL_STATEMENT_TIMEOUT_MS` | 8000 | per-statement timeout for model SQL |
 | `MAX_QUERY_RESULT_CHARS` | 6000 | tool result cut-off |
+| `LLM_REQUEST_TOKEN_LIMIT` | 8000 on Groq, none on OpenAI | request size the per-answer data budget keeps under (`0` = off) |
 | `RAG_MULTIQUERY` · `RAG_SUBQUERIES` · `RAG_K_PER` · `RAG_K_RETURN` | on · 3 · 6 · 10 | semantic search |
 | `ANSWER_CITATIONS` | on | source footer |
 | `SQL_PIPELINE` · `SQL_PIPELINE_INTENT_CHECK` · `SQL_PIPELINE_TERSE_SCHEMA` | off · `repair` · off | opt-in Critic/Repair pipeline |

@@ -11,6 +11,7 @@ Docs:
 """
 
 import hmac
+import asyncio
 import importlib
 import json
 import os
@@ -20,6 +21,8 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal, Optional
+
+import anyio
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
@@ -699,6 +702,7 @@ async def ask_agent_stream(payload: AskRequest, request: Request):
         t0 = time.monotonic()
         parts: list[str] = []
         final_text = ""
+        dropped = False
         try:
             async for kind, text in astream_answer(question, payload.history):
                 if kind == "token":
@@ -716,12 +720,22 @@ async def ask_agent_stream(payload: AskRequest, request: Request):
             yield _sse("error", "The assistant failed to answer. Try again shortly.")
             if not final_text:
                 final_text = "Something went wrong answering that question."
+        except (asyncio.CancelledError, GeneratorExit):
+            # The browser went away (closed tab, or a new question sent during
+            # a long wait) and the server cancelled this stream.
+            dropped = True
+            raise
         finally:
             try:
                 latency = int((time.monotonic() - t0) * 1000)
                 answer = final_text or "".join(parts)
-                await run_in_threadpool(_finish_ask, row_id,
-                                        ask_log_mod.classify_answer(answer), answer, latency)
+                outcome = ("cancelled" if dropped and not final_text
+                           else ask_log_mod.classify_answer(answer))
+                # Shielded: in a cancelled task every further await is
+                # cancelled too, so this write never ran and the row stayed
+                # `pending` - which counts against the rate limits for a day.
+                with anyio.CancelScope(shield=True):
+                    await run_in_threadpool(_finish_ask, row_id, outcome, answer, latency)
             finally:
                 release()
 
@@ -958,7 +972,7 @@ def get_ask_summary():
     try:
         with get_conn() as conn:
             outcomes_24h = ask_log_mod.outcome_counts(conn, timedelta(days=1))
-            global_calls_24h = sum(outcomes_24h.get(k, 0) for k in ("answered", "refused", "pending"))
+            global_calls_24h = sum(outcomes_24h.get(k, 0) for k in ("answered", "refused", "pending", "cancelled"))
             return {
                 "unique_7d": ask_log_mod.unique_clients(conn, timedelta(days=7)),
                 "global_calls_24h": global_calls_24h,
