@@ -181,6 +181,17 @@ check("... and is tagged as an error, not counted against the rate limit", class
 check("the empty-answer fallback is tagged as an error (no rate-limit charge, no Sources footer)",
       classify_answer(agent.NO_ANSWER) == "error")
 
+check("the agent's own opening line repeated back is not an answer",
+      agent._not_an_echo(agent._AGENT_SUFFIX) == "" and agent._not_an_echo("  " + agent._AGENT_SUFFIX + "\n") == "")
+check("a real answer is kept", agent._not_an_echo("CS 225 has 12 sections.") == "CS 225 has 12 sections.")
+check("an answer that merely opens the same way and goes on is kept",
+      agent._not_an_echo(agent._AGENT_SUFFIX + " " + "Here are the sections: " + "x" * 200) != "")
+otpm = agent.friendly_error(Exception(
+    "Error code: 429 - {'error': {'message': 'Request too large for model `qwen/qwen3.8-27b` on output tokens "
+    "per minute (OTPM): Limit 1000, Requested 1216'}}"))
+check("the backup model's output-rate limit is reported as a rate limit, not a too-broad question",
+      "rate limit was hit" in otpm and classify_answer(otpm) == "error")
+
 # 4g. the date in the prompt follows the calendar, not the process's start
 real_today = agent._today
 try:
