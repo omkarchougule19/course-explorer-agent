@@ -16,7 +16,7 @@ from functools import lru_cache
 import sqlglot
 from sqlglot import exp
 
-from app import db
+from app import db, sql_guard
 
 
 def _enabled() -> bool:
@@ -35,7 +35,6 @@ TABLE_SOURCES = {
 _COURSE_EXPLORER = {"sections", "meetings"}
 _RAG_LABEL = "UIUC course catalog descriptions"
 
-_SUBJECT_RE = re.compile(r"\bsubject\s*(?:=|IN)\s*\(?\s*'([A-Z]{2,4})'", re.IGNORECASE)
 
 
 from langchain_core.callbacks import BaseCallbackHandler
@@ -95,6 +94,13 @@ class SQLCapture(BaseCallbackHandler):
             self.fact_sql.append(f"SELECT 1 FROM sections WHERE subject = '{subj}'")
             self.fact_sql.append("SELECT 1 FROM prerequisites")
             return
+        if "department_overview" in name:
+            # Codes among its arguments name the subjects it read; words
+            # ("Gies") leave the footer on the overall last-sync date.
+            for word in re.findall(r"\b[A-Z]{2,4}\b", raw):
+                self.fact_sql.append(f"SELECT 1 FROM sections WHERE subject = '{word}'")
+            self.fact_sql.append("SELECT 1 FROM sections")
+            return
         if "sql_db_query" in name or "select" in raw.lower():
             q = _unwrap_query(raw.strip())
             if q:
@@ -122,14 +128,14 @@ def tables_in(sql_texts) -> set[str]:
 def _subjects_in(sql_texts) -> set[str]:
     out: set[str] = set()
     for sql in sql_texts or []:
-        out.update(m.upper() for m in _SUBJECT_RE.findall(sql or ""))
+        out.update(sql_guard.subject_codes(sql))
     return out
 
 
 @lru_cache(maxsize=1)
 def _freshness_map() -> dict:
     """{subject: 'YYYY-MM-DD'} last scrape per subject, plus '' -> newest
-    overall. Cached: sync dates only move on a manual re-scrape."""
+    overall. Cached until the catalog changes (agent.refresh_catalog_caches)."""
     try:
         conn = db.get_connection()
         try:

@@ -19,9 +19,11 @@ Table `ask_log`:
     error          - the agent or LLM provider errored (includes quota)
     pending        - reserved, LLM call in flight (see reserve()/finish());
                      rewritten to one of the above when the call ends
+    cancelled      - the browser dropped the stream before an answer (closed
+                     tab, or a new question sent during a long wait)
 
-`answered`, `refused` and `pending` count toward the rate limits - they mean
-an LLM call was (or is being) spent. Each /ask reserves its `pending` row
+`answered`, `refused`, `pending` and `cancelled` count toward the rate limits -
+they mean an LLM call was (or is being) spent. Each /ask reserves its `pending` row
 before the LLM runs and the limit check counts rows in reservation order,
 so a burst of parallel requests can't all pass on the same stale count.
 `error` doesn't count, so a provider outage never locks users out;
@@ -90,6 +92,8 @@ _ERROR_MARKERS = (
     "something went wrong answering",
     "can't answer that right now",
     "needed more steps than i can take",
+    "more data than i can read at once",
+    "couldn't produce an answer for that",
 )
 
 
@@ -129,7 +133,7 @@ def classify_answer(answer: str) -> str:
 # Outcomes that spend (or, for `pending`, are about to spend) an LLM call and
 # so count toward every limit. `pending` is the slot reserve() claims before
 # the LLM runs; finish() rewrites it to the real outcome afterwards.
-_SPENDING = "('answered', 'refused', 'pending')"
+_SPENDING = "('answered', 'refused', 'pending', 'cancelled')"
 
 
 def _spent(conn: db.Connection, since: timedelta, client_ip: "str | None" = None,

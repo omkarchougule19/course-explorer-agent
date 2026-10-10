@@ -79,7 +79,21 @@ db = agent._CappedSQLDatabase.from_uri(f"sqlite:///{tmp.as_posix()}")
 big = db.run("SELECT a, b FROM t")
 check("large result is truncated", len(big) < agent.MAX_QUERY_RESULT_CHARS + 400)
 check("truncation note is present", "[Result truncated" in big)
-check("kept rows still end on a whole tuple", big.split("\n")[0].endswith(")]"))
+big_rows = big.split("\n[Result truncated")[0].split("\n")
+check("kept rows are whole: a header, then complete a|b rows",
+      big_rows[0] == "a|b" and all(r.startswith("row") and r.endswith("|" + "x" * 40) for r in big_rows[1:]))
+check("the note counts rows, not characters",
+      f"2,000 rows returned, only the first {len(big_rows) - 1:,} shown" in big)
+con = sqlite3.connect(tmp)
+con.execute("CREATE TABLE n (a TEXT, b TEXT, c INT)")
+con.execute("INSERT INTO n VALUES ('x|y', NULL, 3), ('two\nlines', 'b', NULL)")
+con.commit()
+con.close()
+db = agent._CappedSQLDatabase.from_uri(f"sqlite:///{tmp.as_posix()}")
+check("rows come as a header and |-separated lines; NULL is empty; a value can't break the layout",
+      db.run("SELECT a, b, c FROM n") == "a|b|c\nx/y||3\ntwo lines|b|")
+check("no rows is still an empty result", db.run("SELECT a FROM n WHERE c = 99") == "")
+check("a single value keeps its column name", db.run("SELECT COUNT(*) AS total FROM n") == "total\n2")
 small = db.run("SELECT a, b FROM t LIMIT 3")
 check("small result is untouched", "[Result truncated" not in small and small.count("row0") == 3)
 
@@ -104,6 +118,86 @@ check("a repeated failing query is refused with its first error", "Repeated quer
 agent.new_query_log()
 check("a new answer starts a fresh log", "[You already ran" not in db.run("SELECT a FROM t LIMIT 2"))
 
+# 4e. the data budget: all results of one answer share what the request has
+# room for, so a second broad query can't push the request past the
+# provider's size limit (Groq 413 on "tell me about badm sections")
+# exact counts (o200k, which Groq's count matched): 12 and 34 tokens
+prose_text = "Business Analytics I covers data visualization and decision making for managers."
+rows_text = "crn|course_number|instructor\n10398|199|Ginsburg, R\n29648|210|\n53818|554|Luckman, E"
+check("the token estimate is close, and never low",
+      12 <= agent._est_tokens(prose_text) <= 18 and 34 <= agent._est_tokens(rows_text) <= 41)
+check("an empty text costs nothing", agent._est_tokens("") == 0 and agent._est_tokens(None) == 0)
+agent._DATA_BUDGET.set({"left": 600})
+one = db.run("SELECT a, b FROM t ORDER BY a")
+check("a result is cut to the room left, on a whole row",
+      agent._est_tokens(one) < 600 + 120 and one.split("\n[Result truncated")[0].endswith("|" + "x" * 40)
+      and "little room left for data" in one)
+check("the result is charged to the budget", agent._DATA_BUDGET.get()["left"] < 100)
+two = db.run("SELECT a, b FROM t ORDER BY a DESC")
+check("a later result still gets a few rows, never nothing",
+      "row01999" in two and agent._est_tokens(two) < agent._MIN_RESULT_TOKENS + 120)
+agent._DATA_BUDGET.set({"left": 300})
+fitted = agent.fit_budget("\n\n".join("paragraph %d " % i + "word " * 40 for i in range(20)))
+check("a non-SQL tool result is cut at a paragraph and says so",
+      agent._est_tokens(fitted) < 300 + 80 and "[Cut to fit" in fitted and "paragraph 0" in fitted)
+check("a short result passes through", agent.fit_budget("short") == "short")
+agent._DATA_BUDGET.set(None)
+check("without a budget nothing is cut", len(agent.fit_budget("y" * 9000)) == 9000)
+saved_limit = os.environ.get("LLM_REQUEST_TOKEN_LIMIT")
+os.environ["LLM_REQUEST_TOKEN_LIMIT"] = "0"
+agent.new_query_log("q")
+check("LLM_REQUEST_TOKEN_LIMIT=0 turns the budget off", agent._DATA_BUDGET.get() is None)
+os.environ["LLM_REQUEST_TOKEN_LIMIT"] = "8000"
+agent.new_query_log("q", "q")
+short_room = agent._DATA_BUDGET.get()["left"]
+check("the budget leaves room for the reply",
+      short_room <= 8000 - agent._REPLY_RESERVE_TOKENS - agent._est_tokens(agent.SYSTEM_CONTEXT))
+agent.new_query_log("q", "q " + "word " * 300)
+check("history in the request leaves less room for data",
+      agent._DATA_BUDGET.get()["left"] == max(short_room - 300, agent._MIN_ANSWER_DATA_TOKENS))
+os.environ["LLM_REQUEST_TOKEN_LIMIT"] = "3000"
+agent.new_query_log("q", "q")
+check("the budget never drops below the floor", agent._DATA_BUDGET.get()["left"] == agent._MIN_ANSWER_DATA_TOKENS)
+if saved_limit is None:
+    os.environ.pop("LLM_REQUEST_TOKEN_LIMIT", None)
+else:
+    os.environ["LLM_REQUEST_TOKEN_LIMIT"] = saved_limit
+agent._DATA_BUDGET.set(None)
+too_large = agent.friendly_error(Exception(
+    "Error code: 413 - {'error': {'message': 'Request too large for model `x` on tokens per minute "
+    "(TPM): Limit 8000, Requested 8728', 'code': 'rate_limit_exceeded'}}"))
+check("a request-too-large error tells the student to narrow the question", too_large == agent.REQUEST_TOO_LARGE)
+check("... and is tagged as an error, not counted against the rate limit", classify_answer(too_large) == "error")
+
+# 4f. the empty-answer fallback is a failure, not an answer
+check("the empty-answer fallback is tagged as an error (no rate-limit charge, no Sources footer)",
+      classify_answer(agent.NO_ANSWER) == "error")
+
+# 4g. the date in the prompt follows the calendar, not the process's start
+real_today = agent._today
+try:
+    agent._today = lambda: "2026-10-09"
+    monday = agent._data_notes()
+    agent._today = lambda: "2026-10-16"
+    week_later = agent._data_notes()
+    check("DATA NOTES are rebuilt when the day changes",
+          (not monday and not week_later)   # no catalog in this test database: notes are empty
+          or ("Today is 2026-10-09" in monday and "Today is 2026-10-16" in week_later))
+    built = []
+    real_new_agent, agent._new_agent = agent._new_agent, lambda **kw: built.append(kw) or object()
+    try:
+        agent._AGENTS.clear()
+        first = agent.build_agent()
+        check("the agent is reused within a day", agent.build_agent() is first and len(built) == 1)
+        agent._today = lambda: "2026-10-17"
+        check("... and rebuilt on a new day (its prompt holds the date)",
+              agent.build_agent() is not first and len(built) == 2 and len(agent._AGENTS) == 1)
+    finally:
+        agent._new_agent = real_new_agent
+        agent._AGENTS.clear()
+finally:
+    agent._today = real_today
+
 # 4c. empty result for a subject with no rows in the latest term
 real_cov = agent._subject_coverage
 agent._subject_coverage = lambda: ("fall 2026", {"CS": "fall 2026", "ECON": "spring 2026"})
@@ -115,8 +209,48 @@ try:
           agent._unsynced_note("SELECT * FROM sections WHERE subject = 'CS' AND semester = 'fall' AND year = 2026") is None)
     check("a query on another term gets no note",
           agent._unsynced_note("SELECT * FROM sections WHERE subject = 'ECON' AND semester = 'spring' AND year = 2026") is None)
+    # every code of an IN list is checked, not only the first (CS is synced, ECON isn't)
+    note = agent._unsynced_note("SELECT * FROM sections WHERE subject IN ('CS', 'ECON') AND semester = 'fall' AND year = 2026")
+    check("an unsynced subject later in an IN list still gets the note",
+          bool(note) and "ECON has no fall 2026 rows" in note and "CS has" not in note)
 finally:
     agent._subject_coverage = real_cov
+
+from app import sql_guard  # noqa: E402
+check("subject codes: =, a table alias, UPPER() and every code of an IN list",
+      sql_guard.subject_codes("SELECT 1 FROM sections s WHERE s.subject = 'cs' OR UPPER(subject) = 'ECE' "
+                              "OR subject IN ('ACCY', 'badm', 'CS')") == ["CS", "ECE", "ACCY", "BADM"])
+check("subject codes: req_subject and other columns are not subjects",
+      sql_guard.subject_codes("SELECT 1 FROM prerequisites WHERE req_subject = 'MATH' AND subject='STAT'") == ["STAT"])
+
+# 4h. caches about the catalog are dropped when the catalog changes, not at restart
+real_stamp, real_check = agent._catalog_stamp, agent._CATALOG_CHECK_SECONDS
+stamps = iter([("2026-09-28", 100), ("2026-09-28", 100), ("2026-10-09", 140)])
+calls = []
+try:
+    agent._catalog_stamp = lambda: calls.append(1) or next(stamps)
+    agent._CATALOG.update(checked=0.0, stamp=None)
+    agent._CATALOG_CHECK_SECONDS = 0
+    agent._AGENTS[("x",)] = object()
+    agent._subject_names.cache_clear()
+    agent._subject_names()
+    check("first look at the catalog only records it", agent.refresh_catalog_caches() is False and len(agent._AGENTS) == 1)
+    check("an unchanged catalog keeps the caches",
+          agent.refresh_catalog_caches() is False and agent._subject_names.cache_info().currsize == 1)
+    check("a synced department drops them (coverage, names, DATA NOTES, the built agents)",
+          agent.refresh_catalog_caches() is True and agent._subject_names.cache_info().currsize == 0
+          and not agent._AGENTS)
+    agent._CATALOG_CHECK_SECONDS = 600
+    check("the check is skipped inside its interval", agent.refresh_catalog_caches() is False and len(calls) == 3)
+
+    def broken():
+        raise RuntimeError("database down")
+    agent._catalog_stamp = broken
+    check("a database error leaves the caches alone", agent.refresh_catalog_caches(force=True) is False)
+finally:
+    agent._catalog_stamp, agent._CATALOG_CHECK_SECONDS = real_stamp, real_check
+    agent._CATALOG.update(checked=0.0, stamp=None)
+    agent._AGENTS.clear()
 
 # 4d. empty result for a full-first-name instructor
 n = agent._instructor_note("SELECT * FROM sections WHERE instructor = 'Ji, Heng'")

@@ -93,7 +93,8 @@ HOW TO QUERY
   'spring', 'summer', 'winter'); subject codes are uppercase. A term is the
   pair (semester, year): select, group and filter on both, never semester
   alone.
-- Results are cut off at a fixed size and re-sent on every step: prefer COUNT,
+- Results are a header line then one row per line, fields split by "|" (an
+  empty field is NULL). They are cut off at a fixed size and re-sent on every step: prefer COUNT,
   GROUP BY or DISTINCT, select only the columns you'll show, and LIMIT unless
   counting. "[Result truncated ...]" means you have NOT seen every row - narrow
   the query; never present those rows as complete.
@@ -202,6 +203,11 @@ TABLES
 - course_facts tool: one named course's title, description, credits,
   prerequisites, gen-eds, recent instructors/status and grades in one call.
   Take a course's title only from it or course_label, never from memory.
+- department_overview tool: a whole department or college when nothing
+  narrower is asked ("sections under BADM", "what does Gies offer", "tell me
+  about STAT courses"): its result is the finished answer - the courses with
+  section counts. Use it instead of SQL for those; never list every section
+  of a department.
 
 HOW TO ANSWER
 - Courses vs sections: a question about courses ("which courses...") gets one
@@ -243,7 +249,9 @@ HOW TO ANSWER
   resolve references ("the second one" = the second item listed in the
   latest answer) and refinements ("which of those are from CS?" = the
   earlier query with one filter added: rerun what the latest answer "came
-  from", keeping all its filters); never re-answer it.
+  from", keeping all its filters); never re-answer it. A correction or retry
+  ("badm i mean", "no, spring", "try again") is the student's latest question
+  asked again with that change - not an earlier one.
 """.strip()
 
 
@@ -253,6 +261,128 @@ HOW TO ANSWER
 # the context window. Cap what a single tool call can hand back; the note tells
 # the model to narrow the query rather than page through it.
 MAX_QUERY_RESULT_CHARS = int(os.environ.get("MAX_QUERY_RESULT_CHARS", "6000"))
+
+
+# --- per-answer data budget ----------------------------------------------------
+# The per-call cap above isn't enough on its own. Every agent step re-sends the
+# prompt, the conversation history and ALL earlier tool results in one request,
+# and Groq's free tier rejects any single request over 8,000 tokens - not a
+# wait, a hard failure: "tell me about badm sections" ran one broad query
+# (6,128 chars) and a second one, and the third step was refused with "413
+# Request too large ... (TPM): Limit 8000, Requested 8728", shown to the
+# student as "Something went wrong". The prompt and tool definitions alone are
+# about 4,600 of those tokens, so the room left for data is small and has to be
+# shared across the whole answer: each result may use only what is left.
+#
+# Measured 2026-10-09 (rejected probes cost nothing): "Requested" is the input
+# plus an allowance for the reply - a 7,000-token input with max_tokens=1500
+# was refused as 8,578, and with the default cap Groq adds an estimate that
+# reached ~1,550 after a long answer. Hence _REPLY_RESERVE_TOKENS.
+_REPLY_RESERVE_TOKENS = 1700
+_TOOL_DEF_TOKENS = 55           # per tool, for the JSON definition around its description
+_PROSE_OVERCOUNT = 1.1          # _est_tokens runs 13-17% high on the prompt and tool text
+_MIN_ANSWER_DATA_TOKENS = 500   # never budget less than this for a whole answer
+_MIN_RESULT_TOKENS = 100        # ... or this for one result, however little is left
+_TOOL_TEXT = {"text": "", "count": 6}   # tool names + descriptions; set when the agent is built
+
+# {"left": tokens} for the answer being produced, or None for no budget. A dict
+# mutated in place, like _QUERY_LOG: tools run in a copy of the caller's
+# context, so a set() inside a tool would be lost.
+_DATA_BUDGET: contextvars.ContextVar = contextvars.ContextVar("agent_data_budget", default=None)
+
+_TOKEN_PIECE_RE = re.compile(r"[A-Za-z]+|\d{1,3}|\n|[^\sA-Za-z\d]+")
+
+
+def _est_tokens(text) -> int:
+    """Roughly how many tokens a text is, without a tokenizer (its vocabulary
+    file is a download the server shouldn't depend on): words (long ones a
+    little more), 3-digit number chunks, runs of punctuation and line breaks
+    each count one. Groq's count for this model equals the o200k tokenizer's
+    exactly (checked on refused oversize requests); against it this runs
+    1.00-1.21x on result rows, tool output, history and the prompt - high,
+    never low, so the budget errs toward fitting."""
+    if not isinstance(text, str) or not text:
+        return 0
+    return sum(1 + (len(p) - 1) // 6 if p[0].isalpha() else 1 for p in _TOKEN_PIECE_RE.findall(text))
+
+
+def _request_token_limit() -> int:
+    """The most tokens one LLM request may hold, or 0 for no limit.
+    LLM_REQUEST_TOKEN_LIMIT overrides it (0 turns the budget off, e.g. on a
+    paid Groq tier); unset, it is 8000 when Groq is the provider - the free
+    tier's tokens-per-minute ceiling, which a single request can't exceed."""
+    raw = os.environ.get("LLM_REQUEST_TOKEN_LIMIT", "").strip()
+    if raw:
+        try:
+            return max(0, int(raw))
+        except ValueError:
+            pass
+    forced = os.environ.get("LLM_PROVIDER", "").strip().lower()
+    return 8000 if os.environ.get("GROQ_API_KEY") and forced in ("", "groq") else 0
+
+
+def _fixed_request_tokens() -> int:
+    """What every request of an answer carries before any data: the prompt
+    and the tool definitions. Groq measured 4,631 for it on 2026-10-09; this
+    gave 4,778 (the prose discount is deliberately smaller than the
+    overcount)."""
+    prose = (_est_tokens(render_system_context()) + _est_tokens(_AGENT_SUFFIX)
+             + _est_tokens(_TOOL_TEXT["text"]))
+    return int(prose / _PROSE_OVERCOUNT) + _TOOL_DEF_TOKENS * _TOOL_TEXT["count"]
+
+
+def _start_data_budget(agent_input: str = "") -> None:
+    """Set how many tokens of tool results this answer may hold: the request
+    limit minus the reply allowance and what every request carries anyway
+    (prompt, tool definitions, the question and its history)."""
+    limit = _request_token_limit()
+    if not limit:
+        _DATA_BUDGET.set(None)
+        return
+    try:
+        fixed = _fixed_request_tokens()
+    except Exception:
+        _DATA_BUDGET.set(None)
+        return
+    room = limit - _REPLY_RESERVE_TOKENS - fixed - _est_tokens(agent_input)
+    _DATA_BUDGET.set({"left": max(room, _MIN_ANSWER_DATA_TOKENS)})
+
+
+def _data_room(text=None):
+    """How much of `text` the next tool result may show, in characters at
+    that text's own density, or None when there is no budget. Never below
+    _MIN_RESULT_TOKENS' worth: a few rows beat none."""
+    budget = _DATA_BUDGET.get()
+    if budget is None:
+        return None
+    tokens = max(budget["left"], _MIN_RESULT_TOKENS)
+    if not isinstance(text, str) or not text:
+        return tokens * 3
+    return int(tokens * len(text) / max(_est_tokens(text), 1))
+
+
+def _spend(text) -> None:
+    budget = _DATA_BUDGET.get()
+    if budget is not None and isinstance(text, str):
+        budget["left"] -= _est_tokens(text) + 40   # + the tool call that asked for it
+
+
+def fit_budget(text: str) -> str:
+    """A non-SQL tool's result cut to the room left in this answer (at a
+    paragraph or line break), with a note, and charged to the budget. SQL
+    results are cut in _CappedSQLDatabase, which keeps whole rows."""
+    room = _data_room(text)
+    if room is not None and isinstance(text, str) and len(text) > room:
+        head = text[:room]
+        for sep in ("\n\n", "\n", "; "):
+            if sep in head[room // 2:]:
+                head = head.rsplit(sep, 1)[0]
+                break
+        text = (head + f"\n[Cut to fit: only the first {len(head):,} of {len(text):,} characters are "
+                "shown, so this is not everything. Say so, and suggest narrowing (one department, "
+                "level or term).]")
+    _spend(text)
+    return text
 
 
 class _GuardRejected(SQLAlchemyError):
@@ -269,13 +399,12 @@ class _GuardRejected(SQLAlchemyError):
 _QUERY_LOG: contextvars.ContextVar = contextvars.ContextVar("agent_query_log", default=None)
 
 
-_SQL_SUBJECT_RE = re.compile(r"\bsubject\s*(?:=|IN)\s*\(?\s*'([A-Za-z]{2,4})'", re.IGNORECASE)
 
 
 @lru_cache(maxsize=1)
 def _subject_coverage():
     """(latest term label, {subject: newest term label with rows}). Cached
-    per process, like DATA NOTES; a sync shows up after the next restart."""
+    until the catalog changes (refresh_catalog_caches)."""
     conn = db.get_readonly_connection()
     try:
         rows = conn.execute("SELECT DISTINCT subject, year, semester FROM sections "
@@ -308,8 +437,7 @@ def _unsynced_note(sql: str):
     season, year = latest.split()
     if f"'{season}'" not in sql.lower() or year not in sql:
         return None
-    missing = [s.upper() for s in _SQL_SUBJECT_RE.findall(sql)
-               if s.upper() in newest and newest[s.upper()] != latest]
+    missing = [s for s in sql_guard.subject_codes(sql) if s in newest and newest[s] != latest]
     if not missing:
         return None
     parts = "; ".join(f"{s} (latest term with {s}: {newest[s]})" for s in dict.fromkeys(missing))
@@ -360,11 +488,64 @@ def _initial_note(sql: str):
 _QUESTION: contextvars.ContextVar = contextvars.ContextVar("agent_question", default="")
 
 
-def new_query_log(question: str = "") -> None:
-    """Start a fresh per-answer context: the repeat-query log and the
-    question the checks below compare queries against."""
+def new_query_log(question: str = "", agent_input: str = "") -> None:
+    """Start a fresh per-answer context: the repeat-query log, the question
+    the checks below compare queries against, and the data budget
+    (agent_input is the question with its history, as sent to the model)."""
     _QUERY_LOG.set({})
     _QUESTION.set(question or "")
+    _start_data_budget(agent_input or question)
+
+
+@lru_cache(maxsize=1)
+def _subject_names() -> dict:
+    """{code: name} for every department in the subjects table. Cached per
+    process; {} when the table can't be read."""
+    try:
+        conn = db.get_readonly_connection()
+        try:
+            return {r["code"]: (r["name"] or "") for r in
+                    conn.execute("SELECT code, name FROM subjects").fetchall() if r["code"]}
+        finally:
+            conn.close()
+    except Exception:
+        return {}
+
+
+def _close_subjects(word: str, limit: int = 4) -> list:
+    """The department codes a mistyped code most likely meant, as 'BADM
+    (Business Administration)': codes it is the start of or that start it
+    ('BAD' -> BADM, 'CSE' -> CS), then near spellings ('PYSC' -> PSYC)."""
+    import difflib
+    names = _subject_names()
+    w = re.sub(r"[^A-Za-z]", "", word or "").upper()
+    if not w or not names:
+        return []
+    found = [c for c in sorted(names) if c != w and (c.startswith(w) or w.startswith(c))]
+    found += difflib.get_close_matches(w, list(names), n=limit, cutoff=0.7)
+    return [f"{c} ({names[c]})" if names[c] else c for c in dict.fromkeys(found) if c != w][:limit]
+
+
+def _unknown_subject_note(sql: str):
+    """An empty result on a subject code that isn't a department: name the
+    closest real ones. "sections of bad," queried subject = 'BAD' and was
+    answered "BAD does not exist" - the student meant BADM and had to
+    retype it."""
+    names = _subject_names()
+    unknown = [s for s in sql_guard.subject_codes(sql) if names and s not in names]
+    if not unknown:
+        return None
+    parts, lookup = [], False
+    for code in unknown:
+        close = _close_subjects(code)
+        parts.append(f"'{code}' is not a department code. Closest: {'; '.join(close)}." if close
+                     else f"'{code}' is not a department code.")
+        lookup = lookup or not close
+    return ("[No rows. " + " ".join(parts)
+            + (" If the student most likely meant one of these, say which you assumed and answer "
+               "for it; otherwise ask which department they mean." if not lookup else
+               " Look a department up by a word of its name: SELECT code, name FROM subjects "
+               "WHERE search_text LIKE '%word%'.") + "]")
 
 
 _QUESTION_CODE_RE = re.compile(r"\b([A-Za-z]{2,4})\s?-?\s?\d{3}\b")
@@ -451,6 +632,27 @@ def _dropped_filter_note(sql: str):
         return None
     return (f"[Check: the question names {' and '.join(parts)}, but this query doesn't filter "
             "on it. Add the filter unless the question clearly means otherwise.]")
+
+
+_NARROWING_RE = re.compile(r"\b(course_number\s*(?:=|I?LIKE|IN)|crn\s*(?:=|IN)|instructor\w*|title_search|"
+                           r"course_label|credit_\w+|grad_\w+|description|enrollment_status|group\s+by)",
+                           re.IGNORECASE)
+
+
+def _whole_department_note(sql: str, result):
+    """A cut-off list of a department's rows with no narrower filter: the
+    whole department is what department_overview is for. With conversation
+    history in the request, "tell me about badm sections" selected every
+    BADM section, saw a fraction of them and spent three more queries."""
+    if "[Result truncated" not in (result or "") or "sections" not in sql.lower():
+        return None
+    codes = sql_guard.subject_codes(sql)
+    where = re.split(r"\bwhere\b", sql, maxsplit=1, flags=re.IGNORECASE)[-1]
+    if not codes or _NARROWING_RE.search(where):
+        return None
+    return (f"[Check: this lists every {', '.join(codes)} row. For a whole department call "
+            f"department_overview(subjects='{','.join(codes)}') instead - one call, every course "
+            "with its section count.]")
 
 
 _TITLE_PHRASE_RE = re.compile(r"\b(?:title_search|course_label)\s+I?LIKE\s+'%([a-z]+(?:\s+[a-z]+)+)%'",
@@ -591,8 +793,10 @@ class _CappedSQLDatabase(SQLDatabase):
                     "Repeated query: this exact statement already failed in this answer "
                     f"({text[:300]}). Don't send it again - fix the SQL (check parentheses "
                     "and quotes) or answer without it.")
-            return ("[You already ran this exact query in this answer; its result is repeated "
-                    "below. Don't run it again - answer from it or change the query.]\n" + text)
+            again = ("[You already ran this exact query in this answer; its result is repeated "
+                     "below. Don't run it again - answer from it or change the query.]\n" + text)
+            _spend(again)
+            return again
         try:
             if isinstance(command, str):
                 reason = sql_guard.check_select(command, self.dialect, self.get_usable_table_names())
@@ -609,23 +813,27 @@ class _CappedSQLDatabase(SQLDatabase):
                         "NULL when ARRANGED), never start_time/end_time text - e.g. after 2 pm "
                         "= start_min >= 840.")
                 command = _normalize_name_literals(command)
-            result = self._capped(super().run(command, fetch=fetch, **kwargs))
+            raw = self._rows_text(command, fetch=fetch, **kwargs)
+            result = self._capped(raw, _data_room(raw))
         except Exception as exc:
             if log is not None and key:
                 log[key] = (False, str(exc))
             raise
         if isinstance(command, str) and not (result or "").strip():
-            result = (self._latest_term_rerun(command, **kwargs) or _unsynced_note(command)
+            result = (_unknown_subject_note(command)
+                      or self._latest_term_rerun(command, **kwargs) or _unsynced_note(command)
                       or self._name_matches(command) or _instructor_note(command)
                       or _title_note(command) or _subjects_note(command) or result)
         if isinstance(command, str):
-            notes = [n for n in (_initial_note(command) if (result or "").strip() else None,
+            notes = [n for n in (_whole_department_note(command, result),
+                                 _initial_note(command) if (result or "").strip() else None,
                                  _dropped_filter_note(command), _semester_note(command),
                                  _term_note(command), _short_like_note(command)) if n]
             if notes:
                 result = "\n".join([result] + notes) if (result or "").strip() else "\n".join(notes)
         if log is not None and key:
             log[key] = (True, result if isinstance(result, str) else str(result))
+        _spend(result)
         return result
 
     def _name_matches(self, command: str):
@@ -669,8 +877,7 @@ class _CappedSQLDatabase(SQLDatabase):
         if not latest:
             return None
         season, year = latest.split()
-        missing = [s.upper() for s in _SQL_SUBJECT_RE.findall(command)
-                   if s.upper() in newest and newest[s.upper()] != latest]
+        missing = [s for s in sql_guard.subject_codes(command) if s in newest and newest[s] != latest]
         via_subjects = re.search(r"\bsubjects\b", command, re.IGNORECASE) is not None
         if not missing and not via_subjects:
             return None
@@ -705,22 +912,69 @@ class _CappedSQLDatabase(SQLDatabase):
                     eq.set("expression", exp.Literal.number(t_year)); changed = True
             if not changed:
                 return None
-            rows = self._capped(super().run(tree.sql(dialect="postgres" if db.is_postgres() else "sqlite"),
-                                            **kwargs))
+            raw = self._rows_text(tree.sql(dialect="postgres" if db.is_postgres() else "sqlite"), **kwargs)
+            rows = self._capped(raw, _data_room(raw))
         except Exception:
             return None
         return rows if (rows or "").strip() else None
 
+    def _rows_text(self, command, fetch="all", **kwargs):
+        """Run a query and return its rows as a small table: the column names
+        on the first line, then one row per line, fields separated by "|", a
+        NULL left empty; "" for no rows. LangChain's default is the Python
+        repr of a list of tuples ("[('10398', '199', None, 'A'), ..."), which
+        spends tokens on quotes, commas and brackets and carries no column
+        names. Measured on four typical results (exact counts): this layout
+        is 18-26% fewer tokens for the same rows (" | " saved 13-22%, tabs
+        23-25%) - and there are only ~1,500 tokens of room for data in a
+        whole answer on Groq's free tier."""
+        if not isinstance(command, str) or fetch == "cursor":
+            return super().run(command, fetch=fetch, **kwargs)
+        rows = self._execute(command, fetch, parameters=kwargs.get("parameters"),
+                             execution_options=kwargs.get("execution_options"))
+        if not rows:
+            return ""
+
+        def cell(value):
+            if value is None:
+                return ""
+            text = " ".join(str(value).replace("|", "/").split())
+            limit = self._max_string_length
+            return text if len(text) <= limit else text[:limit].rsplit(" ", 1)[0] + "..."
+
+        lines = ["|".join(str(c) for c in rows[0])]
+        lines += ["|".join(cell(v) for v in r.values()) for r in rows]
+        return "\n".join(lines)
+
     @staticmethod
-    def _capped(result):
-        if isinstance(result, str) and len(result) > MAX_QUERY_RESULT_CHARS:
-            cut = result[:MAX_QUERY_RESULT_CHARS].rsplit("),", 1)[0] + ")]"
-            note = (
-                f"[Result truncated: {len(result):,} characters returned, only the first "
-                f"{len(cut):,} shown. Do not page through it - rewrite the query with a tighter "
-                "filter, DISTINCT, GROUP BY or COUNT.]"
-            )
-            return cut + "\n" + note
+    def _capped(result, room=None):
+        """Cut a result to the per-call cap, or to `room` (what this answer's
+        data budget has left) when that is smaller. Whole rows are kept, and
+        the note says how many of how many."""
+        limit = MAX_QUERY_RESULT_CHARS if room is None else min(MAX_QUERY_RESULT_CHARS, room)
+        if isinstance(result, str) and len(result) > limit:
+            lines = result.split("\n")
+            kept, size = lines[:2], len(lines[0]) + 1 + len(lines[1]) if len(lines) > 1 else len(lines[0])
+            for line in lines[2:]:
+                size += len(line) + 1
+                if size > limit:
+                    break
+                kept.append(line)
+            total, shown = len(lines) - 1, len(kept) - 1
+            if limit < MAX_QUERY_RESULT_CHARS:
+                note = (
+                    f"[Result truncated: {total:,} rows returned, only the first {shown:,} shown - "
+                    "this answer has little room left for data. You have NOT seen every row. Answer "
+                    "from what you have and say it is partial, or run ONE narrower query (COUNT or "
+                    "GROUP BY, or a tighter filter).]"
+                )
+            else:
+                note = (
+                    f"[Result truncated: {total:,} rows returned, only the first {shown:,} shown. "
+                    "Do not page through it - rewrite the query with a tighter filter, DISTINCT, "
+                    "GROUP BY or COUNT.]"
+                )
+            return "\n".join(kept) + "\n" + note
         return result
 
 
@@ -1241,7 +1495,7 @@ def _make_course_content_search_tool(tool_llm):
         body = "\n\n".join(fmt(m) for m in matches)
         if others:
             body += "\n\nOther departments:\n\n" + "\n\n".join(fmt(m) for m in others)
-        return head + body
+        return fit_budget(head + body)
 
     return course_content_search
 
@@ -1428,9 +1682,156 @@ def _make_course_facts_tool():
         take X", the courses the student says they've taken, comma-separated
         (e.g. 'CS 225, MATH 241'); the result then says which prerequisite
         lines are met and which are missing."""
-        return course_facts_text(course, completed)
+        return fit_budget(course_facts_text(course, completed))
 
     return course_facts
+
+
+_OVERVIEW_LIST_MAX = 80     # several departments: list every course up to this many in all
+_OVERVIEW_TERM_RE = re.compile(r"\b(fall|spring|summer|winter)\s*(20\d\d)\b", re.IGNORECASE)
+
+
+def department_overview_text(subjects: str, term: str = "", level: str = "") -> str:
+    """What one or more departments offer, written as the finished answer
+    (Markdown, courses linked): each course with its number of sections for
+    one term - the term asked for, else the department's latest term with
+    rows. One department is listed in full; several are listed while they
+    total at most _OVERVIEW_LIST_MAX courses, and above that get a row of
+    totals each and a prompt to pick one.
+
+    It is the answer, not material for one: the tool returns it directly
+    (see _make_department_overview_tool), so every branch is worded for the
+    student. Whole-department questions were the assistant's slowest and
+    least reliable: with only SQL, "tell me about badm sections" took four
+    queries and 158 s to answer with a per-term count (and, with history in
+    the request, failed on the request size limit), and "what courses are
+    offered by gies" failed or took 110-160 s on three tries. Departments
+    are resolved like course_content_search's (codes, or words such as
+    'Gies'); a code that isn't one gets the closest real codes."""
+    lvl = (re.search(r"[1-9]", level or "") or [None])[0]
+    tm = _OVERVIEW_TERM_RE.search(term or "")
+    asked = f"{tm.group(1).lower()} {tm.group(2)}" if tm else None
+    conn = db.get_readonly_connection()
+    try:
+        codes, unresolved = _resolve_subjects(conn, subjects)
+        if not codes:
+            if not unresolved:
+                return "Which department? Give a code like BADM or a name like Finance."
+            close = list(dict.fromkeys(c for word in unresolved for c in _close_subjects(word)))
+            named = ", ".join(f'"{w}"' for w in unresolved)
+            if close:
+                return (f"I couldn't find a department called {named}. Did you mean "
+                        f"{' or '.join(close)}?")
+            return (f"I couldn't find a department called {named}. Try its subject code "
+                    "(like BADM) or a word from its name.")
+        marks = ", ".join("?" for _ in codes)
+        info = {r["code"]: r for r in conn.execute(
+            f"SELECT code, name, college FROM subjects WHERE code IN ({marks})", codes).fetchall()}
+        sql = ("SELECT subject, year, semester, course_number, MAX(course_label) AS title, "
+               f"COUNT(*) AS n FROM sections WHERE subject IN ({marks}) AND year IS NOT NULL "
+               "AND semester IS NOT NULL")
+        params = list(codes)
+        if lvl:
+            sql += " AND course_number LIKE ?"
+            params.append(f"{lvl}%")
+        rows = conn.execute(sql + " GROUP BY subject, year, semester, course_number", params).fetchall()
+    finally:
+        conn.close()
+
+    by_subject: dict = {}
+    for r in rows:
+        by_subject.setdefault(r["subject"], {}).setdefault(f"{r['semester']} {r['year']}", []).append(r)
+    term_key = lambda t: (int(t.split()[1]), _SEASON_ORDER.get(t.split()[0], 9))
+    chosen = {}
+    for code in codes:
+        terms = by_subject.get(code)
+        if terms:
+            chosen[code] = asked if asked in terms else max(terms, key=term_key)
+    total = sum(len(by_subject[c][t]) for c, t in chosen.items())
+    scope = f"{lvl}00-level " if lvl else ""
+    plural = lambda n, word: f"{n:,} {word}{'' if n == 1 else 's'}"
+
+    def full_name(code):
+        row = info.get(code)
+        return f"{code} ({row['name']})" if row is not None and row["name"] else code
+
+    if not total:
+        names = ", ".join(full_name(c) for c in codes)
+        return (f"There's no data for that in this dataset yet. {names} has no {scope}sections "
+                "in the data.")
+
+    listing = len(chosen) == 1 or total <= _OVERVIEW_LIST_MAX
+    out = []
+    if not listing:
+        out.append(f"That covers {plural(len(chosen), 'department')} and {plural(total, f'{scope}course')} - "
+                   "too many to list at once. Here is each department's size:\n")
+        out.append("| Department | Term | Courses | Sections |\n|---|---|---|---|")
+    for code in codes:
+        if code not in chosen:
+            if listing:
+                out.append(f"**{full_name(code)}** has no {scope}sections in the data.\n")
+            else:
+                out.append(f"| {full_name(code)} | - | 0 | 0 |")
+            continue
+        terms, shown = by_subject[code], chosen[code]
+        courses = sorted(terms[shown], key=lambda r: r["course_number"])
+        n_sections = sum(r["n"] for r in courses)
+        if not listing:
+            out.append(f"| {full_name(code)} | {shown} | {len(courses)} | {n_sections} |")
+            continue
+        row = info.get(code)
+        college = f", {row['college']}" if row is not None and row["college"] and len(codes) == 1 else ""
+        head = (f"**{full_name(code)}**{college}: {plural(n_sections, 'section')} across "
+                f"{plural(len(courses), f'{scope}course')} in {shown}.")
+        if asked and shown != asked:
+            head = (f"**{full_name(code)}**{college} has no {asked} schedule in the data yet. Its latest "
+                    f"term is {shown}: {plural(n_sections, 'section')} across "
+                    f"{plural(len(courses), f'{scope}course')}.")
+        out.append(head + "\n")
+        out.append("| Course | Title | Sections |\n|---|---|---|")
+        out += [f"| [{code} {r['course_number']}](/?course={code}-{r['course_number']}) | "
+                f"{(r['title'] or '').replace('|', '/')} | {r['n']} |" for r in courses]
+        others = sorted((t for t in terms if t != shown), key=term_key, reverse=True)
+        if others:
+            out.append("\nAlso in the data: " + ", ".join(
+                f"{t} ({plural(sum(r['n'] for r in terms[t]), 'section')})" for t in others[:4]) + ".")
+        out.append("")
+    first = next(iter(chosen))
+    if listing:
+        example = sorted(by_subject[first][chosen[first]], key=lambda r: -r["n"])[0]["course_number"]
+        out.append(f"Ask about any course for its sections, times and instructors, for example "
+                   f"\"{first} {example} sections\".")
+    else:
+        out.append(f"\nAsk for one department or a level to see its courses, for example "
+                   f"\"{first} courses\" or \"{first} 400-level courses\".")
+    return "\n".join(out).strip()
+
+
+def _make_department_overview_tool():
+    from langchain_core.tools import tool
+
+    # return_direct: the tool's text is the answer. A second model call only
+    # re-typed the same list - ~5,500 more tokens against 8,000 a minute,
+    # which is a wait of tens of seconds (50 s for "show me sections under
+    # badm") - and had to be cut to the data budget first. Not fit_budget()-ed
+    # for the same reason: it never goes back to the model.
+    @tool(return_direct=True)
+    def department_overview(subjects: str, term: str = "", level: str = "") -> str:
+        """Answers a whole-department or whole-college question by itself:
+        its result (the department's courses, each with its number of
+        sections) is shown to the student as the final answer. Use it ONLY
+        when that list is all the question asks for - "sections under BADM",
+        "what does Gies offer", "all the STAT courses", "BADM 400-level
+        courses". Anything more specific (instructors, times, credits,
+        open seats, one named course, a count or a comparison) needs SQL or
+        course_facts instead.
+        subjects: code(s) ('BADM', 'CS,ECE') or words as the student wrote
+        them ('Gies', 'agriculture'). term: e.g. 'fall 2026' if the question
+        names one; empty = each department's latest term. level: one digit
+        ('4' = 400-level) or empty."""
+        return department_overview_text(subjects, term, level)
+
+    return department_overview
 
 
 def _next_terms(latest) -> list:
@@ -1446,8 +1847,18 @@ def _next_terms(latest) -> list:
     return out
 
 
-@lru_cache(maxsize=1)
+def _today() -> str:
+    from datetime import date
+    return date.today().isoformat()
+
+
 def _data_notes() -> str:
+    """Today's DATA NOTES (see _data_notes_for)."""
+    return _data_notes_for(_today())
+
+
+@lru_cache(maxsize=2)
+def _data_notes_for(today: str) -> str:
     """The DATA NOTES block appended to the prompt: facts about the live data
     the model can't know and would otherwise guess or discover the slow way.
 
@@ -1466,8 +1877,11 @@ def _data_notes() -> str:
       were, until 2026-09-28): meeting-time questions there must say the times
       aren't loaded, not "none".
 
-    Process-cached: this only changes on a manual re-scrape, and the app
-    restarts on deploy. Fails soft to "" so a DB hiccup at build time just
+    Cached per day, not per process: the block opens with today's date,
+    and a server that stayed up past midnight kept telling the model
+    yesterday's (or last week's) date - which is what "is it too late to
+    drop?" is answered from. A re-scrape also shows up the next day at the
+    latest. Fails soft to "" so a DB hiccup at build time just
     falls back to the bare SYSTEM_CONTEXT. Must never contain { or } - the
     prompt is str.format()-ed (see render_system_context)."""
     try:
@@ -1499,9 +1913,8 @@ def _data_notes() -> str:
     terms = sorted(terms, key=lambda r: (r["year"], _SEASON_ORDER.get(r["semester"], 9)), reverse=True)
     names = [f"{r['semester']} {r['year']}" for r in terms]
     coded = [f"{r['semester']} {r['year']}" for r in terms if (r["coded"] or 0) * 2 > r["n"]]
-    from datetime import date
     notes = [
-        f"- Today is {date.today().isoformat()}.",
+        f"- Today is {today}.",
         f"- Terms in the data, newest first: {', '.join(names)}. The latest is "
         f"{names[0]}: read 'this', 'current', 'next' or 'upcoming' semester as that, "
         "and never filter on a term not in this list.",
@@ -1602,10 +2015,65 @@ def _sql_database() -> "_CappedSQLDatabase":
     return _cached(_SQL_DBS, _db_uri(), make)
 
 
+_CATALOG_CHECK_SECONDS = int(os.environ.get("CATALOG_CHECK_SECONDS", "600"))
+_CATALOG = {"checked": 0.0, "stamp": None}
+
+
+def _catalog_stamp():
+    """A value that changes when sections are added or re-scraped: the
+    newest scrape time and the row count (one 25 ms query on Neon)."""
+    conn = db.get_readonly_connection()
+    try:
+        row = conn.execute("SELECT MAX(scraped_at) AS m, COUNT(*) AS n FROM sections").fetchone()
+    finally:
+        conn.close()
+    return (str(row["m"]), row["n"])
+
+
+def refresh_catalog_caches(force: bool = False) -> bool:
+    """Drop everything cached about the catalog when the catalog has changed:
+    which departments are synced for which term, department names, the DATA
+    NOTES in the prompt (and the agents built with them) and the sync dates
+    in the Sources footer. They were cached for the life of the process, so
+    after a department was synced the assistant went on saying "not synced
+    yet" - and offering an older term - until the next restart. Checked at
+    most every CATALOG_CHECK_SECONDS (default 600), from build_agent, which
+    never runs on the event loop. Returns True when caches were dropped; a
+    database error leaves them as they are."""
+    import time
+    now = time.monotonic()
+    with _CACHE_LOCK:
+        if not force and now - _CATALOG["checked"] < _CATALOG_CHECK_SECONDS:
+            return False
+        _CATALOG["checked"] = now
+    try:
+        stamp = _catalog_stamp()
+    except Exception:
+        return False
+    with _CACHE_LOCK:
+        changed = _CATALOG["stamp"] is not None and stamp != _CATALOG["stamp"]
+        _CATALOG["stamp"] = stamp
+        if changed:
+            for cached in (_subject_coverage, _subject_names, _department_name_patterns, _data_notes_for):
+                clear = getattr(cached, "cache_clear", None)   # a test may have swapped one for a stub
+                if clear:
+                    clear()
+            from app import citations
+            citations._freshness_map.cache_clear()
+            _AGENTS.clear()
+    return changed
+
+
 def build_agent(verbose: bool = False, streaming: bool = False, model: str | None = None):
     """The agent executor for these settings, built on first use and then
-    reused for the life of the process (see the cache notes above)."""
-    return _cached(_AGENTS, (verbose, streaming, model, _env_signature()),
+    reused for the rest of the day (see the cache notes above; the prompt
+    carries today's date, so a new day builds a new one) - or until the
+    catalog changes (refresh_catalog_caches)."""
+    refresh_catalog_caches()
+    today = _today()
+    for stale in [k for k in list(_AGENTS) if k[-1] != today]:
+        _AGENTS.pop(stale, None)   # built with an earlier day's date in its prompt
+    return _cached(_AGENTS, (verbose, streaming, model, _env_signature(), today),
                    lambda: _new_agent(verbose=verbose, streaming=streaming, model=model))
 
 
@@ -1638,9 +2106,10 @@ def _new_agent(verbose: bool = False, streaming: bool = False, model: str | None
         # Query expansion must not stream into the answer, so give the tool a
         # dedicated non-streaming client when the agent itself is streaming.
         tool_llm = llm if not streaming else _build_llm(streaming=False, model=model)[0]
-        extra_tools = [_make_course_facts_tool(), _make_course_content_search_tool(tool_llm)]
+        extra_tools = [_make_course_facts_tool(), _make_department_overview_tool(),
+                       _make_course_content_search_tool(tool_llm)]
     else:
-        extra_tools = [_make_course_facts_tool()]
+        extra_tools = [_make_course_facts_tool(), _make_department_overview_tool()]
 
     try:
         agent = create_sql_agent(
@@ -1670,6 +2139,10 @@ def _new_agent(verbose: bool = False, streaming: bool = False, model: str | None
         )
     except Exception as exc:
         raise RuntimeError(f"Couldn't build the SQL agent (provider: {provider}): {exc}") from exc
+    # Tool names and descriptions ride along on every request: count them in
+    # the data budget (see _start_data_budget).
+    _TOOL_TEXT.update(text=" ".join(f"{t.name} {t.description or ''}" for t in agent.tools),
+                      count=len(agent.tools))
     return agent
 
 
@@ -1708,6 +2181,7 @@ _TOOL_LABELS = {
     "sql_db_list_tables": "Looking at the tables…",
     "course_content_search": "Searching course descriptions…",
     "course_facts": "Looking up the course…",
+    "department_overview": "Looking up the department…",
 }
 
 
@@ -1715,6 +2189,18 @@ AGENT_STOPPED_RAW = "Agent stopped due to max iterations."
 AGENT_STOPPED_FRIENDLY = (
     "That question needed more steps than I can take in one go. "
     "Try narrowing it, for example to one subject or level."
+)
+
+
+# The model's last message was empty after its tools ran. An ask_log error
+# marker: it was logged as `answered`, counted against the student's rate
+# limit and given a Sources footer (2026-09-29, 10-01, 10-03).
+NO_ANSWER = "I couldn't produce an answer for that. Try asking it again, or a little more specifically."
+
+
+REQUEST_TOO_LARGE = (
+    "That question pulled in more data than I can read at once. "
+    "Try narrowing it, for example to one department, level or term."
 )
 
 
@@ -1733,6 +2219,11 @@ def friendly_error(exc: Exception) -> str:
     don't count against a user's rate limit."""
     msg = str(exc)
     low = msg.lower()
+    if "request too large" in low or "error code: 413" in low:
+        # Groq's per-request size ceiling. The data budget should prevent it;
+        # if one slips through, say what the student can do about it.
+        print(f"[agent] request too large: {msg[:300]}", flush=True)
+        return REQUEST_TOO_LARGE
     if "rate limit" in low or "429" in msg:
         return "The LLM provider's rate limit was hit. Wait a bit and try again."
     if "authentication" in low or "api key" in low or "401" in msg:
@@ -1768,6 +2259,11 @@ _HISTORY_A_CHARS = 250
 # from CS?", "give a description for each") needs the list it refers to.
 # 26 of 164 logged questions were follow-ups like that.
 _HISTORY_LAST_A_CHARS = 1200
+# ... but shorter when the page also sent the query it came from: a
+# refinement reruns that query, so the answer text is only needed for
+# references like "the second one" - and every history token is re-sent on
+# each step and comes out of the room for data (see the data budget).
+_HISTORY_LAST_A_BASIS_CHARS = 700
 # The query (or tool call) the latest answer came from, sent back by the page
 # so "which of those are 3 credits?" can rerun it with one filter added
 # instead of rebuilding it from the answer text ("and which of those..."
@@ -1782,19 +2278,39 @@ def _format_history(history) -> str:
     lines = []
     turns = [t for t in list(history)[-_HISTORY_MAX_TURNS:] if isinstance(t, dict)]
     for i, turn in enumerate(turns):
+        last = i == len(turns) - 1
         q = str(turn.get("q", "")).strip().replace("\n", " ")[:_HISTORY_Q_CHARS]
-        a = str(turn.get("a", "")).strip().replace("\n", " ")
-        cap = _HISTORY_LAST_A_CHARS if i == len(turns) - 1 else _HISTORY_A_CHARS
+        a = _plain_answer(str(turn.get("a", "")))
+        basis = " ".join(str(turn.get("basis") or "").split())[:_HISTORY_BASIS_CHARS] if last else ""
+        cap = _HISTORY_A_CHARS if not last else _HISTORY_LAST_A_BASIS_CHARS if basis else _HISTORY_LAST_A_CHARS
         if len(a) > cap:
             a = a[:cap].rstrip() + "…"
         if q:
             lines.append(f"Student: {q}")
         if a:
             lines.append(f"Assistant: {a}")
-        basis = " ".join(str(turn.get("basis") or "").split())[:_HISTORY_BASIS_CHARS]
-        if basis and i == len(turns) - 1:
+        if basis:
             lines.append(f"(That answer came from: {basis})")
     return "\n".join(lines)
+
+
+_MD_LINK_RE = re.compile(r"\[([^\]\n]*)\]\([^)\s]*\)")
+_MD_TABLE_RULE_RE = re.compile(r"\|(?:\s*:?-{2,}:?\s*\|)+")
+_SOURCES_FOOTER_RE = re.compile(r"\n*-{3,}\s*\n\*Sources:.*\Z", re.DOTALL)
+
+
+def _plain_answer(answer: str) -> str:
+    """An earlier answer as it is sent back in the history: the same words,
+    without what only the page needs - link targets ("[Beckman, M]
+    (/instructor.html?name=Beckman%2C%20M)" -> "Beckman, M"), table rule
+    rows, bold marks and the Sources footer. A table of linked instructors
+    was ~40% link targets, and the history is re-sent on every step of the
+    next answer; the model writes links from its own rules, not from these."""
+    out = _SOURCES_FOOTER_RE.sub("", answer or "")
+    out = _MD_LINK_RE.sub(r"\1", out)
+    out = _MD_TABLE_RULE_RE.sub("", out)
+    out = out.replace("**", "")
+    return " ".join(out.split())
 
 
 def _answer_basis(cap) -> str:
@@ -1882,10 +2398,11 @@ def ask(question: str, verbose: bool = False, history=None, _model: str | None =
     from app.citations import SQLCapture, sources_footer
 
     cap = SQLCapture()
-    new_query_log(question)
+    agent_input = build_agent_input(question, history)
+    new_query_log(question, agent_input)
     try:
         result = agent.invoke(
-            {"input": build_agent_input(question, history)},
+            {"input": agent_input},
             config={"callbacks": [cap]},
         )
     except Exception as exc:  # noqa: BLE001 - provider/network/agent errors all land here
@@ -1894,7 +2411,7 @@ def ask(question: str, verbose: bool = False, history=None, _model: str | None =
             return ask(question, verbose=verbose, history=history, _model=backup)
         return friendly_error(exc)
 
-    answer = tidy_answer(friendly_stop(result.get("output", str(result))))
+    answer = tidy_answer(friendly_stop(result.get("output", str(result)))) or NO_ANSWER
     if classify_answer(answer) == "answered":
         answer += sources_footer(cap.source_sql, cap.rag_used, question)
     return answer
@@ -2002,12 +2519,13 @@ async def astream_answer(question: str, history=None, _model: str | None = None)
     streamed: list[str] = []
     final: str | None = None
     tool_depth = 0
-    new_query_log(q)
+    agent_input = build_agent_input(q, history)
+    new_query_log(q, agent_input)
     notices: asyncio.Queue = asyncio.Queue()
     _NOTICE_TARGET.set((asyncio.get_running_loop(), notices))
     try:
         async for source, ev in _with_notices(agent.astream_events(
-            {"input": build_agent_input(q, history)},
+            {"input": agent_input},
             version="v2",
             config={"callbacks": [cap]},
         ), notices):
@@ -2043,7 +2561,13 @@ async def astream_answer(question: str, history=None, _model: str | None = None)
                     if _is_runaway(streamed):
                         final = None   # the agent never finished; use what streamed
                         break
-            elif kind == "on_chain_end" and ev.get("name") == "AgentExecutor":
+            # The outermost chain is the agent executor (create_sql_agent
+            # names it "SQL Agent Executor"; the check used to be for
+            # "AgentExecutor" and never matched, so only streamed tokens
+            # became the answer - a tool that returns directly, or the
+            # iteration-cap message, streams none and came out as "I
+            # couldn't produce an answer for that.").
+            elif kind == "on_chain_end" and not ev.get("parent_ids"):
                 out = ev.get("data", {}).get("output")
                 if isinstance(out, dict):
                     final = out.get("output")
@@ -2062,8 +2586,7 @@ async def astream_answer(question: str, history=None, _model: str | None = None)
         yield "done", friendly_error(exc)
         return
 
-    answer = tidy_answer(friendly_stop(
-        final or "".join(streamed) or "I couldn't produce an answer for that."))
+    answer = tidy_answer(friendly_stop(final or "".join(streamed) or NO_ANSWER))
     if classify_answer(answer) == "answered":
         footer = sources_footer(cap.source_sql, cap.rag_used or rag_used, q)
         if footer:

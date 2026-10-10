@@ -165,8 +165,9 @@ def run_prod_arm(item: dict) -> dict:
     t0 = time.monotonic()
     try:
         agent = build_agent()
-        new_query_log(item["question"])   # as production does, per answer
-        out = agent.invoke({"input": build_agent_input(item["question"], item.get("history"))},
+        agent_input = build_agent_input(item["question"], item.get("history"))
+        new_query_log(item["question"], agent_input)   # as production does, per answer
+        out = agent.invoke({"input": agent_input},
                            config={"callbacks": [cap, usage]})
         answer = out.get("output", str(out)) if isinstance(out, dict) else str(out)
         answer = tidy_answer(answer)   # as production does

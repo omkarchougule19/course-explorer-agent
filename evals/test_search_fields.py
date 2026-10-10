@@ -211,6 +211,19 @@ hist = agent._format_history([{"q": "a", "a": "x", "basis": "SELECT 1 FROM old"}
                               {"q": "b", "a": "y", "basis": "SELECT DISTINCT subject FROM sections WHERE subject = 'CS'"}])
 check("the latest turn's basis is shown", "(That answer came from: SELECT DISTINCT subject FROM sections WHERE subject = 'CS')" in hist)
 check("older turns' bases are not", "SELECT 1 FROM old" not in hist)
+# what only the page needs is left out of the history (it is re-sent on every step)
+linked = ("**CS 225** sections (fall 2026):\n\n| CRN | Instructor |\n|---|---|\n"
+          "| 35917 | [Beckman, M](/instructor.html?name=Beckman%2C%20M) |\n"
+          "| 35926 | [Solomon, B](/instructor.html?name=Solomon%2C%20B) |\n\n"
+          "See [CS 225](/?course=CS-225).\n\n---\n*Sources: UIUC Course Explorer (CS synced 2026-08-25).*")
+plain = agent._plain_answer(linked)
+check("link targets, table rules, bold and the Sources footer are dropped",
+      plain == "CS 225 sections (fall 2026): | CRN | Instructor | | 35917 | Beckman, M | "
+               "| 35926 | Solomon, B | See CS 225.")
+check("an answer without markup is unchanged", agent._plain_answer("CS 225 has 12 sections.") == "CS 225 has 12 sections.")
+with_basis = agent._format_history([{"q": "b", "a": long, "basis": "SELECT 1 FROM sections"}])
+check("with its query sent back, the latest answer is kept shorter",
+      agent._HISTORY_LAST_A_BASIS_CHARS < len(with_basis.splitlines()[1]) < agent._HISTORY_LAST_A_BASIS_CHARS + 20)
 
 
 class _Cap:
