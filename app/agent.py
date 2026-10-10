@@ -658,18 +658,21 @@ _NARROWING_RE = re.compile(r"\b(course_number\s*(?:=|I?LIKE|IN)|crn\s*(?:=|IN)|i
 
 def _whole_department_note(sql: str, result):
     """A cut-off list of a department's rows with no narrower filter: the
-    whole department is what department_overview is for. With conversation
-    history in the request, "tell me about badm sections" selected every
-    BADM section, saw a fraction of them and spent three more queries."""
+    whole department is what department_overview is for, and the rows are
+    replaced by this pointer (see _CappedSQLDatabase.run). Appended as a
+    hint beside the cut-off rows it wasn't enough: live on Groq, "badm i
+    mean" listed every BADM section, saw a fraction, ran three more queries
+    and only then called the tool - 193 s, and an answer mixing terms."""
     if "[Result truncated" not in (result or "") or "sections" not in sql.lower():
         return None
     codes = sql_guard.subject_codes(sql)
     where = re.split(r"\bwhere\b", sql, maxsplit=1, flags=re.IGNORECASE)[-1]
     if not codes or _NARROWING_RE.search(where):
         return None
-    return (f"[Check: this lists every {', '.join(codes)} row. For a whole department call "
-            f"department_overview(subjects='{','.join(codes)}') instead - one call, every course "
-            "with its section count.]")
+    return (f"[Not shown: this lists every {', '.join(codes)} row, too many to read. For a whole "
+            f"department call department_overview(subjects='{','.join(codes)}') - one call, every "
+            "course with its section count. For something narrower, add the filter (a course, an "
+            "instructor, a level) or COUNT / GROUP BY.]")
 
 
 _TITLE_PHRASE_RE = re.compile(r"\b(?:title_search|course_label)\s+I?LIKE\s+'%([a-z]+(?:\s+[a-z]+)+)%'",
@@ -853,9 +856,19 @@ class _CappedSQLDatabase(SQLDatabase):
                       or self._latest_term_rerun(command, **kwargs) or _unsynced_note(command)
                       or self._name_matches(command) or _instructor_note(command)
                       or _title_note(command) or _subjects_note(command) or result)
-        if isinstance(command, str):
-            notes = [n for n in (_whole_department_note(command, result),
-                                 _initial_note(command) if (result or "").strip() else None,
+        pointer = _whole_department_note(command, result) if isinstance(command, str) else None
+        if pointer:
+            # The partial rows are dropped, not shown beside the pointer: they
+            # cost most of the answer's data budget and invite an answer built
+            # on a fraction of the department. And the call isn't counted, so
+            # the overview the model calls next is still the answer's first
+            # tool call and can be returned directly.
+            result = pointer
+            state = _ANSWER.get()
+            if state is not None:
+                state["tool_calls"] -= 1
+        elif isinstance(command, str):
+            notes = [n for n in (_initial_note(command) if (result or "").strip() else None,
                                  _dropped_filter_note(command), _semester_note(command),
                                  _term_note(command), _short_like_note(command)) if n]
             if notes:
@@ -946,6 +959,15 @@ class _CappedSQLDatabase(SQLDatabase):
         except Exception:
             return None
         return rows if (rows or "").strip() else None
+
+    def get_table_info_no_throw(self, table_names=None):
+        """The schema tool's output, counted against the data budget like any
+        other result. It wasn't: a follow-up ("badm i mean", live on Groq,
+        2026-10-10) read three tables' schemas (~1,200 tokens) on top of its
+        queries and was refused as too large (8,187 of 8,000 tokens) - the
+        failure the budget exists to prevent."""
+        _note_tool_call()
+        return fit_budget(super().get_table_info_no_throw(table_names))
 
     def _rows_text(self, command, fetch="all", **kwargs):
         """Run a query and return its rows one per line, fields separated by
@@ -1885,9 +1907,24 @@ def _make_department_overview_tool():
         state = _ANSWER.get()
         if state is not None:
             state["direct"] = text if first else None
-        return fit_budget(text)
+        return fit_budget(_overview_for_model(text))
 
     return department_overview
+
+
+_OVERVIEW_ROW_RE = re.compile(r"^\| \[([^\]]+)\]\([^)]*\) \| (.*?) \| (\d+) \|$", re.MULTILINE)
+
+
+def _overview_for_model(text: str) -> str:
+    """The overview as the model reads it when it is not the answer itself:
+    the same facts without the page markup - "BADM 199 Undergraduate Open
+    Seminar (3); BADM 210 ..." - about half the tokens of the linked table
+    (BADM: 1,826 -> ~860), so a whole department fits the data budget
+    instead of being cut to "the list continues"."""
+    out = _OVERVIEW_ROW_RE.sub(lambda m: f"{m.group(1)} {m.group(2)} ({m.group(3)});", text)
+    out = out.replace("| Course | Title | Sections |\n|---|---|---|\n", "Courses (sections): ")
+    out = re.sub(r";\n(?=[A-Z]{2,4} \d)", "; ", out)
+    return out.replace("**", "")
 
 
 _DIRECT_EXECUTORS: dict = {}

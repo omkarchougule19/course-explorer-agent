@@ -678,11 +678,27 @@ because other docs cite them.
     baseline; 8 of 8 on repeat, so run-to-run variance). The overview
     answered directly twice, both whole-department questions (q30, q100).
   - **Still open:** the model calls `department_overview` beside
-    `course_facts` on drop / credit questions (q35, q44, q78) and after SQL
-    on q74 - answers right, tokens wasted (the ~8% token rise). The data
-    budget is not exercised by this eval (it is off on OpenAI); it was
-    checked live on Groq on 2026-10-09. Live Groq checks of "sections of
-    bad," and "badm i mean" are still owed.
+    `course_facts` on drop / credit questions (q35, q44, q78) - answers
+    right, tokens wasted. The data budget is not exercised by this eval (it
+    is off on OpenAI).
+- **Live Groq checks, 2026-10-10 - both failed first, which found two holes:**
+  "badm i mean" (as a follow-up) ended in the 413 again after 175 s
+  (8,187 of 8,000 tokens): the schema tool's output (~1,200 tokens for three
+  tables) was never counted in the data budget. And the model listed every
+  BADM section, saw a fraction, ran three more queries and only then called
+  `department_overview` (193 s, an answer mixing terms). Fixed: the schema
+  tool is budgeted and counted; a whole-department listing too big to show
+  returns only a pointer to the tool (no partial rows) and isn't counted, so
+  the overview called next is still the direct answer; when the overview is
+  not the answer, the model gets a compact copy (BADM 1,826 -> ~835 tokens)
+  instead of a cut-off table. **After:** "badm i mean" with the production
+  history 23.9 s, full list; "sections of bad," full list in 72 s (part of
+  it per-minute waiting from the preceding test call); "badm i mean" after
+  that answer 3.3 s. Not addressed: the typo answer doesn't say it read
+  "bad" as BADM.
+- **Confirmation eval (`163526Z`): answer-OK 98.2%**, result-match 95.5%
+  loose, refusals and no-data 100%, no raw columns; misses q28 and q64 only
+  (2 of 12 and 5 of 12 in baseline runs). Latency 3.0 s, tokens 1.03M.
 - **Not yet done - before deploying:** (1) the eval run. This adds a tool
   and ~260 prompt/tool tokens per call, and item 34 showed tool and prompt
   text move answer-OK by points; it needs the usual full run against the
