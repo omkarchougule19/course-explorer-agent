@@ -44,7 +44,8 @@ check("friendly cap message is classified as an error", classify_answer(agent.AG
 
 # 3. provider order
 import os
-saved = {k: os.environ.get(k) for k in ("GROQ_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "LLM_PROVIDER")}
+saved = {k: os.environ.get(k) for k in ("GROQ_API_KEY", "GROQ_API_KEY_DEV", "RENDER", "OPENAI_API_KEY",
+                                        "GEMINI_API_KEY", "LLM_PROVIDER")}
 
 
 def provider_with(**keys):
@@ -63,6 +64,24 @@ check("no keys -> clear error", provider_with() == "none")
 check("a Gemini key alone is ignored", provider_with(GEMINI_API_KEY="x") == "none")
 check("LLM_PROVIDER=openai overrides the order",
       provider_with(GROQ_API_KEY="x", OPENAI_API_KEY="x", LLM_PROVIDER="openai") == "OpenAI")
+
+
+# 3b. local runs use their own Groq key when one is set, so they can't spend production's allowance
+def groq_key_with(**keys):
+    for k in saved:
+        os.environ.pop(k, None)
+    os.environ.update(keys)
+    return agent._groq_key(warn=False)
+
+
+check("off Render, the dev key is used when set", groq_key_with(GROQ_API_KEY="prod", GROQ_API_KEY_DEV="dev") == "dev")
+check("off Render with no dev key, the main key still works", groq_key_with(GROQ_API_KEY="prod") == "prod")
+check("on Render the dev key is ignored",
+      groq_key_with(GROQ_API_KEY="prod", GROQ_API_KEY_DEV="dev", RENDER="true") == "prod")
+check("a dev key alone is enough for a local run", groq_key_with(GROQ_API_KEY_DEV="dev") == "dev"
+      and provider_with(GROQ_API_KEY_DEV="dev") == "Groq")
+check("... but not on Render", groq_key_with(GROQ_API_KEY_DEV="dev", RENDER="true") is None)
+check("no keys at all: none", groq_key_with() is None)
 for k, v in saved.items():
     os.environ.pop(k, None)
     if v is not None:

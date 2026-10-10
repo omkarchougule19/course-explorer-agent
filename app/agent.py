@@ -317,7 +317,38 @@ def _request_token_limit() -> int:
         except ValueError:
             pass
     forced = os.environ.get("LLM_PROVIDER", "").strip().lower()
-    return 8000 if os.environ.get("GROQ_API_KEY") and forced in ("", "groq") else 0
+    return 8000 if _groq_key() and forced in ("", "groq") else 0
+
+
+_WARNED_SHARED_KEY = False
+
+
+def _groq_key(warn: bool = False):
+    """The Groq key to use. On Render: GROQ_API_KEY. Anywhere else (a
+    developer's machine, an eval run): GROQ_API_KEY_DEV when it is set, so
+    local testing spends its own allowance.
+
+    Why: Groq's limits are counted per organization, and local runs used the
+    production key. Two days of live checks for plan item 36 used 196,714 of
+    the day's 200,000 tokens (2026-10-10), production fell back to the
+    backup model, and a simple question went from 12 s to 80 s. A second key
+    from the SAME Groq account would not help - it shares the allowance; the
+    dev key has to come from a different account. Without one, a local run
+    still works on the production key; `warn` says so once, and is set
+    where a Groq client is actually built."""
+    global _WARNED_SHARED_KEY
+    prod = os.environ.get("GROQ_API_KEY")
+    if os.environ.get("RENDER"):
+        return prod
+    dev = os.environ.get("GROQ_API_KEY_DEV", "").strip()
+    if dev:
+        return dev
+    if prod and warn and not _WARNED_SHARED_KEY:
+        _WARNED_SHARED_KEY = True
+        print("[agent] local run on GROQ_API_KEY: this spends production's daily Groq allowance. "
+              "Set GROQ_API_KEY_DEV (a key from a different Groq account) to keep them apart.",
+              file=sys.stderr, flush=True)
+    return prod
 
 
 def _fixed_request_tokens() -> int:
@@ -1240,9 +1271,10 @@ def _new_llm(streaming: bool = False, model: str | None = None, fallback: bool =
     for the non-streaming ask() path - the deltas just get reassembled."""
     forced = os.environ.get("LLM_PROVIDER", "").strip().lower()
 
-    groq_key = os.environ.get("GROQ_API_KEY")
+    groq_key = _groq_key()
     if groq_key and forced in ("", "groq"):
         from langchain_groq import ChatGroq
+        _groq_key(warn=True)   # a Groq client is being built: say once if it is on production's key
         name = model or _groq_primary_model()
         primary = ChatGroq(model=name, temperature=0, api_key=groq_key, streaming=streaming,
                            max_tokens=_max_tokens(), max_retries=_groq_max_retries())
@@ -2101,7 +2133,8 @@ _CACHE_LOCK = threading.RLock()
 _AGENTS: dict = {}
 _SQL_DBS: dict = {}
 
-_ENV_KEYS = ("LLM_PROVIDER", "GROQ_API_KEY", "GROQ_MODEL", "GROQ_FALLBACK_MODEL", "GROQ_MAX_RETRIES",
+_ENV_KEYS = ("LLM_PROVIDER", "GROQ_API_KEY", "GROQ_API_KEY_DEV", "RENDER", "GROQ_MODEL",
+             "GROQ_FALLBACK_MODEL", "GROQ_MAX_RETRIES",
              "OPENAI_API_KEY", "OPENAI_MODEL", "DATABASE_URL", "DATABASE_URL_RO",
              "LLM_MAX_TOKENS")
 

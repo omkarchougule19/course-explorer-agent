@@ -39,7 +39,7 @@ class _Raises(FakeListChatModel):
 
 
 def _env(**kw):
-    for k in ("GROQ_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "LLM_PROVIDER",
+    for k in ("GROQ_API_KEY", "GROQ_API_KEY_DEV", "OPENAI_API_KEY", "GEMINI_API_KEY", "LLM_PROVIDER",
               "GROQ_MODEL", "GROQ_FALLBACK_MODEL"):
         os.environ.pop(k, None)
     os.environ.update(kw)

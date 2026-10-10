@@ -721,6 +721,19 @@ because other docs cite them.
   the failure honest, not rare: the backup model still fails this follow-up
   every time locally. With ~20 questions a day on the primary model, the
   backup carries real traffic - the provider decision (item 2.3) is the fix.
+- **What made production slower after the deploys (checked 2026-10-10):**
+  not the code - the primary model's daily allowance. Measured: 196,714 of
+  200,000 tokens used, a normal request refused, production on the backup
+  model ("Who teaches CS 225 this fall?" 12 s the day before, 78-80 s). The
+  site itself had 9 questions that day, all tests; the rest was two days of
+  local live checks on the same Groq key. From the code: ~5% more tokens
+  per call (4,400 -> 4,630 fixed), and "sections of bad," now takes three
+  model calls (17 s and wrong before; 91 s and right).
+  **Done on branch `local-groq-key`:** local runs and evals use
+  `GROQ_API_KEY_DEV` when it is set (ignored on Render), and a local run on
+  the production key says so once. The dev key must come from a different
+  Groq account - limits are per organization. Not yet created by the owner,
+  so nothing changes until it is.
 - **Confirmation eval (`163526Z`): answer-OK 98.2%**, result-match 95.5%
   loose, refusals and no-data 100%, no raw columns; misses q28 and q64 only
   (2 of 12 and 5 of 12 in baseline runs). Latency 3.0 s, tokens 1.03M.

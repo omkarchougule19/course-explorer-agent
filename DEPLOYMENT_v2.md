@@ -122,6 +122,7 @@ python -m app.sync_requests --list     # lists every department (191 today) with
 | `LLM_PROVIDER` | no | Force `groq` or `openai`. Unset = auto-detect, Groq first. Its own key must be set. |
 | `GROQ_MODEL` | no (`openai/gpt-oss-120b`) | Groq model. The daily cap is per model, so another model has its own budget on the same key. `OPENAI_MODEL` (`gpt-4o-mini`) does the same. |
 | `GROQ_FALLBACK_MODEL` | no (`qwen/qwen3.8-27b`) | Retried once after a Groq 429 that names a **daily** limit; `off` disables. |
+| `GROQ_API_KEY_DEV` | no (local only) | A Groq key for local runs and evals, used instead of `GROQ_API_KEY` whenever the app is not running on Render, so testing can't spend production's daily allowance. It must come from a **different Groq account**: Groq counts limits per organization, so a second key from the same account shares the allowance. Never set it on Render (it is ignored there). |
 | `GROQ_MAX_RETRIES` | no (6) | Retries on a Groq 429, each waiting Groq's retry-after; covers the 8K tokens/minute limit. |
 | `LLM_MAX_TOKENS` | no (4000) | Output cap per LLM call (reasoning tokens included); stops a runaway answer. |
 | `MAX_QUERY_RESULT_CHARS` | no (6000) | A single SQL result sent back to the model is cut here, with a note to narrow the query. |
