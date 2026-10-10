@@ -636,6 +636,53 @@ because other docs cite them.
     unknown-department note, the whole-department note and the Sources
     footer. On the live data a Gies-wide fall 2026 query now gets "FIN, MBA
     has no fall 2026 rows"; before, it read ACCY alone and said nothing.
+- **Eval run 2026-10-10** (`20261010T150017Z`, prod arm, OpenAI, Neon, 111
+  questions; the data budget is off on OpenAI, so it is not exercised):
+  answer-OK 95.5% (baseline runs 94.6-98.2%), result-match 86.4% loose
+  (81.8-90.9%), refusals and no-data 100%. The five misses (q12, q28, q40,
+  q64, q68) all also fail in baseline runs. Average latency 3.2 s (3.9-4.9 s);
+  tokens 1.07M (0.83-0.99M), tool calls 130 (110-125).
+  **Two regressions the scorer did not catch, found by reading answers:**
+  - *The direct overview answered a question it shouldn't have.* q74 ("no
+    class before 10am, which intro psychology sections would work") ran a
+    rejected SQL query, then called `department_overview('PSYC')`, whose
+    table became the answer - a course list for summer 2026, not sections by
+    time. Scored OK. Also q35, q44, q78 (drop / credit questions) called it
+    alongside `course_facts`; with two calls in one step the direct return
+    doesn't fire, so those answers were right but carried a ~100-course list
+    for nothing (part of the token rise).
+  - *The "|" result layout is copied into answers as a table.* q40 and q98
+    showed raw column names as headers (year | semester | subject ...), q40
+    with start/end as minutes (720 | 770). None of the six baseline runs
+    did either.
+  Not deployable as is. Open: make the direct return conditional (first and
+  only tool call) or drop it; change the row delimiter to one that doesn't
+  read as a Markdown table.
+- **Three more full runs the same day, and the outcome:**
+  - Run 2 (`151427Z`; direct answer only as the first and only tool call;
+    tab-separated rows with a header): 95.5%. q74 answered properly. q40 and
+    q98 still showed raw columns - they now selected every column and listed
+    them under the column names. q30 (ECE, unsynced fall) missed: right in
+    substance, without the no-data wording.
+  - Run 3 (`152527Z`; header line removed, unsynced wording fixed): 95.5%,
+    no raw columns, q30 passes. But six repeats of q98 were right only 2
+    times: same correct query, rows misread ("there are none").
+  - Tuples restored as the default (`SQL_RESULT_LAYOUT=tabs` opts in): q98
+    right 7 times in 8, q74 8 in 8, q40 1 in 8 (it is 5 of 12 in baseline
+    runs).
+  - **Final run (`155455Z`, tuples): answer-OK 96.4%** (twelve baseline runs:
+    91.9-98.2%, median 95.5%), result-match 90.9% loose, refusals and
+    no-data 100%, no raw columns or minutes in any answer, average latency
+    2.9 s (3.7-4.9 s), tokens 1.06M (0.82-0.99M), tool calls 124 (108-128).
+    Misses: q28, q40, q64 (fail in most baseline runs) and q39 (12 of 12 in
+    baseline; 8 of 8 on repeat, so run-to-run variance). The overview
+    answered directly twice, both whole-department questions (q30, q100).
+  - **Still open:** the model calls `department_overview` beside
+    `course_facts` on drop / credit questions (q35, q44, q78) and after SQL
+    on q74 - answers right, tokens wasted (the ~8% token rise). The data
+    budget is not exercised by this eval (it is off on OpenAI); it was
+    checked live on Groq on 2026-10-09. Live Groq checks of "sections of
+    bad," and "badm i mean" are still owed.
 - **Not yet done - before deploying:** (1) the eval run. This adds a tool
   and ~260 prompt/tool tokens per call, and item 34 showed tool and prompt
   text move answer-OK by points; it needs the usual full run against the

@@ -93,8 +93,7 @@ HOW TO QUERY
   'spring', 'summer', 'winter'); subject codes are uppercase. A term is the
   pair (semester, year): select, group and filter on both, never semester
   alone.
-- Results are a header line then one row per line, fields split by "|" (an
-  empty field is NULL). They are cut off at a fixed size and re-sent on every step: prefer COUNT,
+- Results are cut off at a fixed size and re-sent on every step: prefer COUNT,
   GROUP BY or DISTINCT, select only the columns you'll show, and LIMIT unless
   counting. "[Result truncated ...]" means you have NOT seen every row - narrow
   the query; never present those rows as complete.
@@ -290,14 +289,14 @@ _TOOL_TEXT = {"text": "", "count": 6}   # tool names + descriptions; set when th
 # context, so a set() inside a tool would be lost.
 _DATA_BUDGET: contextvars.ContextVar = contextvars.ContextVar("agent_data_budget", default=None)
 
-_TOKEN_PIECE_RE = re.compile(r"[A-Za-z]+|\d{1,3}|\n|[^\sA-Za-z\d]+")
+_TOKEN_PIECE_RE = re.compile(r"[A-Za-z]+|\d{1,3}|[\n\t]|[^\sA-Za-z\d]+")
 
 
 def _est_tokens(text) -> int:
     """Roughly how many tokens a text is, without a tokenizer (its vocabulary
     file is a download the server shouldn't depend on): words (long ones a
-    little more), 3-digit number chunks, runs of punctuation and line breaks
-    each count one. Groq's count for this model equals the o200k tokenizer's
+    little more), 3-digit number chunks, runs of punctuation, line breaks
+    and tabs each count one. Groq's count for this model equals the o200k tokenizer's
     exactly (checked on refused oversize requests); against it this runs
     1.00-1.21x on result rows, tool output, history and the prompt - high,
     never low, so the budget errs toward fitting."""
@@ -488,12 +487,30 @@ def _initial_note(sql: str):
 _QUESTION: contextvars.ContextVar = contextvars.ContextVar("agent_question", default="")
 
 
+# Per answer: how many tool calls have started, and the text a tool offers as
+# the finished answer (see _make_department_overview_tool). A dict mutated in
+# place, like _QUERY_LOG, because tools run in a copy of the caller's context.
+_ANSWER: contextvars.ContextVar = contextvars.ContextVar("agent_answer_state", default=None)
+
+
+def _note_tool_call() -> int:
+    """Count a tool call for this answer; returns how many came before it
+    (0 = this is the first), or -1 outside an answer."""
+    state = _ANSWER.get()
+    if state is None:
+        return -1
+    state["tool_calls"] += 1
+    return state["tool_calls"] - 1
+
+
 def new_query_log(question: str = "", agent_input: str = "") -> None:
     """Start a fresh per-answer context: the repeat-query log, the question
-    the checks below compare queries against, and the data budget
-    (agent_input is the question with its history, as sent to the model)."""
+    the checks below compare queries against, the tool-call count and the
+    data budget (agent_input is the question with its history, as sent to
+    the model)."""
     _QUERY_LOG.set({})
     _QUESTION.set(question or "")
+    _ANSWER.set({"tool_calls": 0, "direct": None})
     _start_data_budget(agent_input or question)
 
 
@@ -778,12 +795,24 @@ def _join_issue(sql: str):
             "Add s.crn = m.crn (or use an EXISTS on meetings with all five).")
 
 
+def _result_layout() -> str:
+    """How query rows are shown to the model: "tuples" (LangChain's Python
+    list of tuples, the default) or "tabs" (one row per line, tab-separated -
+    23-25% fewer tokens; SQL_RESULT_LAYOUT=tabs). Tabs are off because the
+    model reads them worse: on 2026-10-10, "which PSYC 100-level sections
+    start at 10 or later" ran the same correct query either way and was
+    answered right 2 times in 6 with tabs ("there are none"), 7 in 8 with
+    tuples (9 of 12 in earlier baseline runs)."""
+    return "tabs" if os.environ.get("SQL_RESULT_LAYOUT", "").strip().lower() == "tabs" else "tuples"
+
+
 class _CappedSQLDatabase(SQLDatabase):
     def run(self, command, fetch="all", **kwargs):
         # Every model-written statement passes the structural guard before it
         # executes (see app/sql_guard.py). The allowlist is this instance's own
         # include_tables. The error subclasses SQLAlchemyError so the toolkit's
         # run_no_throw hands the reason back to the model as a tool error.
+        _note_tool_call()   # rejected and repeated queries count too
         log = _QUERY_LOG.get()
         key = " ".join(command.split()) if isinstance(command, str) else None
         if log is not None and key in log:
@@ -919,16 +948,21 @@ class _CappedSQLDatabase(SQLDatabase):
         return rows if (rows or "").strip() else None
 
     def _rows_text(self, command, fetch="all", **kwargs):
-        """Run a query and return its rows as a small table: the column names
-        on the first line, then one row per line, fields separated by "|", a
-        NULL left empty; "" for no rows. LangChain's default is the Python
-        repr of a list of tuples ("[('10398', '199', None, 'A'), ..."), which
-        spends tokens on quotes, commas and brackets and carries no column
-        names. Measured on four typical results (exact counts): this layout
-        is 18-26% fewer tokens for the same rows (" | " saved 13-22%, tabs
-        23-25%) - and there are only ~1,500 tokens of room for data in a
-        whole answer on Groq's free tier."""
-        if not isinstance(command, str) or fetch == "cursor":
+        """Run a query and return its rows one per line, fields separated by
+        tabs in the order the query selected them, NULL for a missing value;
+        "" for no rows. LangChain's default is the Python repr of a list of
+        tuples ("[('10398', '199', None, 'A'), ..."), which spends tokens on
+        quotes, commas and brackets: tabs are 23-25% fewer tokens for the
+        same rows on four typical results (exact counts), and there are only
+        ~1,500 tokens of room for data in a whole answer on Groq's free tier.
+
+        No header line of column names, and not "|" as the separator - both
+        were tried on 2026-10-10 and both leaked into answers: with "|" two
+        eval answers copied the rows out as a table, times as minutes
+        (720 | 770); with tabs and a header, the same two questions selected
+        every column and showed them under the column names (Year | Semester
+        | Subject | ... | Title Search). None of six baseline runs did."""
+        if not isinstance(command, str) or fetch == "cursor" or _result_layout() != "tabs":
             return super().run(command, fetch=fetch, **kwargs)
         rows = self._execute(command, fetch, parameters=kwargs.get("parameters"),
                              execution_options=kwargs.get("execution_options"))
@@ -937,14 +971,12 @@ class _CappedSQLDatabase(SQLDatabase):
 
         def cell(value):
             if value is None:
-                return ""
-            text = " ".join(str(value).replace("|", "/").split())
+                return "NULL"
+            text = " ".join(str(value).split())   # also removes any tab or line break
             limit = self._max_string_length
             return text if len(text) <= limit else text[:limit].rsplit(" ", 1)[0] + "..."
 
-        lines = ["|".join(str(c) for c in rows[0])]
-        lines += ["|".join(cell(v) for v in r.values()) for r in rows]
-        return "\n".join(lines)
+        return "\n".join("\t".join(cell(v) for v in r.values()) for r in rows)
 
     @staticmethod
     def _capped(result, room=None):
@@ -952,15 +984,26 @@ class _CappedSQLDatabase(SQLDatabase):
         data budget has left) when that is smaller. Whole rows are kept, and
         the note says how many of how many."""
         limit = MAX_QUERY_RESULT_CHARS if room is None else min(MAX_QUERY_RESULT_CHARS, room)
+        if isinstance(result, str) and len(result) > limit and result.startswith("[("):
+            # LangChain's list-of-tuples text: cut after the last whole tuple
+            cut = result[:limit].rsplit("),", 1)[0] + ")]"
+            return cut + "\n" + (
+                f"[Result truncated: {len(result):,} characters returned, only the first "
+                f"{len(cut):,} shown" + (
+                    " - this answer has little room left for data. You have NOT seen every row. "
+                    "Answer from what you have and say it is partial, or run ONE narrower query "
+                    "(COUNT or GROUP BY, or a tighter filter).]" if limit < MAX_QUERY_RESULT_CHARS else
+                    ". Do not page through it - rewrite the query with a tighter filter, DISTINCT, "
+                    "GROUP BY or COUNT.]"))
         if isinstance(result, str) and len(result) > limit:
             lines = result.split("\n")
-            kept, size = lines[:2], len(lines[0]) + 1 + len(lines[1]) if len(lines) > 1 else len(lines[0])
-            for line in lines[2:]:
+            kept, size = lines[:1], len(lines[0])
+            for line in lines[1:]:
                 size += len(line) + 1
                 if size > limit:
                     break
                 kept.append(line)
-            total, shown = len(lines) - 1, len(kept) - 1
+            total, shown = len(lines), len(kept)
             if limit < MAX_QUERY_RESULT_CHARS:
                 note = (
                     f"[Result truncated: {total:,} rows returned, only the first {shown:,} shown - "
@@ -1414,6 +1457,7 @@ def _make_course_content_search_tool(tool_llm):
         taught_by: for "like the course(s) <instructor> teaches", the name as
         the student wrote it (e.g. 'Lawrence Angrave'); the search starts from
         that instructor's courses."""
+        _note_tool_call()
         lvl = (re.search(r"\d", level or "") or [None])[0]
         like = _COURSE_ARG_RE.search(like_course or "")
         like_key = (like.group(1).upper(), like.group(2).upper()) if like else None
@@ -1682,6 +1726,7 @@ def _make_course_facts_tool():
         take X", the courses the student says they've taken, comma-separated
         (e.g. 'CS 225, MATH 241'); the result then says which prerequisite
         lines are met and which are missing."""
+        _note_tool_call()
         return fit_budget(course_facts_text(course, completed))
 
     return course_facts
@@ -1784,9 +1829,10 @@ def department_overview_text(subjects: str, term: str = "", level: str = "") -> 
         head = (f"**{full_name(code)}**{college}: {plural(n_sections, 'section')} across "
                 f"{plural(len(courses), f'{scope}course')} in {shown}.")
         if asked and shown != asked:
-            head = (f"**{full_name(code)}**{college} has no {asked} schedule in the data yet. Its latest "
-                    f"term is {shown}: {plural(n_sections, 'section')} across "
-                    f"{plural(len(courses), f'{scope}course')}.")
+            head = (f"There's no data for {code} in {asked} yet - that schedule hasn't been synced "
+                    "(anyone can request it with Sync on the Departments page). "
+                    f"**{full_name(code)}**{college} was last synced for {shown}: "
+                    f"{plural(n_sections, 'section')} across {plural(len(courses), f'{scope}course')}.")
         out.append(head + "\n")
         out.append("| Course | Title | Sections |\n|---|---|---|")
         out += [f"| [{code} {r['course_number']}](/?course={code}-{r['course_number']}) | "
@@ -1810,28 +1856,63 @@ def department_overview_text(subjects: str, term: str = "", level: str = "") -> 
 def _make_department_overview_tool():
     from langchain_core.tools import tool
 
-    # return_direct: the tool's text is the answer. A second model call only
-    # re-typed the same list - ~5,500 more tokens against 8,000 a minute,
-    # which is a wait of tens of seconds (50 s for "show me sections under
-    # badm") - and had to be cut to the data budget first. Not fit_budget()-ed
-    # for the same reason: it never goes back to the model.
-    @tool(return_direct=True)
+    # When this is the first and only tool call of the answer, its text IS
+    # the answer (see _direct_answer_executor): a second model call only
+    # re-typed the same list - ~5,500 more tokens against 8,000 a minute, a
+    # wait of tens of seconds (50 s for "show me sections under badm", 5.7 s
+    # without it). Not a plain return_direct=True: that made the list the
+    # answer whenever the tool ran. In the 2026-10-10 eval "no class before
+    # 10am, which intro psychology sections would work" had its SQL rejected,
+    # fell back to this tool, and the student got the PSYC course list.
+    # Called after another tool, or beside one, the text goes back to the
+    # model like any result (cut to the data budget).
+    @tool
     def department_overview(subjects: str, term: str = "", level: str = "") -> str:
-        """Answers a whole-department or whole-college question by itself:
-        its result (the department's courses, each with its number of
-        sections) is shown to the student as the final answer. Use it ONLY
-        when that list is all the question asks for - "sections under BADM",
-        "what does Gies offer", "all the STAT courses", "BADM 400-level
-        courses". Anything more specific (instructors, times, credits,
-        open seats, one named course, a count or a comparison) needs SQL or
-        course_facts instead.
+        """ONLY for a question that asks for the list of courses a whole
+        department or college offers, and nothing else: "sections under
+        BADM", "what does Gies offer", "all the STAT courses", "BADM
+        400-level courses". Called on its own it answers by itself - its
+        list (each course with its number of sections) is shown to the
+        student as the final answer. Never for a question about one course
+        (use course_facts), or about instructors, times, credits, open
+        seats, dropping, a count or a comparison (use SQL).
         subjects: code(s) ('BADM', 'CS,ECE') or words as the student wrote
         them ('Gies', 'agriculture'). term: e.g. 'fall 2026' if the question
         names one; empty = each department's latest term. level: one digit
         ('4' = 400-level) or empty."""
-        return department_overview_text(subjects, term, level)
+        first = _note_tool_call() == 0
+        text = department_overview_text(subjects, term, level)
+        state = _ANSWER.get()
+        if state is not None:
+            state["direct"] = text if first else None
+        return fit_budget(text)
 
     return department_overview
+
+
+_DIRECT_EXECUTORS: dict = {}
+
+
+def _direct_answer_executor(base):
+    """`base` (the agent executor class) with one change: a step that is a
+    single department_overview call, made as the answer's first tool call,
+    ends the run with the tool's full text as the answer. LangChain's own
+    return_direct is all-or-nothing per tool; this makes it depend on how
+    the tool was used."""
+    if base not in _DIRECT_EXECUTORS:
+        from langchain_core.agents import AgentFinish
+
+        class _DirectAnswerExecutor(base):
+            def _get_tool_return(self, next_step_output):
+                action, _observation = next_step_output
+                state = _ANSWER.get()
+                if action.tool == "department_overview" and state and state.get("direct"):
+                    keys = self._action_agent.return_values
+                    return AgentFinish({keys[0] if keys else "output": state["direct"]}, "")
+                return super()._get_tool_return(next_step_output)
+
+        _DIRECT_EXECUTORS[base] = _DirectAnswerExecutor
+    return _DIRECT_EXECUTORS[base]
 
 
 def _next_terms(latest) -> list:
@@ -2112,37 +2193,45 @@ def _new_agent(verbose: bool = False, streaming: bool = False, model: str | None
         extra_tools = [_make_course_facts_tool(), _make_department_overview_tool()]
 
     try:
-        agent = create_sql_agent(
-            llm=llm,
-            toolkit=_toolkit(sql_db, llm),
-            agent_type="tool-calling",
-            verbose=verbose,
-            # Formatted by create_sql_agent itself ({dialect}, {top_k}).
-            prefix=SYSTEM_CONTEXT + _data_notes(),
-            # Without this, LangChain pre-fills an assistant turn saying "I
-            # should look at the tables in the database... then query the
-            # schema" - the opposite of SYSTEM_CONTEXT's "don't list tables",
-            # and an invitation to spend extra tool round-trips. It must be
-            # non-empty: an empty string falls back to that default.
-            suffix=_AGENT_SUFFIX,
-            extra_tools=extra_tools,
-            # Default is 15. Each iteration re-sends the full SYSTEM_CONTEXT and
-            # resends the growing scratchpad, so a runaway/looping question can
-            # burn several thousand tokens fast - capping this bounds the
-            # worst case per question instead of letting one bad question (or
-            # a retry loop calling ask() repeatedly) exhaust the daily token
-            # budget. See DECISIONS_v2.md for the incident that motivated this.
-            # Lowered 8 -> 6 alongside the "don't call schema/checker tools"
-            # prompt rules above: a well-formed answer now needs ~2 iterations
-            # (query, then synthesize), so 6 still leaves slack for one retry.
-            max_iterations=6,
-        )
+        agent = _make_executor(llm, sql_db, extra_tools, verbose=verbose)
     except Exception as exc:
         raise RuntimeError(f"Couldn't build the SQL agent (provider: {provider}): {exc}") from exc
     # Tool names and descriptions ride along on every request: count them in
     # the data budget (see _start_data_budget).
     _TOOL_TEXT.update(text=" ".join(f"{t.name} {t.description or ''}" for t in agent.tools),
                       count=len(agent.tools))
+    return agent
+
+
+def _make_executor(llm, sql_db, extra_tools, verbose: bool = False):
+    """The agent executor: create_sql_agent's, with the conditional direct
+    answer (_direct_answer_executor)."""
+    agent = create_sql_agent(
+        llm=llm,
+        toolkit=_toolkit(sql_db, llm),
+        agent_type="tool-calling",
+        verbose=verbose,
+        # Formatted by create_sql_agent itself ({dialect}, {top_k}).
+        prefix=SYSTEM_CONTEXT + _data_notes(),
+        # Without this, LangChain pre-fills an assistant turn saying "I
+        # should look at the tables in the database... then query the
+        # schema" - the opposite of SYSTEM_CONTEXT's "don't list tables",
+        # and an invitation to spend extra tool round-trips. It must be
+        # non-empty: an empty string falls back to that default.
+        suffix=_AGENT_SUFFIX,
+        extra_tools=extra_tools,
+        # Default is 15. Each iteration re-sends the full SYSTEM_CONTEXT and
+        # resends the growing scratchpad, so a runaway/looping question can
+        # burn several thousand tokens fast - capping this bounds the
+        # worst case per question instead of letting one bad question (or
+        # a retry loop calling ask() repeatedly) exhaust the daily token
+        # budget. See DECISIONS_v2.md for the incident that motivated this.
+        # Lowered 8 -> 6 alongside the "don't call schema/checker tools"
+        # prompt rules above: a well-formed answer now needs ~2 iterations
+        # (query, then synthesize), so 6 still leaves slack for one retry.
+        max_iterations=6,
+    )
+    agent.__class__ = _direct_answer_executor(type(agent))
     return agent
 
 

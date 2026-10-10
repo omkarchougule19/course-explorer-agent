@@ -79,21 +79,29 @@ db = agent._CappedSQLDatabase.from_uri(f"sqlite:///{tmp.as_posix()}")
 big = db.run("SELECT a, b FROM t")
 check("large result is truncated", len(big) < agent.MAX_QUERY_RESULT_CHARS + 400)
 check("truncation note is present", "[Result truncated" in big)
+check("kept rows still end on a whole tuple", big.split("\n")[0].endswith(")]"))
+check("the default layout is LangChain's list of tuples",
+      db.run("SELECT a, b FROM t LIMIT 1") == "[('row00000', '" + "x" * 40 + "')]")
+# the tab layout (SQL_RESULT_LAYOUT=tabs): fewer tokens, off by default
+os.environ["SQL_RESULT_LAYOUT"] = "tabs"
+big = db.run("SELECT a, b FROM t ORDER BY a")
 big_rows = big.split("\n[Result truncated")[0].split("\n")
-check("kept rows are whole: a header, then complete a|b rows",
-      big_rows[0] == "a|b" and all(r.startswith("row") and r.endswith("|" + "x" * 40) for r in big_rows[1:]))
-check("the note counts rows, not characters",
-      f"2,000 rows returned, only the first {len(big_rows) - 1:,} shown" in big)
+check("tabs: kept rows are whole tab-separated rows, with no header line",
+      big_rows[0].startswith("row00000\t") and all(r.startswith("row") and r.endswith("\t" + "x" * 40) for r in big_rows))
+check("tabs: the note counts rows, not characters",
+      f"2,000 rows returned, only the first {len(big_rows):,} shown" in big)
 con = sqlite3.connect(tmp)
 con.execute("CREATE TABLE n (a TEXT, b TEXT, c INT)")
-con.execute("INSERT INTO n VALUES ('x|y', NULL, 3), ('two\nlines', 'b', NULL)")
+con.execute("INSERT INTO n VALUES ('x\ty', NULL, 3), ('two\nlines', 'b', NULL)")
 con.commit()
 con.close()
 db = agent._CappedSQLDatabase.from_uri(f"sqlite:///{tmp.as_posix()}")
-check("rows come as a header and |-separated lines; NULL is empty; a value can't break the layout",
-      db.run("SELECT a, b, c FROM n") == "a|b|c\nx/y||3\ntwo lines|b|")
-check("no rows is still an empty result", db.run("SELECT a FROM n WHERE c = 99") == "")
-check("a single value keeps its column name", db.run("SELECT COUNT(*) AS total FROM n") == "total\n2")
+check("tabs: a missing value is NULL; a value can't break the layout",
+      db.run("SELECT a, b, c FROM n") == "x y\tNULL\t3\ntwo lines\tb\tNULL")
+check("tabs: no rows is still an empty result", db.run("SELECT a FROM n WHERE c = 99") == "")
+check("tabs: a single value is just the value", db.run("SELECT COUNT(*) AS total FROM n") == "2")
+os.environ.pop("SQL_RESULT_LAYOUT")
+check("no rows is an empty result in the default layout too", db.run("SELECT a FROM n WHERE c = 98") == "")
 small = db.run("SELECT a, b FROM t LIMIT 3")
 check("small result is untouched", "[Result truncated" not in small and small.count("row0") == 3)
 
@@ -123,14 +131,14 @@ check("a new answer starts a fresh log", "[You already ran" not in db.run("SELEC
 # provider's size limit (Groq 413 on "tell me about badm sections")
 # exact counts (o200k, which Groq's count matched): 12 and 34 tokens
 prose_text = "Business Analytics I covers data visualization and decision making for managers."
-rows_text = "crn|course_number|instructor\n10398|199|Ginsburg, R\n29648|210|\n53818|554|Luckman, E"
+rows_text = "crn\tcourse_number\tinstructor\n10398\t199\tGinsburg, R\n29648\t210\t\n53818\t554\tLuckman, E"
 check("the token estimate is close, and never low",
       12 <= agent._est_tokens(prose_text) <= 18 and 34 <= agent._est_tokens(rows_text) <= 41)
 check("an empty text costs nothing", agent._est_tokens("") == 0 and agent._est_tokens(None) == 0)
 agent._DATA_BUDGET.set({"left": 600})
 one = db.run("SELECT a, b FROM t ORDER BY a")
 check("a result is cut to the room left, on a whole row",
-      agent._est_tokens(one) < 600 + 120 and one.split("\n[Result truncated")[0].endswith("|" + "x" * 40)
+      agent._est_tokens(one) < 600 + 120 and one.split("\n[Result truncated")[0].endswith(")]")
       and "little room left for data" in one)
 check("the result is charged to the budget", agent._DATA_BUDGET.get()["left"] < 100)
 two = db.run("SELECT a, b FROM t ORDER BY a DESC")

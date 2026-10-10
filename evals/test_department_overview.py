@@ -76,7 +76,8 @@ try:
     check("a named term is used", "2 sections across 2 courses in spring 2026" in spring and "BADM 320" in spring)
     missing = agent.department_overview_text("BADM", term="spring 2027")
     check("a term with no rows says so and gives the latest term",
-          "has no spring 2027 schedule in the data yet. Its latest term is fall 2026" in missing)
+          missing.startswith("There's no data for BADM in spring 2027 yet - that schedule hasn't been synced")
+          and "was last synced for fall 2026: 3 sections across 2 courses." in missing)
     level = agent.department_overview_text("BADM", level="500-level")
     check("a level narrows the list", "1 section across 1 500-level course in fall 2026" in level and "BADM 210" not in level)
     check("a level with nothing gives the no-data sentence",
@@ -103,8 +104,6 @@ try:
     check("nothing close: says how to name one",
           agent.department_overview_text("xyzzy").startswith('I couldn\'t find a department called "xyzzy". Try'))
     check("no department asks for one", agent.department_overview_text("").startswith("Which department?"))
-    check("the tool hands its text straight to the student (no second model call)",
-          agent._make_department_overview_tool().return_direct is True)
     check("a finished answer passes through the answer cleanup unchanged", agent.tidy_answer(out) == out)
 
     # closest-code suggestions, also used for an empty SQL result
@@ -137,6 +136,58 @@ try:
         "SELECT crn FROM sections WHERE subject = 'BADM' AND instructor_last = 'larson'", cut) is None)
     check("... or a grouped count", agent._whole_department_note(
         "SELECT course_number, COUNT(*) FROM sections WHERE subject = 'BADM' GROUP BY course_number", cut) is None)
+    # -- when the overview is the answer, and when it is only a result ---------
+    # The real executor, driven by a scripted model (no LLM, no network).
+    from langchain_core.language_models.chat_models import BaseChatModel
+    from langchain_core.messages import AIMessage
+    from langchain_core.outputs import ChatGeneration, ChatResult
+
+    class Scripted(BaseChatModel):
+        """Replies with the next scripted message, whatever it is asked."""
+        script: list
+
+        @property
+        def _llm_type(self):
+            return "scripted"
+
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            return ChatResult(generations=[ChatGeneration(message=self.script.pop(0))])
+
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+    def calls(*pairs):
+        return AIMessage(content="", tool_calls=[
+            {"name": name, "args": args, "id": f"call{i}", "type": "tool_call"} for i, (name, args) in enumerate(pairs)])
+
+    def run_script(*messages, in_answer=True):
+        executor = agent._make_executor(Scripted(script=list(messages)),
+                                        agent._CappedSQLDatabase.from_uri(f"sqlite:///{cat.as_posix()}",
+                                                                          include_tables=["sections", "subjects"]),
+                                        [agent._make_department_overview_tool()])
+        if in_answer:
+            agent.new_query_log("q", "q")
+        else:
+            agent._ANSWER.set(None)
+        return executor.invoke({"input": "q"})["output"]
+
+    overview = ("department_overview", {"subjects": "BADM"})
+    a_query = ("sql_db_query", {"query": "SELECT crn FROM sections WHERE subject = 'BADM' AND course_number = '210'"})
+    said = AIMessage(content="BADM 210 has two sections.")
+    check("first and only tool call: the overview is the answer, with no second model call",
+          run_script(calls(overview)) == agent.department_overview_text("BADM"))
+    check("after another tool call it is only a result - the model writes the answer",
+          run_script(calls(a_query), calls(overview), said) == "BADM 210 has two sections.")
+    check("beside another tool call in the same step, the same",
+          run_script(calls(a_query, overview), said) == "BADM 210 has two sections.")
+    check("called twice: the second call is not the answer either",
+          run_script(calls(a_query, overview), calls(overview), said) == "BADM 210 has two sections.")
+    check("outside an answer (no per-answer state) it never answers directly",
+          run_script(calls(overview), said, in_answer=False) == "BADM 210 has two sections.")
+    check("an ordinary answer is untouched", run_script(calls(a_query), said) == "BADM 210 has two sections.")
+    rows = agent._CappedSQLDatabase.from_uri(f"sqlite:///{cat.as_posix()}").run(
+        "SELECT course_number, crn, course_label FROM sections WHERE subject = 'BDI'")
+    check("query rows reach the model in the default layout", rows == "[('513', '6', 'Data Storytelling')]")
 finally:
     appdb.DB_PATH = saved
 

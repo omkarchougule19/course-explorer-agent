@@ -450,15 +450,20 @@ production before it wins on the full schema.
   choice:* `tiktoken` is already installed (a LangChain dependency) and
   would make the count exact, recovering ~170 tokens of room per answer, but
   it downloads its vocabulary file on first use after each boot.
-- **Query results as a header line and "|"-separated rows** (2026-10-09),
-  not LangChain's Python repr of a list of tuples. Same rows, 18-26% fewer
-  tokens (exact counts on four typical results: sections 1,671 -> 1,235,
-  courses 952 -> 718, meetings 2,001 -> 1,581, instructors 952 -> 779), and
-  the model now sees column names. A NULL is an empty field; "|" and line
-  breaks inside a value are replaced. Truncation notes count rows ("170 rows
-  returned, only the first 60 shown"). *Compared:* " | " (13-22%), tabs
-  (23-25%, but an empty field is invisible), ", " (14-22%). The saving is
-  real but modest - the expectation before measuring was close to half.
+- **Query results stay in LangChain's list-of-tuples layout** (decided
+  2026-10-10, after trying to replace it). A denser layout is 18-26% fewer
+  tokens for the same rows (exact counts: "|"-separated 18-26%, tabs
+  23-25%), and three variants were evaluated on the full set. Each scored
+  the same overall (95.5%) and each made answers worse in a way the scorer
+  missed: "|" rows with a header were copied into answers as a table, times
+  as minutes (720 | 770); tabs with a header made two questions select every
+  column and show them under the column names; tabs without a header made
+  the model misread rows - "which PSYC 100-level sections start at 10 or
+  later" ran the same correct query and was right 2 times in 6, against 7
+  in 8 with tuples (9 of 12 in earlier baseline runs). The tab layout
+  remains available (`SQL_RESULT_LAYOUT=tabs`) but is off. Lesson: a score
+  that doesn't move is not evidence a formatting change is safe; read the
+  answers, and repeat the sensitive questions.
 - **History is sent back without page markup, and shorter when its query
   came with it** (2026-10-09). Link targets, table rule rows, bold marks and
   the Sources footer are dropped from earlier answers (`_plain_answer`), and
@@ -472,10 +477,15 @@ production before it wins on the full schema.
   number of sections for the term asked, else the department's latest term
   with rows. One department is listed in full; several are listed up to 80
   courses in all, and above that get a row of totals each and a prompt to
-  pick one. The tool is `return_direct`: its Markdown goes to the student
-  with no second model call. That call only re-typed the list, cost ~5,500
+  pick one. When the tool is the first and only tool call of an answer,
+  its Markdown goes to the student with no second model call
+  (`_direct_answer_executor`); called after or beside another tool it is an
+  ordinary result. That second call only re-typed the list, cost ~5,500
   more tokens against 8,000 a minute, and forced the list to be cut to the
-  data budget first. Measured live through the stream: "show me sections
+  data budget first. An unconditional `return_direct` was tried first and
+  failed in the eval: "no class before 10am, which intro psychology sections
+  would work" had its SQL rejected, fell back to this tool, and the PSYC
+  course list became the answer. Measured live through the stream: "show me sections
   under badm" in 5.7 s, all 70 courses (50 s with the second call; 158 s and
   four queries with SQL only; a 413 error in production). Every branch is
   therefore worded for the student (unknown department: "Did you mean
@@ -502,9 +512,9 @@ production before it wins on the full schema.
 changed to Groq → OpenAI → Gemini 2026-09-19; qwen failover 2026-09-20;
 Gemini removed 2026-09-28; `course_facts` tool 2026-09-28;
 pipeline 2026-09-10; per-answer data budget, `department_overview` tool,
-closest-code note, "|" result layout, history trimming and the direct
-overview answer 2026-10-09 (local; not yet evaluated or deployed - see plan
-item 36). Same day: the stream took the final answer only from streamed
+closest-code note, history trimming and the direct overview answer
+2026-10-09; evaluated 2026-10-10, which made the direct answer conditional
+and sent the result layout back to tuples (see plan item 36). Same day: the stream took the final answer only from streamed
 tokens, because it looked for a chain named "AgentExecutor" and
 create_sql_agent names it "SQL Agent Executor"; it now takes the outermost
 chain's output, so the iteration-cap message reaches the student on the
