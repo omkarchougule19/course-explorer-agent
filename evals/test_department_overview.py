@@ -185,6 +185,37 @@ try:
     check("outside an answer (no per-answer state) it never answers directly",
           run_script(calls(overview), said, in_answer=False) == "BADM 210 has two sections.")
     check("an ordinary answer is untouched", run_script(calls(a_query), said) == "BADM 210 has two sections.")
+
+    # a listing of the whole department that is too big to show: only a pointer comes back, the
+    # call isn't counted, and the overview the model calls next is still the direct answer
+    every_cs = ("sql_db_query", {"query": "SELECT crn, course_label FROM sections WHERE subject = 'CS' ORDER BY crn"})
+    real_cap, agent.MAX_QUERY_RESULT_CHARS = agent.MAX_QUERY_RESULT_CHARS, 300
+    try:
+        agent.new_query_log("q", "q")
+        shown = agent._CappedSQLDatabase.from_uri(f"sqlite:///{cat.as_posix()}").run(every_cs[1]["query"])
+        check("a too-big whole-department listing returns only the pointer, no partial rows",
+              shown.startswith("[Not shown: this lists every CS row") and "Course 0" not in shown
+              and "department_overview(subjects='CS')" in shown)
+        check("... and is not counted as a tool call", agent._ANSWER.get()["tool_calls"] == 0)
+        check("... so the overview called next is the answer",
+              run_script(calls(every_cs), calls(("department_overview", {"subjects": "CS"})))
+              == agent.department_overview_text("CS"))
+        narrow = agent._CappedSQLDatabase.from_uri(f"sqlite:///{cat.as_posix()}").run(
+            "SELECT crn, course_label FROM sections WHERE subject = 'CS' AND course_number LIKE '1%' ORDER BY crn")
+        check("a narrower query that is cut off keeps its rows", "Course 0" in narrow and "[Result truncated" in narrow)
+    finally:
+        agent.MAX_QUERY_RESULT_CHARS = real_cap
+
+    for_model = agent._overview_for_model(out)
+    check("the model's copy of the overview drops the page markup, keeps every course and count",
+          "Courses (sections): BADM 210 Business Analytics I (2); BADM 554 Enterprise Database Management (1);"
+          in for_model and "](/?course=" not in for_model and "**" not in for_model
+          and "3 sections across 2 courses in fall 2026" in for_model)
+    check("... and is smaller", len(for_model) < len(out))
+    agent.new_query_log("q", "q")
+    schema = agent._CappedSQLDatabase.from_uri(f"sqlite:///{cat.as_posix()}").get_table_info_no_throw(["sections"])
+    check("the schema tool's output is counted too (tool call and data budget)",
+          "CREATE TABLE" in schema and agent._ANSWER.get()["tool_calls"] == 1)
     rows = agent._CappedSQLDatabase.from_uri(f"sqlite:///{cat.as_posix()}").run(
         "SELECT course_number, crn, course_label FROM sections WHERE subject = 'BDI'")
     check("query rows reach the model in the default layout", rows == "[('513', '6', 'Data Storytelling')]")
