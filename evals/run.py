@@ -59,8 +59,8 @@ def _prepare_env(provider: str | None, use_sqlite: bool) -> None:
             "groq": "GROQ_API_KEY",
             "openai": "OPENAI_API_KEY",
         }[provider]
-        for key in ("GROQ_API_KEY", "OPENAI_API_KEY"):
-            if key != keep:
+        for key in ("GROQ_API_KEY", "GROQ_API_KEY_DEV", "OPENAI_API_KEY"):
+            if key != keep and not (provider == "groq" and key == "GROQ_API_KEY_DEV"):
                 _disable(key)
     # The agent path must not recurse into the pipeline for the prod arm.
     os.environ.pop("SQL_PIPELINE", None)

@@ -44,7 +44,8 @@ check("friendly cap message is classified as an error", classify_answer(agent.AG
 
 # 3. provider order
 import os
-saved = {k: os.environ.get(k) for k in ("GROQ_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "LLM_PROVIDER")}
+saved = {k: os.environ.get(k) for k in ("GROQ_API_KEY", "GROQ_API_KEY_DEV", "RENDER", "OPENAI_API_KEY",
+                                        "GEMINI_API_KEY", "LLM_PROVIDER")}
 
 
 def provider_with(**keys):
@@ -63,6 +64,24 @@ check("no keys -> clear error", provider_with() == "none")
 check("a Gemini key alone is ignored", provider_with(GEMINI_API_KEY="x") == "none")
 check("LLM_PROVIDER=openai overrides the order",
       provider_with(GROQ_API_KEY="x", OPENAI_API_KEY="x", LLM_PROVIDER="openai") == "OpenAI")
+
+
+# 3b. local runs use their own Groq key when one is set, so they can't spend production's allowance
+def groq_key_with(**keys):
+    for k in saved:
+        os.environ.pop(k, None)
+    os.environ.update(keys)
+    return agent._groq_key(warn=False)
+
+
+check("off Render, the dev key is used when set", groq_key_with(GROQ_API_KEY="prod", GROQ_API_KEY_DEV="dev") == "dev")
+check("off Render with no dev key, the main key still works", groq_key_with(GROQ_API_KEY="prod") == "prod")
+check("on Render the dev key is ignored",
+      groq_key_with(GROQ_API_KEY="prod", GROQ_API_KEY_DEV="dev", RENDER="true") == "prod")
+check("a dev key alone is enough for a local run", groq_key_with(GROQ_API_KEY_DEV="dev") == "dev"
+      and provider_with(GROQ_API_KEY_DEV="dev") == "Groq")
+check("... but not on Render", groq_key_with(GROQ_API_KEY_DEV="dev", RENDER="true") is None)
+check("no keys at all: none", groq_key_with() is None)
 for k, v in saved.items():
     os.environ.pop(k, None)
     if v is not None:
@@ -141,13 +160,21 @@ check("a result is cut to the room left, on a whole row",
       agent._est_tokens(one) < 600 + 120 and one.split("\n[Result truncated")[0].endswith(")]")
       and "little room left for data" in one)
 check("the result is charged to the budget", agent._DATA_BUDGET.get()["left"] < 100)
+agent._DATA_BUDGET.set({"left": 30})
 two = db.run("SELECT a, b FROM t ORDER BY a DESC")
-check("a later result still gets a few rows, never nothing",
+check("with a little room left, a later result still gets a few rows",
       "row01999" in two and agent._est_tokens(two) < agent._MIN_RESULT_TOKENS + 120)
+check("... and that uses the budget up", agent._budget_spent())
+three = db.run("SELECT a FROM t WHERE a = 'row00007'")
+check("once the budget is spent, a query returns 'answer now' and no data",
+      three == agent.BUDGET_SPENT and "row00007" not in three)
+check("... and so does any other tool's result", agent.fit_budget("course facts " * 50) == agent.BUDGET_SPENT)
+check("... and the note is small", agent._est_tokens(agent.BUDGET_SPENT) < 45)
 agent._DATA_BUDGET.set({"left": 300})
 fitted = agent.fit_budget("\n\n".join("paragraph %d " % i + "word " * 40 for i in range(20)))
 check("a non-SQL tool result is cut at a paragraph and says so",
       agent._est_tokens(fitted) < 300 + 80 and "[Cut to fit" in fitted and "paragraph 0" in fitted)
+agent._DATA_BUDGET.set({"left": 300})
 check("a short result passes through", agent.fit_budget("short") == "short")
 agent._DATA_BUDGET.set(None)
 check("without a budget nothing is cut", len(agent.fit_budget("y" * 9000)) == 9000)
@@ -163,6 +190,29 @@ check("the budget leaves room for the reply",
 agent.new_query_log("q", "q " + "word " * 300)
 check("history in the request leaves less room for data",
       agent._DATA_BUDGET.get()["left"] == max(short_room - 300, agent._MIN_ANSWER_DATA_TOKENS))
+os.environ.pop("LLM_REQUEST_TOKEN_LIMIT")
+saved_groq = os.environ.get("GROQ_API_KEY")
+os.environ["GROQ_API_KEY"] = "k"
+agent.new_query_log("q", "q")
+primary_room = agent._DATA_BUDGET.get()["left"]
+agent.new_query_log("q", "q", "qwen/qwen3.8-27b")
+backup_room = agent._DATA_BUDGET.get()["left"]
+check("the backup model gets its own, smaller budget (7,000 input tokens in its own tokenizer)",
+      backup_room < primary_room
+      and backup_room == int(7000 / 1.13) - 400 - agent._fixed_request_tokens() - agent._est_tokens("q"))
+check("the backup model's replies are capped under its 1,000-a-minute output limit",
+      agent._max_tokens("qwen/qwen3.8-27b") == 900 and agent._max_tokens("openai/gpt-oss-120b") == agent._max_tokens())
+check("so a full budget on the backup stays under its ceiling",
+      (agent._fixed_request_tokens() + agent._est_tokens("q") + backup_room) * 1.13 < 7000)
+agent.new_query_log("q", "q", "some/other-model")
+check("an unknown model gets the default ceiling", agent._DATA_BUDGET.get()["left"] == primary_room)
+if saved_groq is None:
+    os.environ.pop("GROQ_API_KEY", None)
+else:
+    os.environ["GROQ_API_KEY"] = saved_groq
+os.environ["LLM_REQUEST_TOKEN_LIMIT"] = "8000"
+agent.new_query_log("q", "q", "qwen/qwen3.8-27b")
+check("an explicit LLM_REQUEST_TOKEN_LIMIT applies to every model", agent._DATA_BUDGET.get()["left"] == short_room)
 os.environ["LLM_REQUEST_TOKEN_LIMIT"] = "3000"
 agent.new_query_log("q", "q")
 check("the budget never drops below the floor", agent._DATA_BUDGET.get()["left"] == agent._MIN_ANSWER_DATA_TOKENS)

@@ -377,6 +377,7 @@ calendar events, 5,464 embeddings; grades and rankings 0.
 | `LLM_PROVIDER` | auto | force `groq` / `openai` |
 | `GROQ_MODEL` · `OPENAI_MODEL` | `openai/gpt-oss-120b` · `gpt-4o-mini` | model per provider |
 | `GROQ_FALLBACK_MODEL` | `qwen/qwen3.8-27b` | retried once on a Groq 429 for a daily limit; `off` disables |
+| `GROQ_API_KEY_DEV` | unset | local runs and evals use this Groq key instead of `GROQ_API_KEY` (ignored on Render); must be from a different Groq account |
 | `GROQ_MAX_RETRIES` | `6` | Groq client retries on a 429 (per-minute limit), each honouring retry-after |
 | `LLM_MAX_TOKENS` | `4000` | output cap per LLM call |
 | `ADMIN_TOKEN` | unset (admin always 403) | admin dashboard and routes |

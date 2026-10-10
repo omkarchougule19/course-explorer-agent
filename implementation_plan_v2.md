@@ -721,6 +721,40 @@ because other docs cite them.
   the failure honest, not rare: the backup model still fails this follow-up
   every time locally. With ~20 questions a day on the primary model, the
   backup carries real traffic - the provider decision (item 2.3) is the fix.
+- **What made production slower after the deploys (checked 2026-10-10):**
+  not the code - the primary model's daily allowance. Measured: 196,714 of
+  200,000 tokens used, a normal request refused, production on the backup
+  model ("Who teaches CS 225 this fall?" 12 s the day before, 78-80 s). The
+  site itself had 9 questions that day, all tests; the rest was two days of
+  local live checks on the same Groq key. From the code: ~5% more tokens
+  per call (4,400 -> 4,630 fixed), and "sections of bad," now takes three
+  model calls (17 s and wrong before; 91 s and right).
+  **Done on branch `local-groq-key`:** local runs and evals use
+  `GROQ_API_KEY_DEV` when it is set (ignored on Render), and a local run on
+  the production key says so once. The dev key must come from a different
+  Groq account - limits are per organization. Not yet created by the owner,
+  so nothing changes until it is.
+- **"That question pulled in more data than I can read" in production,
+  2026-10-10 (rows 456, 457: "grad courses in badm", "grad course related to
+  business in badm"), on the backup model.** Cause: the data budget assumed
+  the primary's ceiling for every model. The backup (qwen) allows 7,000
+  input tokens a minute, counted in its own tokenizer (~13% more tokens for
+  the same text: 5,224 for a bare question against 4,631), and 1,000 output
+  tokens a minute; a request whose expected reply is larger is refused
+  outright, and that expectation follows recent replies (after one
+  1,141-token answer the next question was refused before it started).
+  **Done on branch `backup-model-budget`:** a ceiling per model
+  (`_MODEL_REQUEST_LIMITS`); the backup's replies capped at 900 tokens; and,
+  for every model, once an answer's data budget is used up a further tool
+  call returns "answer now from what you have" instead of a few more rows
+  (the model had the full list after one query, ran two more, and the extras
+  took the request to 7,055 of 7,000). Re-tested on the backup model: both
+  questions answer (largest request 6,570 tokens); the long list is cut at
+  the 900-token reply cap and says it is partial. Room for data on the
+  backup is ~960 tokens, against ~1,470 on the primary - it cannot be
+  raised on the free tier; the fixed prompt and tools are 5,200 of its
+  7,000. Not fixed: "grad course in IS" on the backup still echoes the
+  opening line (reported as no answer).
 - **Confirmation eval (`163526Z`): answer-OK 98.2%**, result-match 95.5%
   loose, refusals and no-data 100%, no raw columns; misses q28 and q64 only
   (2 of 12 and 5 of 12 in baseline runs). Latency 3.0 s, tokens 1.03M.
