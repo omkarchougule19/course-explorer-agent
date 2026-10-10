@@ -696,6 +696,26 @@ because other docs cite them.
   it per-minute waiting from the preceding test call); "badm i mean" after
   that answer 3.3 s. Not addressed: the typo answer doesn't say it read
   "bad" as BADM.
+- **Merged and deployed 2026-10-10:** PR #12 (9be8571, deployed by the owner)
+  and PR #13 (411ec7e, Manual Deploy from the dashboard, 1m37s).
+  **Production check after 411ec7e:** "show me sections under badm" 3.3 s,
+  all 70 courses (the question that started this item failed after 66 s);
+  "sections of bad," the full BADM list in 92 s (two SQL listings turned
+  into pointers, then the overview; most of the time is per-minute waits);
+  "Who teaches CS 225 this fall?" correct in 81 s **on the backup model** -
+  the primary's daily limit was spent by the day's testing.
+  **Failed: "badm i mean" as a follow-up, on the backup model:** qwen
+  answered with the agent's own opening line ("I know the schema from my
+  instructions. I'll write the SQL...") in 2.7 s, logged as answered.
+  Reproduced locally (2 of 3, then 3 of 3). Also seen there: the backup's
+  limit of 1,000 output tokens a minute, which Groq words as "Request too
+  large" and the app reported as a too-broad question.
+  **Fixed on branch `fix-suffix-echo` (not merged or deployed):** an answer
+  that is only the opening line is reported as no answer (error, not
+  charged); the output-rate limit is reported as a rate limit. This makes
+  the failure honest, not rare: the backup model still fails this follow-up
+  every time locally. With ~20 questions a day on the primary model, the
+  backup carries real traffic - the provider decision (item 2.3) is the fix.
 - **Confirmation eval (`163526Z`): answer-OK 98.2%**, result-match 95.5%
   loose, refusals and no-data 100%, no raw columns; misses q28 and q64 only
   (2 of 12 and 5 of 12 in baseline runs). Latency 3.0 s, tokens 1.03M.

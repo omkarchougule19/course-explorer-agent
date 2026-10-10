@@ -2324,6 +2324,18 @@ AGENT_STOPPED_FRIENDLY = (
 NO_ANSWER = "I couldn't produce an answer for that. Try asking it again, or a little more specifically."
 
 
+def _not_an_echo(answer: str) -> str:
+    """'' when the "answer" is only the agent's own opening line
+    (_AGENT_SUFFIX) repeated back, else the answer. The backup model
+    (qwen) does this on follow-ups: in production on 2026-10-10, once the
+    primary model's daily limit was spent, "badm i mean" was answered "I
+    know the schema from my instructions. I'll write the SQL and run it..."
+    and logged as answered; locally 2 tries in 3. No tool ran, so there is
+    nothing to answer from - it is reported as no answer."""
+    text = (answer or "").strip()
+    return "" if text.startswith(_AGENT_SUFFIX[:60]) and len(text) < len(_AGENT_SUFFIX) + 80 else (answer or "")
+
+
 REQUEST_TOO_LARGE = (
     "That question pulled in more data than I can read at once. "
     "Try narrowing it, for example to one department, level or term."
@@ -2345,6 +2357,11 @@ def friendly_error(exc: Exception) -> str:
     don't count against a user's rate limit."""
     msg = str(exc)
     low = msg.lower()
+    if "output tokens per minute" in low or "(otpm)" in low:
+        # The backup model allows 1,000 output tokens a minute; Groq words a
+        # request over that as "Request too large", but narrowing the
+        # question doesn't help - it is a rate limit.
+        return "The LLM provider's rate limit was hit. Wait a bit and try again."
     if "request too large" in low or "error code: 413" in low:
         # Groq's per-request size ceiling. The data budget should prevent it;
         # if one slips through, say what the student can do about it.
@@ -2537,7 +2554,7 @@ def ask(question: str, verbose: bool = False, history=None, _model: str | None =
             return ask(question, verbose=verbose, history=history, _model=backup)
         return friendly_error(exc)
 
-    answer = tidy_answer(friendly_stop(result.get("output", str(result)))) or NO_ANSWER
+    answer = tidy_answer(friendly_stop(_not_an_echo(result.get("output", str(result))))) or NO_ANSWER
     if classify_answer(answer) == "answered":
         answer += sources_footer(cap.source_sql, cap.rag_used, question)
     return answer
@@ -2712,7 +2729,7 @@ async def astream_answer(question: str, history=None, _model: str | None = None)
         yield "done", friendly_error(exc)
         return
 
-    answer = tidy_answer(friendly_stop(final or "".join(streamed) or NO_ANSWER))
+    answer = tidy_answer(friendly_stop(_not_an_echo(final or "".join(streamed)) or NO_ANSWER))
     if classify_answer(answer) == "answered":
         footer = sources_footer(cap.source_sql, cap.rag_used or rag_used, q)
         if footer:
