@@ -710,7 +710,12 @@ because other docs cite them.
   Reproduced locally (2 of 3, then 3 of 3). Also seen there: the backup's
   limit of 1,000 output tokens a minute, which Groq words as "Request too
   large" and the app reported as a too-broad question.
-  **Fixed on branch `fix-suffix-echo` (not merged or deployed):** an answer
+  **Fixed, merged as PR #14 and deployed (40306b3, 1m43s). Production check,
+  still on the backup model:** "badm i mean" as a follow-up now ends in "I
+  couldn't produce an answer for that. Try asking it again..." after 31 s
+  (was the echoed opening line, shown as an answer); "show me sections under
+  badm" 3.4 s, all 70 courses, on the backup model too. The owner chose to
+  stay on Groq's free tier for now (2026-10-10). **The fix:** an answer
   that is only the opening line is reported as no answer (error, not
   charged); the output-rate limit is reported as a rate limit. This makes
   the failure honest, not rare: the backup model still fails this follow-up
