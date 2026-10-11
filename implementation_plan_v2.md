@@ -774,7 +774,7 @@ because other docs cite them.
   cleanup doesn't write the outcome when the request is cancelled, and a
   `pending` row counts against the rate limit.
 
-### 37. The catalog over MCP, from this service — `done 2026-10-10`
+### 37. The catalog over MCP, from this service — `done 2026-10-10, deployed (815df1d)`
 - **What:** `/mcp` offers six fixed, read-only lookups to an assistant the
   student already uses (`app/mcp_server.py`); the lookups moved out of
   `app/agent.py` into `app/catalog.py`, which both the site's assistant and
@@ -789,10 +789,13 @@ because other docs cite them.
 - **Verified:** `evals.test_mcp_tools` (lookups, the endpoint, the rate
   limit) and all other offline suites pass; `evals.test_mcp_live` (a real
   MCP client calling every tool) passes against a local server on the Neon
-  data. No assistant product has been connected yet.
+  data. Deployed 2026-10-10: the same live check passes against production
+  (12 of 12), and the pages and `/mcp-info` answer. No assistant product has
+  been connected yet, and the full LLM eval was not re-run for this change.
 - **History:** built first as a separate project (`courseExplorer2`, its
   own repo and Render service), then folded in here and the separate copy
-  removed, because the owner wants one app.
+  removed (Render service, GitHub repo and local folder, 2026-10-10),
+  because the owner wants one app.
 
 ### 38. Fixed tools first, SQL as the fallback — `todo`
 - **Problem:** every question carries about 4,630 tokens of instructions
