@@ -362,6 +362,7 @@ calendar events, 5,464 embeddings; grades and rankings 0.
 | **Demand** | `GET /sync/status` · `POST /sync/request` |
 | **Feedback** | `POST /feedback` |
 | **Admin** (`X-Admin-Token`) | `GET /admin/ask-log` · `/admin/ask-stats` · `/admin/clients` · `/admin/activity` · `/admin/feedback` · `/admin/site-feedback` · `POST …/{id}/reviewed` |
+| **MCP** | `POST /mcp` (Streamable HTTP, stateless, JSON; six read-only tools for a student's own assistant, `MCP_RATE_PER_MINUTE` 120 per address) · `GET /mcp-info` (the address and the tool list, for the How It Works page) |
 | **Info** | `GET /api` |
 
 ---
@@ -433,6 +434,8 @@ course-explorer-agent/
 ├── app/
 │   ├── api.py               # FastAPI: routes, guardrails, headers, body limit
 │   ├── agent.py             # hybrid SQL + RAG agent, SYSTEM_CONTEXT, streaming
+│   ├── catalog.py           # fixed read-only lookups shared by the agent and the MCP tools
+│   ├── mcp_server.py        # the six MCP tools served at /mcp
 │   ├── sql_guard.py         # parse-and-allowlist check for model SQL, read-only engine
 │   ├── db.py                # one query text, two backends; read-only connections
 │   ├── embeddings.py        # bge-small vectors, pgvector table and search

@@ -133,6 +133,10 @@ def load(db_path=None) -> int:
 
 
 if __name__ == "__main__":
+    # Takes no options, but parse anyway: without this, any argument -
+    # even --help - started the load.
+    import argparse
+    argparse.ArgumentParser(description='Download the Teachers Ranked as Excellent lists and load them.').parse_args()
     print(f"Downloading Teachers Ranked as Excellent dataset from {CSV_URL} ...", flush=True)
     try:
         n = load()

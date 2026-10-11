@@ -61,4 +61,8 @@ def main():
 
 
 if __name__ == "__main__":
+    # Takes no options, but parse anyway: without this, any argument -
+    # even --help - started the load.
+    import argparse
+    argparse.ArgumentParser(description='Clean up course descriptions already loaded (rewrites the description column).').parse_args()
     main()

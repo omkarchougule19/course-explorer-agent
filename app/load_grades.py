@@ -139,6 +139,10 @@ def load(db_path=None) -> int:
 
 
 if __name__ == "__main__":
+    # Takes no options, but parse anyway: without this, any argument -
+    # even --help - started the load.
+    import argparse
+    argparse.ArgumentParser(description='Download grade distributions and load them into the grade_distributions table.').parse_args()
     print(f"Downloading grade distribution dataset from {CSV_URL} ...", flush=True)
     try:
         n = load()
