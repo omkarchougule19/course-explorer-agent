@@ -119,6 +119,10 @@ def load(db_path=None) -> int:
 
 
 if __name__ == "__main__":
+    # Takes no options, but parse anyway: without this, any argument -
+    # even --help - started the load.
+    import argparse
+    argparse.ArgumentParser(description='Parse prerequisites from the course descriptions already loaded and REPLACE the prerequisites table.').parse_args()
     print("Parsing prerequisites from course descriptions ...", flush=True)
     try:
         n = load()

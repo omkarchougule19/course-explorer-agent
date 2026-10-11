@@ -549,7 +549,7 @@ because other docs cite them.
   question and the tool results already gathered; and classify the fallback
   text as a failure, not an answer.
 
-### 36. Request too large on broad questions; whole-department questions — `done locally 2026-10-09, eval and deploy pending`
+### 36. Request too large on broad questions; whole-department questions — `done 2026-10-10, deployed (515ace1)`
 - **Problem:** in production "tell me about badm sections" failed after 66 s
   with the generic error. Reproduced locally: Groq 413 "Request too large ...
   Limit 8000, Requested 8728" on the third agent step - the prompt, the
@@ -773,6 +773,36 @@ because other docs cite them.
   `pending` when the browser drops a stream (ids 440, 444): the stream's
   cleanup doesn't write the outcome when the request is cancelled, and a
   `pending` row counts against the rate limit.
+
+### 37. The catalog over MCP, from this service — `done 2026-10-10`
+- **What:** `/mcp` offers six fixed, read-only lookups to an assistant the
+  student already uses (`app/mcp_server.py`); the lookups moved out of
+  `app/agent.py` into `app/catalog.py`, which both the site's assistant and
+  the MCP tools call. `/mcp-info` feeds a "Use your own AI assistant" section
+  on How It Works (address, copy button, tool list). `mcp` added to
+  `requirements.in`. Reasoning and what was turned down: DECISIONS §6.
+- **Also:** the five loader scripts that took no options (`load_prereqs`,
+  `load_geneds`, `load_grades`, `load_tre`, `clean_descriptions`) now parse
+  their arguments, so `--help` prints help. Before, any argument started the
+  load: on 2026-10-10 `load_prereqs --help` rebuilt the production
+  `prerequisites` table (6,748 rows, spot-checked, no loss).
+- **Verified:** `evals.test_mcp_tools` (lookups, the endpoint, the rate
+  limit) and all other offline suites pass; `evals.test_mcp_live` (a real
+  MCP client calling every tool) passes against a local server on the Neon
+  data. No assistant product has been connected yet.
+- **History:** built first as a separate project (`courseExplorer2`, its
+  own repo and Render service), then folded in here and the separate copy
+  removed, because the owner wants one app.
+
+### 38. Fixed tools first, SQL as the fallback — `todo`
+- **Problem:** every question carries about 4,630 tokens of instructions
+  and tool definitions, roughly half of it teaching the tables and query
+  rules, against Groq's 8,000 a minute.
+- **Plan:** give the model a short prompt and the fixed lookups from
+  `app/catalog.py` first; route to the existing SQL path only what they
+  can't answer (counts, rankings, cross-table questions).
+- **Done when:** the full eval holds 95-98% with the answers read, and the
+  per-question token cost is measured lower.
 
 ### 22. Compress responses — `todo`
 - **Problem:** nothing is gzipped: the home page is 137 KB raw vs 42.8 KB
