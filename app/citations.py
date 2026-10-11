@@ -88,6 +88,16 @@ class SQLCapture(BaseCallbackHandler):
         if "course_content_search" in name:
             self.rag_used = True
             return
+        if name == "database_query":      # the hand-over to the SQL agent reads nothing
+            return
+        if "search_sections" in name:
+            for word in re.findall(r"\b[A-Z]{2,4}\b", raw):
+                self.fact_sql.append(f"SELECT 1 FROM sections WHERE subject = '{word}'")
+            self.fact_sql.append("SELECT 1 FROM sections JOIN meetings ON 1 = 1")
+            return
+        if "academic_calendar" in name:
+            self.fact_sql.append("SELECT 1 FROM academic_calendar")
+            return
         if "course_facts" in name:
             m = re.search(r"\b([A-Za-z]{2,4})\s*-?\s*\d{3}", raw)
             subj = m.group(1).upper() if m else ""

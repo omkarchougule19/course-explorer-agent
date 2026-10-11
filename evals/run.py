@@ -158,7 +158,7 @@ def _usage_capture():
 
 
 def run_prod_arm(item: dict) -> dict:
-    from app.agent import build_agent, build_agent_input, friendly_error, new_query_log, tidy_answer
+    from app.agent import build_agent, build_agent_input, friendly_error, run_agent, tidy_answer
     from app.citations import SQLCapture
     cap = SQLCapture()
     usage = _usage_capture()
@@ -166,10 +166,8 @@ def run_prod_arm(item: dict) -> dict:
     try:
         agent = build_agent()
         agent_input = build_agent_input(item["question"], item.get("history"))
-        new_query_log(item["question"], agent_input)   # as production does, per answer
-        out = agent.invoke({"input": agent_input},
-                           config={"callbacks": [cap, usage]})
-        answer = out.get("output", str(out)) if isinstance(out, dict) else str(out)
+        # as production does, per answer (front agent first when TOOLS_FIRST is on)
+        answer = run_agent(agent, agent_input, item["question"], [cap, usage])
         answer = tidy_answer(answer)   # as production does
     except Exception as exc:  # noqa: BLE001
         # A provider rate limit must reach _with_retry (which backs off and
@@ -228,7 +226,11 @@ def score(item: dict, rec: dict) -> dict:
         elif not final_sql and rec.get("facts_used"):
             # Answered from course_facts, not SQL: no candidate rows exist, so
             # check that the gold values made it into the answer instead.
-            covered = metrics.answer_covers_rows(answer, gold_rows)
+            # A lookup words values its own way ("November 21" for
+            # '2026-11-21', "4 credit hours" for '4 hours.'), so the item's
+            # authored answer_contains also counts when it has one.
+            covered = metrics.answer_covers_rows(answer, gold_rows) or bool(
+                item.get("answer_contains") and metrics.answer_mentions(answer, item["answer_contains"]))
             match = {"strict": covered, "loose": covered}
         else:
             match = metrics.result_match(gold_rows, cand_rows)

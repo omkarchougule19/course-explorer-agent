@@ -359,11 +359,14 @@ def _groq_key(warn: bool = False):
     return prod
 
 
-def _fixed_request_tokens() -> int:
+def _fixed_request_tokens(front: bool = False) -> int:
     """What every request of an answer carries before any data: the prompt
     and the tool definitions. Groq measured 4,631 for it on 2026-10-09; this
     gave 4,778 (the prose discount is deliberately smaller than the
-    overcount)."""
+    overcount). `front`: the front agent's shorter prompt and tools."""
+    if front:
+        prose = _est_tokens(render_front_context()) + _est_tokens(_FRONT_TOOL_TEXT["text"])
+        return int(prose / _PROSE_OVERCOUNT) + _TOOL_DEF_TOKENS * _FRONT_TOOL_TEXT["count"]
     prose = (_est_tokens(render_system_context()) + _est_tokens(_AGENT_SUFFIX)
              + _est_tokens(_TOOL_TEXT["text"]))
     return int(prose / _PROSE_OVERCOUNT) + _TOOL_DEF_TOKENS * _TOOL_TEXT["count"]
@@ -383,7 +386,7 @@ _MODEL_REQUEST_LIMITS = {
 }
 
 
-def _start_data_budget(agent_input: str = "", model: str | None = None) -> None:
+def _start_data_budget(agent_input: str = "", model: str | None = None, front: bool = False) -> None:
     """Set how many tokens of tool results this answer may hold: the request
     ceiling of the model that is answering (`model`, or the primary), minus
     the reply allowance and what every request carries anyway (prompt, tool
@@ -393,7 +396,7 @@ def _start_data_budget(agent_input: str = "", model: str | None = None) -> None:
         _DATA_BUDGET.set(None)
         return
     try:
-        fixed = _fixed_request_tokens()
+        fixed = _fixed_request_tokens(front)
     except Exception:
         _DATA_BUDGET.set(None)
         return
@@ -577,15 +580,17 @@ def _note_tool_call() -> int:
     return state["tool_calls"] - 1
 
 
-def new_query_log(question: str = "", agent_input: str = "", model: str | None = None) -> None:
+def new_query_log(question: str = "", agent_input: str = "", model: str | None = None,
+                  front: bool = False) -> None:
     """Start a fresh per-answer context: the repeat-query log, the question
     the checks below compare queries against, the tool-call count and the
     data budget (agent_input is the question with its history, as sent to
     the model)."""
     _QUERY_LOG.set({})
     _QUESTION.set(question or "")
-    _ANSWER.set({"tool_calls": 0, "direct": None})
-    _start_data_budget(agent_input or question, model)
+    _ANSWER.set({"tool_calls": 0, "direct": None, "handoff": False,
+                 "input": agent_input or question or ""})
+    _start_data_budget(agent_input or question, model, front)
 
 
 def _unknown_subject_note(sql: str):
@@ -1681,10 +1686,299 @@ def _direct_answer_executor(base):
                 if action.tool == "department_overview" and state and state.get("direct"):
                     keys = self._action_agent.return_values
                     return AgentFinish({keys[0] if keys else "output": state["direct"]}, "")
+                if action.tool == HANDOFF_TOOL or (state and state.get("handoff")):
+                    keys = self._action_agent.return_values
+                    return AgentFinish({keys[0] if keys else "output": _HANDOFF_OUTPUT}, "")
                 return super()._get_tool_return(next_step_output)
 
         _DIRECT_EXECUTORS[base] = _DirectAnswerExecutor
     return _DIRECT_EXECUTORS[base]
+
+
+# --- Fixed tools first, SQL as the fallback --------------------------------------
+# Every request of the SQL agent carries ~4,600 tokens of prompt and tool
+# definitions against 8,000 a minute, and nearly half of that prompt teaches
+# the tables. A question a fixed lookup answers ("should I take CS 225", "who
+# teaches STAT 400", "when is the drop deadline", an out-of-scope ask) needs
+# none of it. With TOOLS_FIRST on, a front agent with a short prompt and the
+# lookups from app/catalog.py takes the question first; it answers, or hands
+# over with one tool call (database_query) to the SQL agent, which then runs
+# exactly as before. Off by default: the SQL agent alone.
+HANDOFF_TOOL = "database_query"
+_HANDOFF_OUTPUT = "[Handing over to the database assistant.]"
+
+
+def tools_first() -> bool:
+    return os.environ.get("TOOLS_FIRST", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _scope_rules() -> str:
+    """The SCOPE block of SYSTEM_CONTEXT, shared word for word so the two
+    agents decline the same things the same way."""
+    start = SYSTEM_CONTEXT.index("SCOPE\n")
+    return SYSTEM_CONTEXT[start:SYSTEM_CONTEXT.index("\n\nHOW TO QUERY")]
+
+
+FRONT_CONTEXT = """
+You are the UIUC course catalog assistant. Answer ONLY from what your tools
+return, never from memory.
+
+{scope}
+
+HOW TO LOOK THINGS UP
+- A question about one course named by its code (what is it about, should I
+  take it, is it hard, X or Y, can I take it, should I drop it, does it
+  count for something, its prerequisites, credits or gen-eds): course_facts,
+  one call per course. These are in scope however personal they sound ("I'm
+  failing CS 225, should I drop it?") - never decline them: give the facts
+  that bear on it. For "can I take it", pass the courses they've taken as
+  completed and lead with its verdict - if lines are missing, they can't
+  take it yet. For dropping a course, also call academic_calendar with
+  category 'drop'. A named instructor or term is a filter, not the topic:
+  "should I take CS 444 with Gupta" is about the course - no section list.
+- Who teaches a course named by its code, when or where it meets, its
+  sections or CRNs, or what one instructor named by last name teaches:
+  search_sections.
+- Only use a course code or instructor name the student wrote (in the
+  question or the history). Never work one out yourself.
+- The list of courses a whole department or college offers, when the
+  student wants the list itself and nothing narrower ("what does Gies
+  offer", "sections under BADM"): department_overview. A count ("how many CS
+  sections") or one level's courses is not a list request: database_query.
+- Dates and deadlines (add, drop, withdraw, breaks, finals): academic_calendar.
+- Everything else: call database_query, alone, as your first action - counts
+  and totals, "how many", rankings (most, top, busiest), comparisons, lists of
+  courses or sections by level, credits, day, time, type, gen-ed or topic ("courses
+  about X"), grades and GPAs, top-rated instructors, anything about
+  enrollment status, open sections or seats, a course or instructor not
+  named exactly ("the ai class", "Prof Vishal"), a follow-up
+  that refines an earlier list ("which of those..."), and anything a lookup
+  did not fully answer. When unsure, call database_query. Where a tool
+  description says "use SQL", that means database_query.
+- Out of scope: decline straight away, without a tool.
+
+HOW TO ANSWER
+- Prose or a short list by default; a Markdown table only for 3+ fields
+  across several rows. Cover every row you list, state how many there are,
+  and name the term if you chose it. Always write a term with its year ("fall
+  2026"), never the season alone.
+- Never mention tools, lookups or field names in an answer.
+- Link every course as [CS 225](/?course=CS-225) and every instructor as
+  [Last, F](/instructor.html?name=Last%2C%20F) (the stored name,
+  URL-encoded; no link when it is missing). No other link shapes. Take a
+  course's title only from a tool result.
+- Instructors are stored as 'Last, F' (first initial only): a match by
+  initial may be a different person - say so. Never call an instructor good
+  or bad.
+- Named-course questions: answer what was asked from the facts; "what is it
+  about" gets 2-3 sentences in your own words. Then say what the data can't
+  tell (workload, teaching quality, seats, degree rules) and point to an
+  academic advisor or the degree audit (DARS). No verdict or recommendation.
+- Answer what was asked and stop: a credits question gets the credits, not
+  the course description.
+- A status shown as a code ('A' scheduled, 'P' pending) is not a
+  registration status - 'A' does NOT mean open.
+- Deadlines (add, drop, withdraw) can differ by audience (UG, graduate, Law,
+  Vet Med): give the undergraduate one by default and note that others
+  differ.
+- No data (a lookup finds nothing): begin with "There's no data for that in
+  this dataset yet." and add what is missing in one sentence. Never guess.
+- A conversation-history block may come before the question. Use it to
+  resolve references ("the second one"); a correction or retry ("badm i
+  mean", "try again") is the student's latest question asked again with that
+  change. Never re-answer the history.
+""".strip()
+
+
+def render_front_context() -> str:
+    return FRONT_CONTEXT.format(scope=_scope_rules()) + _data_notes()
+
+
+_FRONT_TOOL_TEXT = {"text": "", "count": 5}
+
+
+def _handing_over() -> bool:
+    state = _ANSWER.get()
+    return bool(state and state.get("handoff"))
+
+
+def _make_front_tools():
+    from langchain_core.tools import tool
+
+    from app import catalog
+
+    def hand_over() -> str:
+        state = _ANSWER.get()
+        if state is not None:
+            state["handoff"] = True
+        return _HANDOFF_OUTPUT
+
+    def written(*words) -> bool:
+        """True when the student wrote every one of `words` (a course code, a
+        name) in the question or its history. The front agent may only look
+        up what was named: asked "the ai class who teaches it", it looked up
+        CS 225 and answered with that course's instructors. A vague
+        reference is the SQL agent's to resolve."""
+        state = _ANSWER.get()
+        text = re.sub(r"[^a-z0-9]", "", (state or {}).get("input", "").lower())
+        return all(re.sub(r"[^a-z0-9]", "", (w or "").lower()) in text for w in words)
+
+    def lookup(fn, *args, found=None, **kwargs) -> str:
+        """Run a lookup; a result that found nothing hands the question over
+        instead of going back to the model. The SQL agent has the checks for
+        why a lookup comes back empty (a first name given as the last name,
+        a department not synced for that term, a mistyped code); the front
+        agent answered "no data" to "what does Prof Vishal teach" and to an
+        afternoon-sections question whose course runs in a different term."""
+        if _handing_over():     # called beside database_query: the SQL agent will do the work
+            return _HANDOFF_OUTPUT
+        text = fn(*args, **kwargs)
+        if found and not re.match(found, text or ""):
+            return hand_over()
+        _note_tool_call()
+        return fit_budget(text)
+
+    @tool
+    def course_facts(course: str, completed: str = "") -> str:
+        """All facts about ONE course the student named by its code, e.g. 'CS
+        444': title, description, credits, prerequisites (alternatives joined
+        by 'or'), gen-eds, recent terms' instructors and status, grades if
+        loaded. Use it for what-is-it, should-I-take, is-it-hard, can-I-take,
+        should-I-drop and X-or-Y questions (one call per course). completed:
+        for "can I take X", the courses the student says they've taken,
+        comma-separated (e.g. 'CS 225, MATH 241'); the result then says which
+        prerequisite lines are met and which are missing."""
+        m = _COURSE_ARG_RE.search(course or "")
+        if not m or not written(m.group(1) + m.group(2)):
+            return hand_over()
+        return lookup(course_facts_text, course, completed, found=r"(?!No course )")
+
+    @tool
+    def department_overview(subjects: str, term: str = "") -> str:
+        """ONLY for a question that asks for the list of courses a whole
+        department or college offers, and nothing else: "sections under
+        BADM", "what does Gies offer", "all the STAT courses". Called on its
+        own it answers by itself - its list (each course with its number of
+        sections) is shown to the student as the final answer. Never for one
+        level, a topic, a count, instructors, times or credits - use
+        database_query. subjects: code(s) ('BADM', 'CS,ECE') or words as the
+        student wrote them ('Gies', 'agriculture'). term: e.g. 'fall 2026'
+        if the question names one; empty = each department's latest term."""
+        if _handing_over():
+            return _HANDOFF_OUTPUT
+        if _QUESTION_LEVEL_RE.search(_QUESTION.get() or ""):
+            return hand_over()      # "CS 400-level courses": a filtered list, not the whole department
+        first = _note_tool_call() == 0
+        text = department_overview_text(subjects, term)
+        state = _ANSWER.get()
+        if state is not None:
+            state["direct"] = text if first else None
+        return fit_budget(_overview_for_model(text))
+
+    @tool
+    def search_sections(subject: str = "", course_number: str = "", term: str = "",
+                        instructor: str = "") -> str:
+        """Every section of ONE named course, or of one named instructor:
+        each with its CRN, instructor, status and meeting days, times and
+        room. For "who teaches CS 225", "when does STAT 400 meet", "what is
+        Fleck teaching". Give subject AND course_number ('CS', '225'), or
+        instructor (last name only). term: e.g. 'fall 2026' whenever the
+        question names or implies one ("this fall"); empty = the latest term
+        in the data. It cannot filter: sections by time of day, day, type
+        (discussion, lab, online) or status, and anything about a whole
+        department, a level, a count or a ranking, go to database_query."""
+        named = [subject + course_number] if (course_number or "").strip() else []
+        named += [instructor] if (instructor or "").strip() else []
+        if not named or not written(*named):
+            return hand_over()
+        return lookup(catalog.search_sections_text, subject, course_number, term, "", instructor,
+                      limit=40, found=r"\d+ section")
+
+    @tool
+    def academic_calendar(term: str = "", category: str = "") -> str:
+        """Dates from the academic calendar. term: e.g. 'fall 2026'; empty =
+        the latest term in the data. category: one of instruction, add, drop,
+        withdraw, break, holiday, finals, grades, registration, commencement;
+        empty = all. "Last day to drop" needs both 'drop' and 'withdraw':
+        call with category empty, or once for each."""
+        return lookup(catalog.calendar_text, term, category, found=r"Academic calendar")
+
+    @tool
+    def database_query(reason: str = "") -> str:
+        """Hand the question to the database assistant, which can count,
+        rank, filter and compare across the whole catalog. Call it ALONE, as
+        your first action, for anything the other tools are not for.
+        reason: a few words on what is needed."""
+        return hand_over()
+
+    return [course_facts, department_overview, search_sections, academic_calendar, database_query]
+
+
+def _new_front_agent(streaming: bool = False, model: str | None = None):
+    from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
+    from langchain_core.messages import SystemMessage
+    from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+
+    llm, _provider = _build_llm(streaming=streaming, model=model, fallback=False)
+    tools = _make_front_tools()
+    prompt = ChatPromptTemplate.from_messages([
+        SystemMessage(content=render_front_context()),
+        ("human", "{input}"),
+        MessagesPlaceholder("agent_scratchpad"),
+    ])
+    executor = AgentExecutor(name="Front Agent Executor", agent=create_tool_calling_agent(llm, tools, prompt),
+                             tools=tools, max_iterations=4)
+    executor.__class__ = _direct_answer_executor(type(executor))
+    _FRONT_TOOL_TEXT.update(text=" ".join(f"{t.name} {t.description or ''}" for t in tools), count=len(tools))
+    return executor
+
+
+def build_front_agent(streaming: bool = False, model: str | None = None):
+    """The front agent for these settings, cached like build_agent's (and
+    cleared with it when the catalog changes)."""
+    refresh_catalog_caches()
+    today = _today()
+    return _cached(_AGENTS, ("front", streaming, model, _env_signature(), today),
+                   lambda: _new_front_agent(streaming=streaming, model=model))
+
+
+_DECLINE_START = "i can only answer questions about uiuc"
+_COURSE_MENTION_RE = re.compile(r"\b" + _COURSE_WORDS + r"\b", re.IGNORECASE)
+
+
+def _handed_over(output) -> bool:
+    """True when the front agent's run must be followed by the SQL agent: it
+    called database_query, it ran out of steps - or it answered without
+    looking anything up. An answer with no lookup behind it stands only as a
+    decline of a question that mentions no course: the front agent told
+    "the ai class who teaches it" and "can CS 412 count as grad credit later"
+    that it only answers course questions, and answered a status breakdown
+    from the DATA NOTES alone. The SQL agent has the rules for those."""
+    text = output if isinstance(output, str) else ""
+    if _handing_over() or _HANDOFF_OUTPUT in text or AGENT_STOPPED_RAW in text:
+        return True
+    state = _ANSWER.get()
+    if state is None or state.get("tool_calls"):
+        return False
+    question = _QUESTION.get() or ""
+    mentions_course = bool(_QUESTION_CODE_RE.search(question) or _COURSE_MENTION_RE.search(question))
+    return not (text.strip().lower().startswith(_DECLINE_START) and not mentions_course)
+
+
+def run_agent(agent, agent_input: str, question: str, callbacks, model: str | None = None) -> str:
+    """One answer, as raw agent output: the front agent first when
+    TOOLS_FIRST is on, then `agent` (the SQL agent) if it handed over. Each
+    stage starts its own per-answer state and data budget."""
+    if tools_first():
+        front = build_front_agent(model=model)
+        new_query_log(question, agent_input, model, front=True)
+        out = front.invoke({"input": agent_input}, config={"callbacks": callbacks})
+        text = out.get("output", "") if isinstance(out, dict) else str(out)
+        if not _handed_over(text):
+            return text
+    new_query_log(question, agent_input, model)
+    result = agent.invoke({"input": agent_input}, config={"callbacks": callbacks})
+    return result.get("output", str(result)) if isinstance(result, dict) else str(result)
 
 
 def _next_terms(latest) -> list:
@@ -2044,6 +2338,9 @@ _TOOL_LABELS = {
     "course_content_search": "Searching course descriptions…",
     "course_facts": "Looking up the course…",
     "department_overview": "Looking up the department…",
+    "search_sections": "Looking up the sections…",
+    "academic_calendar": "Checking the academic calendar…",
+    HANDOFF_TOOL: "Checking the database…",
 }
 
 
@@ -2278,19 +2575,15 @@ def ask(question: str, verbose: bool = False, history=None, _model: str | None =
 
     cap = SQLCapture()
     agent_input = build_agent_input(question, history)
-    new_query_log(question, agent_input, _model)
     try:
-        result = agent.invoke(
-            {"input": agent_input},
-            config={"callbacks": [cap]},
-        )
+        output = run_agent(agent, agent_input, question, [cap], _model)
     except Exception as exc:  # noqa: BLE001 - provider/network/agent errors all land here
         backup = None if _model else _fallback_model_for(exc)
         if backup:  # Groq 429 on the primary model: one retry on the fallback model
             return ask(question, verbose=verbose, history=history, _model=backup)
         return friendly_error(exc)
 
-    answer = tidy_answer(friendly_stop(_not_an_echo(result.get("output", str(result))))) or NO_ANSWER
+    answer = tidy_answer(friendly_stop(_not_an_echo(output))) or NO_ANSWER
     if classify_answer(answer) == "answered":
         answer += sources_footer(cap.source_sql, cap.rag_used, question)
     return answer
@@ -2399,71 +2692,92 @@ async def astream_answer(question: str, history=None, _model: str | None = None)
     final: str | None = None
     tool_depth = 0
     agent_input = build_agent_input(q, history)
-    new_query_log(q, agent_input, _model)
     notices: asyncio.Queue = asyncio.Queue()
     _NOTICE_TARGET.set((asyncio.get_running_loop(), notices))
-    try:
-        async for source, ev in _with_notices(agent.astream_events(
-            {"input": agent_input},
-            version="v2",
-            config={"callbacks": [cap]},
-        ), notices):
-            if source == "notice":
-                if not streamed:          # once text flows, a status would only flicker
-                    yield "status", ev
-                continue
-            kind = ev.get("event")
-            if kind == "on_tool_start":
-                tool_depth += 1
-                name = ev.get("name", "")
-                if name == "course_content_search":
-                    rag_used = True
-                yield "status", _TOOL_LABELS.get(name, "Working…")
-            elif kind == "on_tool_end":
-                tool_depth = max(0, tool_depth - 1)
-                yield "status", "Reading the results…"
-            elif kind == "on_chat_model_stream":
-                # An LLM call made *inside* a tool (e.g. RAG query expansion)
-                # is not answer text - never stream it to the client.
-                if tool_depth > 0:
+    # The front agent first when TOOLS_FIRST is on (see run_agent); the SQL
+    # agent follows only if it handed the question over.
+    stages = []
+    if tools_first():
+        stages.append((True, await asyncio.to_thread(build_front_agent, True, _model)))
+    stages.append((False, agent))
+    held: list[str] = []
+    for front, runner in stages:
+        new_query_log(q, agent_input, _model, front=front)
+        final = None
+        try:
+            async for source, ev in _with_notices(runner.astream_events(
+                {"input": agent_input},
+                version="v2",
+                config={"callbacks": [cap]},
+            ), notices):
+                if source == "notice":
+                    if not streamed:          # once text flows, a status would only flicker
+                        yield "status", ev
                     continue
-                chunk = ev.get("data", {}).get("chunk")
-                text = getattr(chunk, "content", "") or ""
-                # Some providers hand back content as a list of parts.
-                if isinstance(text, list):
-                    text = "".join(
-                        p.get("text", "") for p in text if isinstance(p, dict)
-                    )
-                if text:
-                    streamed.append(text)
-                    yield "token", text
-                    if _is_runaway(streamed):
-                        final = None   # the agent never finished; use what streamed
-                        break
-            # The outermost chain is the agent executor (create_sql_agent
-            # names it "SQL Agent Executor"; the check used to be for
-            # "AgentExecutor" and never matched, so only streamed tokens
-            # became the answer - a tool that returns directly, or the
-            # iteration-cap message, streams none and came out as "I
-            # couldn't produce an answer for that.").
-            elif kind == "on_chain_end" and not ev.get("parent_ids"):
-                out = ev.get("data", {}).get("output")
-                if isinstance(out, dict):
-                    final = out.get("output")
-                elif isinstance(out, str):
-                    final = out
-    except Exception as exc:  # noqa: BLE001 - provider/network/agent errors
-        # A Groq 429 that arrives before any answer text was streamed can be
-        # retried invisibly on the fallback model; after text has gone out it
-        # can't, so that case falls through to the error message.
-        backup = None if (_model or streamed) else _fallback_model_for(exc)
-        if backup:
-            yield "status", "Busy, switching to a backup model…"
-            async for item in astream_answer(question, history, _model=backup):
-                yield item
+                kind = ev.get("event")
+                if kind == "on_tool_start":
+                    tool_depth += 1
+                    name = ev.get("name", "")
+                    if name == "course_content_search":
+                        rag_used = True
+                    yield "status", _TOOL_LABELS.get(name, "Working…")
+                elif kind == "on_tool_end":
+                    tool_depth = max(0, tool_depth - 1)
+                    yield "status", "Reading the results…"
+                elif kind == "on_chat_model_stream":
+                    # An LLM call made *inside* a tool (e.g. RAG query expansion)
+                    # is not answer text - never stream it to the client.
+                    if tool_depth > 0:
+                        continue
+                    chunk = ev.get("data", {}).get("chunk")
+                    text = getattr(chunk, "content", "") or ""
+                    # Some providers hand back content as a list of parts.
+                    if isinstance(text, list):
+                        text = "".join(
+                            p.get("text", "") for p in text if isinstance(p, dict)
+                        )
+                    if text:
+                        streamed.append(text)
+                        # A front answer with no lookup behind it may be
+                        # replaced by the SQL agent's (_handed_over): hold it.
+                        if front and not (_ANSWER.get() or {}).get("tool_calls"):
+                            held.append(text)
+                            continue
+                        yield "token", text
+                        if _is_runaway(streamed):
+                            final = None   # the agent never finished; use what streamed
+                            break
+                # The outermost chain is the agent executor (create_sql_agent
+                # names it "SQL Agent Executor"; the check used to be for
+                # "AgentExecutor" and never matched, so only streamed tokens
+                # became the answer - a tool that returns directly, or the
+                # iteration-cap message, streams none and came out as "I
+                # couldn't produce an answer for that.").
+                elif kind == "on_chain_end" and not ev.get("parent_ids"):
+                    out = ev.get("data", {}).get("output")
+                    if isinstance(out, dict):
+                        final = out.get("output")
+                    elif isinstance(out, str):
+                        final = out
+        except Exception as exc:  # noqa: BLE001 - provider/network/agent errors
+            # A Groq 429 that arrives before any answer text was streamed can be
+            # retried invisibly on the fallback model; after text has gone out it
+            # can't, so that case falls through to the error message.
+            backup = None if (_model or streamed) else _fallback_model_for(exc)
+            if backup:
+                yield "status", "Busy, switching to a backup model…"
+                async for item in astream_answer(question, history, _model=backup):
+                    yield item
+                return
+            yield "done", friendly_error(exc)
             return
-        yield "done", friendly_error(exc)
-        return
+        if not (front and _handed_over(final or "".join(streamed))):
+            if held:
+                yield "token", "".join(held)
+            break
+        streamed.clear()     # whatever the front agent wrote before handing over isn't the answer
+        held.clear()
+        final = None
 
     answer = tidy_answer(friendly_stop(_not_an_echo(final or "".join(streamed)) or NO_ANSWER))
     if classify_answer(answer) == "answered":
