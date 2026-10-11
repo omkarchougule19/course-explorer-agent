@@ -797,7 +797,7 @@ because other docs cite them.
   removed (Render service, GitHub repo and local folder, 2026-10-10),
   because the owner wants one app.
 
-### 38. Fixed tools first, SQL as the fallback — `todo`
+### 38. Fixed tools first, SQL as the fallback — `tried and not shipped 2026-10-11`
 - **Problem:** every question carries about 4,630 tokens of instructions
   and tool definitions, roughly half of it teaching the tables and query
   rules, against Groq's 8,000 a minute.
@@ -806,6 +806,41 @@ because other docs cite them.
   can't answer (counts, rankings, cross-table questions).
 - **Done when:** the full eval holds 95-98% with the answers read, and the
   per-question token cost is measured lower.
+- **Built:** a front agent with a 1,490-token prompt (the SQL agent's is
+  3,600) and five tools - `course_facts`, `department_overview`,
+  `search_sections`, `academic_calendar` and `database_query`, which hands
+  the question to the unchanged SQL agent. About 2,150 tokens a request with
+  its tools, against 4,630. Behind `TOOLS_FIRST`, off by default. Kept on
+  branch `tools-first` (c0f69e2), not merged.
+- **Measured** (full eval, 111 questions, same day, same data):
+
+  | run | answer-OK | total tokens |
+  |---|---|---|
+  | SQL agent alone (master, 815df1d) | 97.3% | 1,029,622 |
+  | tools first, round 1 | 87.4% | 737,696 |
+  | round 2: hand over on a code the student didn't write, an empty lookup, a level filter | 94.6% | 806,874 |
+  | round 3: a front answer stands only on a lookup, or as a decline of a question that mentions no course | 95.5% | 989,392 |
+
+- **Why not shipped:** the saving and the accuracy pull against each other.
+  The front agent is cheap when it answers (about 5,800 tokens against
+  10,300 on the 39 questions it answered from a lookup in round 3) and
+  dearer when it hands over (15,000 against 11,900 on the 39 the SQL agent
+  ended up answering, which now pay for both stages). Its wrong answers were
+  nearly all one kind: answering or declining what it should have handed
+  over ("the ai class who teaches it" looked up as CS 225; "I'm failing CS
+  225, should I drop it" declined; a status breakdown answered from the
+  DATA NOTES). Each guard that fixed those sent more questions through both
+  stages. Round 3 ends 4% under the SQL agent's tokens and 1.8 points under
+  its answer-OK, with slightly longer answer times (3.5 s against 3.2 s on
+  the eval's provider) and a second prompt to keep in step.
+- **What it does show:** the SQL agent's long prompt is doing work - the
+  rules for vague references, advice questions and status live there, and a
+  short prompt loses them (item 34 found the same from the other side). A
+  lookup is clearly cheaper only for a question that names its course, and
+  `course_facts` already serves those inside the SQL agent.
+- **If revisited:** route without a model call (a named course code plus an
+  advice or who-teaches shape) so a hand-over costs nothing, and measure on
+  the question log's real mix, not the eval's.
 
 ### 22. Compress responses — `todo`
 - **Problem:** nothing is gzipped: the home page is 137 KB raw vs 42.8 KB
