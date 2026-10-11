@@ -543,12 +543,16 @@ production before it wins on the full schema.
     the model's token limits. (d) The university's Illinois Chat API as the
     model: no tool calling, the caller's system prompt is ignored, and
     requests over about 6,000 tokens come back empty.
-  - *Open.* The site's assistant still writes SQL for most questions. Giving
-    it these fixed tools first, with SQL as the fallback, should cut the
-    fixed prompt cost roughly in half (an estimate, not measured): plan
-    item 38.
+  - *Tried 2026-10-11, not shipped: these fixed tools in front of the SQL
+    agent.* A front agent with a short prompt answered what a lookup can and
+    handed the rest over. It halved the cost of the questions it answered
+    and raised the cost of the ones it handed over, and it was only as
+    accurate as the SQL agent once most doubtful cases were handed over:
+    95.5% answer-OK and 4% fewer tokens, against 97.3% for the SQL agent
+    alone. Not worth a second prompt to maintain. Measurements and the
+    rounds: plan item 38; code on branch `tools-first`.
 
-**History.** MCP endpoint and `app/catalog.py` 2026-10-10. Hybrid agent 2026-08; streaming 2026-08-31; provider order
+**History.** MCP endpoint and `app/catalog.py` 2026-10-10; tools-first front agent tried and not shipped 2026-10-11. Hybrid agent 2026-08; streaming 2026-08-31; provider order
 changed to Groq → OpenAI → Gemini 2026-09-19; qwen failover 2026-09-20;
 Gemini removed 2026-09-28; `course_facts` tool 2026-09-28;
 pipeline 2026-09-10; per-answer data budget, `department_overview` tool,
