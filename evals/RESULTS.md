@@ -217,3 +217,37 @@ file, and the gpt-oss-20b terse run did not complete (its daily cap ran out
 after q4). qwen's remaining questions (q02, q04-q06, q08, q09, q12, q19,
 q21-q29) ran on the full schema until Groq's cap hit at q25; q04 was also
 rejected outright by qwen's 1,000 output-tokens-per-minute limit.
+
+## Run 4: the production agent on the full set, and "tools first", 2026-10-11
+
+All 111 questions, `prod` arm (the live `create_sql_agent`), `gpt-4o-mini`,
+live Neon data:
+
+    python -m evals.run --arms prod --provider openai --db env -y
+
+| run | answer-OK | result-match (loose) | refusals (out of scope) | total tokens |
+|---|---|---|---|---|
+| SQL agent alone (master, 815df1d) | 97.3% | 90.9% | 100% | 1,029,622 |
+| tools first, round 1 | 87.4% | 72.7% | 100% | 737,696 |
+| tools first, round 2 | 94.6% | 86.4%* | 100% | 806,874 |
+| tools first, round 3 | 95.5% | 86.4%* | 100% | 989,392 |
+
+The first row is the current production agent. Runs of the same arm on
+2026-10-10, before the lookups moved to `app/catalog.py`, gave 96.4% and
+98.2%, so that move changed nothing measurable.
+
+"Tools first" (`TOOLS_FIRST`, branch `tools-first`, not merged) put a front
+agent with a short prompt and fixed lookups before the SQL agent. It was
+cheaper when it answered and dearer when it handed over, and each guard that
+fixed a wrong answer sent more questions through both stages. It was not
+shipped. The rounds and the reasoning are in `implementation_plan_v2.md`
+item 38.
+
+Caveats. These runs use `gpt-4o-mini`, not the Groq model production
+answers with, so they compare versions of the agent, not production's
+absolute accuracy. One run per configuration: differences of a point or two
+(one or two questions) are within run-to-run variation. *The result-match
+figures for rounds 2 and 3 were scored with a changed grader (a
+lookup-built answer may also match on the item's `answer_contains`), so
+they are not comparable with the first two rows; that grader change lives
+on the `tools-first` branch only.

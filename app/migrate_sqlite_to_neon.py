@@ -129,4 +129,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # Takes no options, but parse anyway: without this, any argument -
+    # even --help - started the migration.
+    import argparse
+    argparse.ArgumentParser(description='Copy data/courses.db into the Postgres database named by DATABASE_URL, REPLACING every data table there.').parse_args()
     sys.exit(main())

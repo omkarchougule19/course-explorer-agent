@@ -248,6 +248,13 @@ python -m app.backfill_embeddings   # fills any course_embeddings gaps
 python -m app.load_prereqs          # re-derive prerequisites from the new descriptions
 ```
 
+Every loader script writes to whatever `DATABASE_URL` points at, and some
+replace a whole table (`load_prereqs` deletes and re-inserts
+`prerequisites`). To see what one does, run it with `--help`: since
+2026-10-10 every script prints its help and exits (`migrate_sqlite_to_neon`
+since 2026-10-12). Before that, the ones that take no options ignored their
+arguments, so `--help` started the load.
+
 ### 4.4 Rolling the term forward
 
 When registration moves to the next term, update **four** places:
