@@ -1,27 +1,17 @@
 """
 catalog.py
 
-Every lookup the website and the MCP server answer from: one course's facts,
-a department's courses, section search, course search, the academic calendar
-and the department list. Each function runs fixed, parameterized SQL on a
-read-only connection and returns plain text. The site's assistant (app/agent.py)
-and the MCP server (app/mcp_server.py) both call them; nothing here imports
-the agent stack, so the MCP endpoint stays light.
+The fixed lookups the assistant offers as tools: one course's facts
+(course_facts) and a department's courses (department_overview). Each runs
+fixed, parameterized SQL on a read-only connection and returns plain text.
+Kept apart from app/agent.py so the lookups can be read and tested without
+the agent stack.
 """
 
-import os
 import re
 from functools import lru_cache
 
 from app import db
-
-
-def site_url() -> str:
-    """Public address of this site, for links in MCP tool results, which are
-    read outside the site and so need the host (no trailing slash).
-    PUBLIC_BASE_URL if set, else the address Render gives the service. Empty
-    locally, which leaves links site-relative."""
-    return (os.environ.get("PUBLIC_BASE_URL") or os.environ.get("RENDER_EXTERNAL_URL") or "").strip().rstrip("/")
 
 
 _SEASON_ORDER = {"winter": 0, "spring": 1, "summer": 2, "fall": 3}
@@ -259,7 +249,7 @@ _OVERVIEW_LIST_MAX = 80     # several departments: list every course up to this 
 _OVERVIEW_TERM_RE = re.compile(r"\b(fall|spring|summer|winter)\s*(20\d\d)\b", re.IGNORECASE)
 
 
-def department_overview_text(subjects: str, term: str = "", level: str = "", base: str = "") -> str:
+def department_overview_text(subjects: str, term: str = "", level: str = "") -> str:
     """What one or more departments offer, written as the finished answer
     (Markdown, courses linked): each course with its number of sections for
     one term - the term asked for, else the department's latest term with
@@ -269,9 +259,7 @@ def department_overview_text(subjects: str, term: str = "", level: str = "", bas
 
     Every branch is worded for the student, so an assistant can show it as
     is. Departments are given as codes or as words such as 'Gies'; a code
-    that isn't one gets the closest real codes. `base` goes in front of each
-    course link: empty for the site's own assistant (links stay relative),
-    the site's address for answers shown elsewhere."""
+    that isn't one gets the closest real codes."""
     lvl = (re.search(r"[1-9]", level or "") or [None])[0]
     tm = _OVERVIEW_TERM_RE.search(term or "")
     asked = f"{tm.group(1).lower()} {tm.group(2)}" if tm else None
@@ -354,7 +342,7 @@ def department_overview_text(subjects: str, term: str = "", level: str = "", bas
                     f"{plural(n_sections, 'section')} across {plural(len(courses), f'{scope}course')}.")
         out.append(head + "\n")
         out.append("| Course | Title | Sections |\n|---|---|---|")
-        out += [f"| [{code} {r['course_number']}]({base}/?course={code}-{r['course_number']}) | "
+        out += [f"| [{code} {r['course_number']}](/?course={code}-{r['course_number']}) | "
                 f"{(r['title'] or '').replace('|', '/')} | {r['n']} |" for r in courses]
         others = sorted((t for t in terms if t != shown), key=term_key, reverse=True)
         if others:
@@ -370,239 +358,3 @@ def department_overview_text(subjects: str, term: str = "", level: str = "", bas
         out.append(f"\nAsk for one department or a level to see its courses, for example "
                    f"\"{first} courses\" or \"{first} 400-level courses\".")
     return "\n".join(out).strip()
-
-
-# --- searches ---------------------------------------------------------------------------------
-
-_SEMESTERS = ("fall", "spring", "summer", "winter")
-_TERM_RE = re.compile(r"\b(fall|spring|summer|winter)\s*(20\d\d)\b", re.IGNORECASE)
-_HHMM_RE = re.compile(r"^\s*(\d{1,2}):(\d{2})\s*$")
-MAX_ROWS = 60          # rows one search returns; the reply says when there were more
-
-
-def _term(term: str):
-    """('fall', 2026) from 'fall 2026' / 'Fall2026', or (None, None)."""
-    m = _TERM_RE.search(term or "")
-    return (m.group(1).lower(), int(m.group(2))) if m else (None, None)
-
-
-def _minutes(hhmm: str):
-    """Minutes after midnight from a 24-hour 'HH:MM', or None."""
-    m = _HHMM_RE.match(hhmm or "")
-    if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59:
-        return None
-    return int(m.group(1)) * 60 + int(m.group(2))
-
-
-def latest_term(conn, subject: str = ""):
-    """The newest (semester, year) with sections - for one subject if given."""
-    sql = "SELECT DISTINCT year, semester FROM sections WHERE year IS NOT NULL AND semester IS NOT NULL"
-    params: list = []
-    if subject:
-        sql += " AND subject = ?"
-        params.append(subject.upper())
-    rows = conn.execute(sql, params).fetchall()
-    if not rows:
-        return None, None
-    best = max(rows, key=lambda r: (r["year"], _SEASON_ORDER.get(r["semester"], 9)))
-    return best["semester"], best["year"]
-
-
-def search_sections_text(subject: str = "", course_number: str = "", term: str = "", level: str = "",
-                         instructor: str = "", starts_after: str = "", ends_before: str = "",
-                         no_days: str = "", online_only: bool = False, limit: int = 40) -> str:
-    """Sections matching the filters, one line each with CRN, section,
-    instructor, status and every meeting (type, days, times, place). Needs a
-    subject or an instructor. With no term, the subject's latest term is used
-    and named in the reply. Time filters apply to a section's own meetings:
-    a section passes only if none of its timed meetings breaks them."""
-    subject = (subject or "").strip().upper()
-    instructor = (instructor or "").strip()
-    if not subject and not instructor:
-        return "Give a subject code (for example 'CS') or an instructor's last name."
-    limit = max(1, min(int(limit or 40), MAX_ROWS))
-    lvl = (re.search(r"[1-9]", level or "") or [None])[0]
-    t_after, t_before = _minutes(starts_after), _minutes(ends_before)
-    avoid = {c for c in (no_days or "").upper() if c in "MTWRFSU"}
-
-    conn = db.get_readonly_connection()
-    try:
-        if subject:
-            names = {r["code"]: r["name"] for r in conn.execute("SELECT code, name FROM subjects").fetchall()}
-            if names and subject not in names:
-                close = _close_subjects(subject)
-                return (f"'{subject}' is not a department code."
-                        + (f" Closest: {'; '.join(close)}." if close else " Use list_departments to find the code."))
-        semester, year = _term(term)
-        note = ""
-        if not semester:
-            semester, year = latest_term(conn, subject)
-            if not semester:
-                return f"No sections in the data for {subject or instructor}."
-            note = f" (no term given: showing the latest term in the data, {semester} {year})"
-        sql = ("SELECT subject, course_number, course_label, crn, section_name, instructor, "
-               "enrollment_status, credit_hours FROM sections WHERE year = ? AND semester = ?")
-        params: list = [year, semester]
-        if subject:
-            sql += " AND subject = ?"
-            params.append(subject)
-        if course_number.strip():
-            sql += " AND course_number = ?"
-            params.append(course_number.strip().upper())
-        if lvl:
-            sql += " AND course_number LIKE ?"
-            params.append(f"{lvl}%")
-        if instructor:
-            from app.searchfields import normalize_last_name
-            last = instructor.split(",")[0].split()[-1] if instructor.split(",")[0].split() else instructor
-            sql += " AND instructor_last = ?"
-            params.append(normalize_last_name(last))
-        sql += " ORDER BY subject, course_number, crn"
-        secs = [dict(r) for r in conn.execute(sql, params).fetchall()]
-        if not secs:
-            other = latest_term(conn, subject) if subject else (None, None)
-            hint = (f" {subject}'s latest term in the data is {other[0]} {other[1]}."
-                    if other[0] and (other[0], other[1]) != (semester, year) else "")
-            return f"No sections match in {semester} {year}.{hint}"
-
-        msql = ("SELECT subject, course_number, crn, meeting_type, days_of_week, start_time, end_time, "
-                "building, room, start_min, end_min, is_online FROM meetings WHERE year = ? AND semester = ?")
-        mparams: list = [year, semester]
-        subjects = sorted({s["subject"] for s in secs})
-        msql += " AND subject IN (" + ", ".join("?" for _ in subjects) + ")"
-        mparams += subjects
-        by_crn: dict = {}
-        for m in conn.execute(msql, mparams).fetchall():
-            by_crn.setdefault((m["subject"], m["course_number"], m["crn"]), []).append(dict(m))
-    finally:
-        conn.close()
-
-    def fits(meets):
-        if online_only and not any(m.get("is_online") for m in meets):
-            return False
-        for m in meets:
-            if avoid and set((m.get("days_of_week") or "").upper()) & avoid:
-                return False
-            if t_after is not None and m.get("start_min") is not None and m["start_min"] < t_after:
-                return False
-            if t_before is not None and m.get("end_min") is not None and m["end_min"] > t_before:
-                return False
-        return True
-
-    filtered = t_after is not None or t_before is not None or bool(avoid) or online_only
-    out = []
-    for s in secs:
-        meets = by_crn.get((s["subject"], s["course_number"], s["crn"]), [])
-        if filtered and not fits(meets):
-            continue
-        when = "; ".join(
-            f"{m['meeting_type'] or 'Meeting'} {m['days_of_week'] or ''} "
-            f"{(m['start_time'] or '').strip()}-{(m['end_time'] or '').strip()}"
-            f"{' @ ' + ' '.join(x for x in (m['building'], m['room']) if x) if m['building'] else ''}".strip()
-            for m in meets) or "no meeting times loaded"
-        out.append(f"{s['subject']} {s['course_number']} {s['course_label'] or ''} | CRN {s['crn']}"
-                   f"{' ' + s['section_name'] if s['section_name'] else ''} | "
-                   f"{s['instructor'] or 'instructor not assigned'} | {s['enrollment_status'] or 'status unknown'} | {when}")
-    if not out:
-        return f"No sections match those filters in {semester} {year}{note}."
-    head = f"{len(out)} section(s) in {semester} {year}{note}"
-    if len(out) > limit:
-        head += f"; showing the first {limit} - narrow by course_number, level or instructor to see the rest"
-    return head + ":\n" + "\n".join(out[:limit]) + (
-        "\nStatus 'A'/'P' is a scheduling code (registration not published yet), not open/closed."
-        if any("| A |" in line or "| P |" in line for line in out[:limit]) else "")
-
-
-def search_courses_text(query: str, subject: str = "", level: str = "", limit: int = 25) -> str:
-    """Courses whose title or catalog description contains every word of the
-    query, with a one-line description. Optional department and level."""
-    words = [w for w in re.findall(r"[a-z0-9]+", (query or "").lower()) if len(w) >= 2][:6]
-    if not words:
-        return "Give one or more words to search course titles and descriptions for."
-    limit = max(1, min(int(limit or 25), MAX_ROWS))
-    lvl = (re.search(r"[1-9]", level or "") or [None])[0]
-    sql = ("SELECT subject, course_number, MAX(course_label) AS title, MAX(description) AS description "
-           "FROM sections WHERE 1=1")
-    params: list = []
-    for w in words:
-        sql += " AND (LOWER(course_label) LIKE ? OR title_search LIKE ? OR LOWER(description) LIKE ?)"
-        params += [f"%{w}%"] * 3
-    if subject.strip():
-        sql += " AND subject = ?"
-        params.append(subject.strip().upper())
-    if lvl:
-        sql += " AND course_number LIKE ?"
-        params.append(f"{lvl}%")
-    sql += " GROUP BY subject, course_number ORDER BY subject, course_number"
-    conn = db.get_readonly_connection()
-    try:
-        rows = conn.execute(sql, params).fetchall()
-    finally:
-        conn.close()
-    if not rows:
-        return f"No course title or description contains: {' '.join(words)}. Try fewer or different words."
-    in_title = [r for r in rows if all(w in (r["title"] or "").lower() for w in words)]
-    ordered = in_title + [r for r in rows if r not in in_title]
-    lines = [f"{r['subject']} {r['course_number']} - {r['title'] or '(no title)'}: "
-             f"{((r['description'] or 'no description')[:220]).rstrip()}" for r in ordered[:limit]]
-    head = f"{len(rows)} course(s) match"
-    if len(rows) > limit:
-        head += f"; showing {limit} (title matches first) - add a subject or level to narrow"
-    return head + ":\n" + "\n".join(lines)
-
-
-def calendar_text(term: str = "", category: str = "") -> str:
-    """Academic-calendar events for a term (default: the latest loaded),
-    optionally one category: instruction, add, drop, withdraw, break,
-    holiday, finals, grades, registration, commencement, other."""
-    semester, year = _term(term)
-    conn = db.get_readonly_connection()
-    try:
-        if not semester:
-            rows = conn.execute("SELECT DISTINCT year, semester FROM academic_calendar").fetchall()
-            if not rows:
-                return "No academic calendar is loaded."
-            best = max(rows, key=lambda r: (r["year"], _SEASON_ORDER.get(r["semester"], 9)))
-            semester, year = best["semester"], best["year"]
-        sql = ("SELECT event_date, event_end_date, title, category FROM academic_calendar "
-               "WHERE year = ? AND semester = ?")
-        params: list = [year, semester]
-        if category.strip():
-            cats = ["drop", "withdraw"] if category.strip().lower() in ("drop", "withdraw") else [category.strip().lower()]
-            sql += " AND category IN (" + ", ".join("?" for _ in cats) + ")"
-            params += cats
-        events = conn.execute(sql + " ORDER BY event_date, title", params).fetchall()
-    finally:
-        conn.close()
-    if not events:
-        return f"No calendar events loaded for {semester} {year}" + (f" in category '{category}'." if category else ".")
-    lines = [f"{e['event_date']}{' to ' + str(e['event_end_date']) if e['event_end_date'] else ''} "
-             f"[{e['category']}] {e['title']}" for e in events[:MAX_ROWS]]
-    return (f"Academic calendar, {semester} {year} ({len(events)} event(s)). Deadlines can differ by audience "
-            "(undergraduate, graduate, Law, Vet Med) - the title says which:\n" + "\n".join(lines))
-
-
-def departments_text(query: str = "") -> str:
-    """Department codes with their names and colleges; `query` filters by any
-    word of the code, name or college ('Gies', 'engineering', 'stat')."""
-    q = (query or "").strip().lower()
-    conn = db.get_readonly_connection()
-    try:
-        if q:
-            rows = conn.execute("SELECT code, name, college FROM subjects WHERE search_text LIKE ? ORDER BY code",
-                                (f"%{q}%",)).fetchall()
-        else:
-            rows = conn.execute("SELECT code, name, college FROM subjects ORDER BY code").fetchall()
-    finally:
-        conn.close()
-    if not rows:
-        close = _close_subjects(q)
-        return f"No department matches '{query}'." + (f" Closest codes: {'; '.join(close)}." if close else "")
-    if not q and len(rows) > 80:
-        by_college: dict = {}
-        for r in rows:
-            by_college.setdefault(r["college"] or "Other", []).append(r["code"])
-        return (f"{len(rows)} departments. By college:\n"
-                + "\n".join(f"{c}: {', '.join(codes)}" for c, codes in sorted(by_college.items())))
-    return f"{len(rows)} department(s):\n" + "\n".join(
-        f"{r['code']} - {r['name']}{' (' + r['college'] + ')' if r['college'] else ''}" for r in rows)

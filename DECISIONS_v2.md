@@ -508,51 +508,40 @@ production before it wins on the full schema.
   `department_overview`. "sections of bad," had been answered "BAD does not
   exist".
 
-- **The catalog is also offered over MCP, from the same service**
-  (2026-10-10). `/mcp` gives an assistant a student already uses six fixed,
-  read-only lookups (`app/mcp_server.py`): course facts, department
-  overview, section search with the schedule filters, course search by
-  words, the academic calendar, the department list. The connecting
-  assistant reasons and writes the answer, so these calls run no model here
-  and are outside the free tier's per-minute and daily limits that shape the
-  site's own assistant. It is an extra, not the main route: it only helps
-  students whose assistant accepts custom connectors.
-  - *Shared lookups.* The lookups live in `app/catalog.py`; `app/agent.py`
-    imports `course_facts_text` and `department_overview_text` from it, so
-    the site's assistant and the MCP tools return the same thing and the MCP
-    path doesn't import the agent stack.
-  - *Fixed tools, no SQL tool.* No tool takes SQL, a table or a column. A
-    fixed lookup can't be turned into an arbitrary read and needs no guard.
-  - *Stateless, JSON replies.* One request, one response; nothing is held
-    between calls, so a sleeping instance costs a slow first call only.
-  - *Public, read-only, rate-limited.* No login or key (public catalog data,
-    `db.get_readonly_connection()`), and `MCP_RATE_PER_MINUTE` (120) calls a
-    minute per address. The limit keys on `X-Forwarded-For` like the others:
-    friction, not a barrier. Tool results never carry driver errors or SQL.
-  - *Links.* MCP results link to this site with its full address
-    (`PUBLIC_BASE_URL`, else Render's `RENDER_EXTERNAL_URL`); the site's own
-    assistant keeps site-relative links.
-  - *Tried and turned down the same day.* (a) A separate MCP-only site with
-    no chat box (`courseExplorer2`, built, deployed once, then removed): it
+- **No MCP endpoint** (offered 2026-10-10, removed 2026-10-11). For one day
+  `/mcp` gave an assistant a student already uses six fixed, read-only
+  lookups (course facts, department overview, section search, course
+  search, calendar, department list), so that assistant could do the
+  reasoning outside the free tier's limits. Removed because it is not what
+  the site is for: the goal is a student typing a question here and getting
+  a good answer, and the endpoint only helps the few who would set up a
+  custom connector. Nobody had connected one, it did nothing for the chat
+  box, and it cost a public endpoint, a package and a page section to keep.
+  One revert of the removal brings it back.
+  - *What stayed.* `app/catalog.py` holds the two fixed lookups the
+    assistant uses (`course_facts`, `department_overview`); `app/agent.py`
+    imports them.
+  - *Also turned down along the way.* (a) A separate MCP-only site with no
+    chat box (`courseExplorer2`, built, deployed once, then removed): it
     answers nobody who hasn't first set up a connector, and the owner wants
-    one app. (b) Hosting on GitHub Pages: files only, so neither the
-    endpoints nor `/mcp` can run there. (c) Using the community
-    `uiuc-course-mcp` connector as the data source: it runs on the user's
-    own machine, covers one subject per search and has no prerequisites,
-    calendar or schedule filters; and a different data source doesn't change
-    the model's token limits. (d) The university's Illinois Chat API as the
-    model: no tool calling, the caller's system prompt is ignored, and
-    requests over about 6,000 tokens come back empty.
-  - *Tried 2026-10-11, not shipped: these fixed tools in front of the SQL
-    agent.* A front agent with a short prompt answered what a lookup can and
-    handed the rest over. It halved the cost of the questions it answered
-    and raised the cost of the ones it handed over, and it was only as
-    accurate as the SQL agent once most doubtful cases were handed over:
-    95.5% answer-OK and 4% fewer tokens, against 97.3% for the SQL agent
-    alone. Not worth a second prompt to maintain. Measurements and the
-    rounds: plan item 38; code on branch `tools-first`.
+    one app. (b) Hosting on GitHub Pages: files only, so the endpoints
+    can't run there. (c) The community `uiuc-course-mcp` connector as the
+    data source: it runs on the user's own machine, covers one subject per
+    search and has no prerequisites, calendar or schedule filters; and a
+    different data source doesn't change the model's token limits. (d) The
+    university's Illinois Chat API as the model: no tool calling, the
+    caller's system prompt is ignored, and requests over about 6,000 tokens
+    come back empty.
+  - *Tried 2026-10-11, not shipped: fixed tools in front of the SQL agent.*
+    A front agent with a short prompt answered what a lookup can and handed
+    the rest over. It halved the cost of the questions it answered and
+    raised the cost of the ones it handed over, and it was only as accurate
+    as the SQL agent once most doubtful cases were handed over: 95.5%
+    answer-OK and 4% fewer tokens, against 97.3% for the SQL agent alone.
+    Not worth a second prompt to maintain. Measurements and the rounds:
+    plan item 38; code on branch `tools-first`.
 
-**History.** MCP endpoint and `app/catalog.py` 2026-10-10; tools-first front agent tried and not shipped 2026-10-11. Hybrid agent 2026-08; streaming 2026-08-31; provider order
+**History.** MCP endpoint added 2026-10-10 and removed 2026-10-11 (`app/catalog.py` kept); tools-first front agent tried and not shipped 2026-10-11. Hybrid agent 2026-08; streaming 2026-08-31; provider order
 changed to Groq → OpenAI → Gemini 2026-09-19; qwen failover 2026-09-20;
 Gemini removed 2026-09-28; `course_facts` tool 2026-09-28;
 pipeline 2026-09-10; per-answer data budget, `department_overview` tool,
