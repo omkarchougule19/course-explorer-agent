@@ -68,33 +68,6 @@
     </p>
   </div>
 
-  <div class="panel" id="connect">
-    <h2>Use your own AI assistant</h2>
-    <p class="hint">
-      If you already use an AI assistant, it can look things up here directly. This site offers
-      its catalog through the Model Context Protocol (MCP), an open standard that lets an
-      assistant call outside tools. Your assistant does the thinking and writes the answer; this
-      site only answers its lookups, so the assistant on the home page and its limits aren't
-      involved.
-    </p>
-    <ol class="hint">
-      <li>Copy this site's connector address: <code id="mcp-url">…</code>
-        <button type="button" class="link-btn" id="copy-mcp">Copy</button></li>
-      <li>In your assistant, open settings and find <b>Connectors</b> (some call it
-        <b>Integrations</b>, <b>Tools</b> or <b>MCP servers</b>).</li>
-      <li>Add a custom connector, paste the address, and give it a name such as
-        "Illini courses". No login or key is needed.</li>
-      <li>Start a chat and ask a course question.</li>
-    </ol>
-    <p class="hint">It can use these lookups, all read-only:</p>
-    <ul class="hint" id="tool-list"></ul>
-    <p class="hint">
-      Whether custom connectors are available, and on which plans, depends on the assistant.
-      Because your assistant writes the final answer, it can still get things wrong. When it
-      matters, open the course here and check.
-    </p>
-  </div>
-
   <div class="panel">
     <h2>Data sources and freshness</h2>
     <p class="hint">
@@ -129,7 +102,6 @@
 
 <script src="/schedule-store.js"></script>
 <script src="/theme.js"></script>
-<script src="/about-page.js"></script>
 <script src="/motion.js" defer></script>
 </body>
 </html>
