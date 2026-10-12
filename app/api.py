@@ -29,7 +29,6 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi import Path as PathParam
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
@@ -40,47 +39,10 @@ from app import ask_log as ask_log_mod
 from app import feedback as feedback_mod
 from app import site_feedback as site_feedback_mod
 from app.db import DB_PATH
-from app import catalog as catalog_mod
-from app.mcp_server import mcp
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 STATIC_DIR = Path(__file__).parent.parent / "static"
-
-# --- MCP endpoint -------------------------------------------------------------
-# The same catalog, offered as tools to an assistant the student already uses
-# (app/mcp_server.py). Public and read-only. Stateless with JSON replies: each
-# call is one request and one response, so nothing is held between requests
-# and a sleeping free instance can pick up mid-conversation. DNS-rebinding
-# protection is for servers on a developer's own machine; behind a public host
-# name it would reject every request whose Host isn't on a fixed list.
-MCP_PATH = "/mcp"
-_mcp_app = mcp.streamable_http_app(
-    streamable_http_path=MCP_PATH,
-    stateless_http=True,
-    json_response=True,
-    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
-)
-# Tool calls one address may make per minute. Each is a database lookup and
-# costs no LLM budget; an assistant answering one question makes a handful.
-MCP_RATE_PER_MINUTE = int(os.environ.get("MCP_RATE_PER_MINUTE", "120"))
-_mcp_hits: dict = {}
-_mcp_hits_lock = threading.Lock()
-
-
-def _mcp_over_limit(ip: str) -> bool:
-    now = time.monotonic()
-    with _mcp_hits_lock:
-        recent = [t for t in _mcp_hits.get(ip, ()) if now - t < 60]
-        if len(recent) >= MCP_RATE_PER_MINUTE:
-            _mcp_hits[ip] = recent
-            return True
-        recent.append(now)
-        _mcp_hits[ip] = recent
-        if len(_mcp_hits) > 5000:   # forget addresses that have gone quiet
-            for key in [k for k, v in _mcp_hits.items() if not v or now - v[-1] >= 60]:
-                del _mcp_hits[key]
-        return False
 
 _DOCS_ON = bool(os.environ.get("ENABLE_DOCS"))
 
@@ -120,10 +82,6 @@ _SECURITY_HEADERS = {
 
 @app.middleware("http")
 async def _add_security_headers(request: Request, call_next):
-    if (request.url.path == MCP_PATH and MCP_RATE_PER_MINUTE > 0
-            and _mcp_over_limit(_client_ip(request))):
-        return JSONResponse(status_code=429, headers={"Retry-After": "60"},
-                            content={"detail": "Too many requests. Try again in a minute."})
     response = await call_next(request)
     for k, v in _SECURITY_HEADERS.items():
         response.headers.setdefault(k, v)
@@ -239,28 +197,6 @@ def _warm_agent_in_background():
             print(f"[startup] agent warm-up skipped: {exc!r}", flush=True)
 
     threading.Thread(target=warm, name="agent-warmup", daemon=True).start()
-
-
-_mcp_stack = None
-
-
-@app.on_event("startup")
-async def _start_mcp():
-    """Start the MCP session manager (the task group its requests run in).
-    Entered here and left in _stop_mcp: Starlette runs startup and shutdown
-    handlers in the same lifespan task, which the task group requires."""
-    global _mcp_stack
-    from contextlib import AsyncExitStack
-    _mcp_stack = AsyncExitStack()
-    await _mcp_stack.enter_async_context(mcp.session_manager.run())
-
-
-@app.on_event("shutdown")
-async def _stop_mcp():
-    global _mcp_stack
-    if _mcp_stack is not None:
-        await _mcp_stack.aclose()
-        _mcp_stack = None
 
 
 @app.on_event("startup")
@@ -1278,32 +1214,6 @@ def get_prereqs(subject: str = PathParam(max_length=12),
         "prerequisites": [groups[k] for k in sorted(groups)],
         "unlocks": [dict(u) for u in unlocks],
     }
-
-
-@app.get("/mcp-info")
-async def mcp_info(request: Request):
-    """What the "use your own assistant" section shows: this server's MCP
-    address and its tools, read from the server itself so the page can't
-    drift from what is actually offered."""
-    base = catalog_mod.site_url()
-    if not base:
-        proto = request.headers.get("x-forwarded-proto", request.url.scheme)
-        base = f"{proto}://{request.headers.get('host', request.url.netloc)}"
-    tools = await mcp.list_tools()
-    return {
-        "url": base + MCP_PATH,
-        "name": mcp.title or mcp.name,
-        "tools": [{"name": t.name, "title": t.title or t.name,
-                   "summary": (t.description or "").strip().split("\n\n")[0].replace("\n", " ")}
-                  for t in tools],
-    }
-
-
-# The MCP endpoint itself. Its routes are added directly, not mounted under a
-# prefix: a mount would answer POST /mcp with a redirect to /mcp/, which MCP
-# clients don't follow.
-for _route in _mcp_app.routes:
-    app.router.routes.append(_route)
 
 
 # Serves static/index.html at "/" (the web UI) and any other files under static/.
