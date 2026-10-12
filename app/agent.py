@@ -36,9 +36,9 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app import db, sql_guard
 from app.db import DB_PATH
-# The lookups live in app/catalog.py so the MCP endpoint can use them without
-# importing this module (LangChain, the model clients). Imported by name:
-# the rest of this file, and the tests, use them as before.
+# The fixed lookups behind course_facts and department_overview live in
+# app/catalog.py. Imported by name: the rest of this file, and the tests,
+# use them as before.
 from app.catalog import (  # noqa: F401
     _COURSE_ARG_RE, _FACTS_DESC_CHARS, _FACTS_TERMS, _OVERVIEW_LIST_MAX, _OVERVIEW_TERM_RE,
     _SEASON_ORDER, _close_subjects, _resolve_subjects, _subject_names, course_facts_text,

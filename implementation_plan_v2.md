@@ -774,7 +774,7 @@ because other docs cite them.
   cleanup doesn't write the outcome when the request is cancelled, and a
   `pending` row counts against the rate limit.
 
-### 37. The catalog over MCP, from this service — `done 2026-10-10, deployed (815df1d)`
+### 37. The catalog over MCP, from this service — `done 2026-10-10, removed 2026-10-11`
 - **What:** `/mcp` offers six fixed, read-only lookups to an assistant the
   student already uses (`app/mcp_server.py`); the lookups moved out of
   `app/agent.py` into `app/catalog.py`, which both the site's assistant and
@@ -792,6 +792,13 @@ because other docs cite them.
   data. Deployed 2026-10-10: the same live check passes against production
   (12 of 12), and the pages and `/mcp-info` answer. No assistant product has
   been connected yet, and the full LLM eval was not re-run for this change.
+- **Removed 2026-10-11:** the endpoint, `/mcp-info`, `app/mcp_server.py`,
+  the How It Works section, the `mcp` package and both MCP tests. It isn't
+  the site's goal and nobody had connected an assistant (DECISIONS §6).
+  Kept: `app/catalog.py`, cut back to the two lookups the assistant uses,
+  and the loader `--help` guards. The full eval on the merged version
+  (97.3% answer-OK, against 96.4% and 98.2% before it) is the baseline the
+  removal leaves untouched: the assistant's code path is the same.
 - **History:** built first as a separate project (`courseExplorer2`, its
   own repo and Render service), then folded in here and the separate copy
   removed (Render service, GitHub repo and local folder, 2026-10-10),
