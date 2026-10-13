@@ -25,7 +25,6 @@ a search on name alone found nothing).
 """
 
 import argparse
-import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
