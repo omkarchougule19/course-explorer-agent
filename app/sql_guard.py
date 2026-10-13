@@ -69,10 +69,6 @@ _FORBIDDEN_FUNCS = frozenset({
 _DEFAULT_SCHEMAS = ("", "public", "main")
 
 
-class SQLGuardError(ValueError):
-    """Raised when a statement fails check_select()."""
-
-
 def _dialect(name: str) -> str:
     """Map a SQLAlchemy / app backend name onto sqlglot's dialect name."""
     name = (name or "").lower()
@@ -113,12 +109,6 @@ def check_select(sql: str, dialect: str, allowed_tables: Iterable[str]) -> Optio
         if name not in allowed and name not in ctes:
             return f"table {table.name} is not available; use only: {', '.join(sorted(allowed))}"
     return None
-
-
-def assert_select(sql: str, dialect: str, allowed_tables: Iterable[str]) -> None:
-    reason = check_select(sql, dialect, allowed_tables)
-    if reason:
-        raise SQLGuardError(reason)
 
 
 def readonly_engine(engine):

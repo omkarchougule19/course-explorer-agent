@@ -40,9 +40,8 @@ from app.db import DB_PATH
 # app/catalog.py. Imported by name: the rest of this file, and the tests,
 # use them as before.
 from app.catalog import (  # noqa: F401
-    _COURSE_ARG_RE, _FACTS_DESC_CHARS, _FACTS_TERMS, _OVERVIEW_LIST_MAX, _OVERVIEW_TERM_RE,
-    _SEASON_ORDER, _close_subjects, _resolve_subjects, _subject_names, course_facts_text,
-    department_overview_text,
+    _COURSE_ARG_RE, _OVERVIEW_LIST_MAX, _SEASON_ORDER, _close_subjects, _resolve_subjects,
+    _subject_names, course_facts_text, department_overview_text,
 )
 
 # Load variables from a .env file in the project root (if present) into the

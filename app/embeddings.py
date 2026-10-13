@@ -197,11 +197,3 @@ def search_similar_by_vector(conn: db.Connection, vector: Optional[List[float]],
         (Vector(vector), k),
     ).fetchall()
     return [dict(r) for r in rows]
-
-
-def search_similar_courses(conn: db.Connection, query: str, k: int = 5) -> List[dict]:
-    """Cosine-nearest course descriptions to `query`. Empty list on SQLite (no
-    course_embeddings table there) or if the query has nothing to embed."""
-    if conn.backend != "postgres":
-        return []
-    return search_similar_by_vector(conn, embed_text(query), k)

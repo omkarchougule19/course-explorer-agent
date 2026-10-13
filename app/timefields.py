@@ -19,7 +19,6 @@ from typing import Optional
 _TIME_RE = re.compile(r"^\s*(\d{1,2}):(\d{2})\s*([AP])\.?M\.?\s*$", re.IGNORECASE)
 
 MEETING_TIME_COLUMN_TYPES = (("start_min", "INTEGER"), ("end_min", "INTEGER"))
-MEETING_TIME_COLUMNS = tuple(c for c, _ in MEETING_TIME_COLUMN_TYPES)
 
 
 def minutes_after_midnight(raw: Optional[str]) -> Optional[int]:
@@ -35,5 +34,5 @@ def minutes_after_midnight(raw: Optional[str]) -> Optional[int]:
 
 
 def meeting_minutes(start_time: Optional[str], end_time: Optional[str]) -> tuple:
-    """Values for MEETING_TIME_COLUMNS, in order."""
+    """Values for the MEETING_TIME_COLUMN_TYPES columns, in order."""
     return minutes_after_midnight(start_time), minutes_after_midnight(end_time)

@@ -33,8 +33,7 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-from app import db  # noqa: E402  - must follow load_dotenv so DATABASE_URL is seen
-from app import embeddings  # noqa: E402
+from app import embeddings  # noqa: E402  - must follow load_dotenv so DATABASE_URL is seen
 from app import scraper  # noqa: E402
 from app import load_geneds, load_grades, load_tre  # noqa: E402
 from app.db import DB_PATH  # noqa: E402

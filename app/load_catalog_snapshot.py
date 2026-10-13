@@ -30,7 +30,6 @@ from app.scraper import Meeting, Section, init_db, save_sections
 CSV_URL_TEMPLATE = "https://raw.githubusercontent.com/wadefagen/datasets/main/course-catalog/data/{term}.csv"
 
 TERM_ARG_RE = re.compile(r"^(\d{4})-(fa|sp|su|wi)$")
-TERM_NAME = {"fa": "fall", "sp": "spring", "su": "summer", "wi": "winter"}
 
 
 def _first_instructor(raw: str):
