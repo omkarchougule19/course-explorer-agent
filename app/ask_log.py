@@ -7,7 +7,8 @@ tokens/day, ~80-100 real questions - see DECISIONS_v2.md) by hammering the
 assistant with junk.
 
 Table `ask_log`:
-    id, ts (UTC ISO), client_ip, question, outcome, answer_preview, latency_ms
+    id, ts (UTC ISO), client_ip, question, outcome, answer_preview, latency_ms,
+    timings (JSON, per-step durations - see app/timing.py)
 
 `outcome`:
     answered       - the agent produced a real answer
@@ -111,10 +112,15 @@ def init_table(conn: db.Connection) -> None:
             question TEXT NOT NULL,
             outcome TEXT NOT NULL,
             answer_preview TEXT,
-            latency_ms INTEGER
+            latency_ms INTEGER,
+            timings TEXT
         )
         """
     )
+    # Per-step timings (app/timing.py), added 2026-10-15 to tables that
+    # predate it.
+    if "timings" not in db.existing_columns(conn, "ask_log"):
+        conn.execute("ALTER TABLE ask_log ADD COLUMN timings TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ask_log_ts ON ask_log(ts)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ask_log_ip ON ask_log(client_ip, ts)")
     conn.commit()
@@ -216,11 +222,14 @@ def reserve(conn: db.Connection, client_ip: str, question: str) -> int:
 
 
 def finish(conn: db.Connection, row_id: int, outcome: str,
-           answer: "str | None" = None, latency_ms: "int | None" = None) -> None:
-    """Rewrite a reserve()d row with the real outcome."""
+           answer: "str | None" = None, latency_ms: "int | None" = None,
+           timings: "str | None" = None) -> None:
+    """Rewrite a reserve()d row with the real outcome. `timings` is the
+    request's Timeline as JSON (see app/timing.py)."""
     conn.execute(
-        "UPDATE ask_log SET outcome = ?, answer_preview = ?, latency_ms = ? WHERE id = ?",
-        (outcome, (answer or "")[:ANSWER_LOG_CHARS] or None, latency_ms, row_id),
+        "UPDATE ask_log SET outcome = ?, answer_preview = ?, latency_ms = ?, timings = ? "
+        "WHERE id = ?",
+        (outcome, (answer or "")[:ANSWER_LOG_CHARS] or None, latency_ms, timings, row_id),
     )
     conn.commit()
 
@@ -228,7 +237,8 @@ def finish(conn: db.Connection, row_id: int, outcome: str,
 def recent(conn: db.Connection, limit: int = 100, ip: "str | None" = None,
            outcome: "str | None" = None) -> list[dict]:
     """Most recent log entries, newest first - for GET /admin/ask-log."""
-    query = "SELECT id, ts, client_ip, question, outcome, answer_preview, latency_ms FROM ask_log"
+    query = ("SELECT id, ts, client_ip, question, outcome, answer_preview, latency_ms, timings "
+             "FROM ask_log")
     params: list = []
     clauses = []
     if ip:

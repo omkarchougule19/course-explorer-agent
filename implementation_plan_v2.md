@@ -67,6 +67,10 @@ because other docs cite them.
   2. Measure tokens per step and per question on Groq for 5 typical questions
      before and after; record in `DECISIONS_v2.md` §6.
   3. If still slow, price Groq's paid Dev tier against the alternatives.
+- **2026-10-15:** per-step timings now land in `ask_log.timings` and the
+  `[timing]` log line (`DECISIONS_v2.md` §13), so production readings can show
+  how much of a slow answer is LLM calls, rate-limit waits, tools or a cold
+  start before choosing between the levers above.
 - **Done when:** three consecutive multi-step questions finish under 30 s each
   on Groq with no 429.
 
