@@ -326,6 +326,30 @@ questions. Answers stream to the browser.
   Production runs Groq. The Groq key is shared by production, development and
   evals, and Groq's free tier caps **tokens per day per model** (about 200K),
   not just requests.
+- **Gemini Flash-Lite as an opt-in primary (2026-10-15).** Production
+  answers took 18-147 s, and the per-step timings showed 77-95% of it was
+  waiting out Groq's 8K tokens/minute (13-48 s before almost every call).
+  `LLM_PROVIDER=gemini` with `GEMINI_API_KEY` makes Gemini the primary
+  through its OpenAI-compatible endpoint (no Google SDK, so the 28 MB that got
+  it removed on 2026-09-28 doesn't come back); any Gemini 429 or 5xx moves the
+  question to Groq (`_gemini_fallback_for`), and the Groq fallback keeps the
+  8K request budget. Model: `gemini-3.5-flash-lite`, because the free tier
+  (AI Studio, 2026-10-15) gives the full Flash models 5 RPM / 20 requests a
+  day and Flash-Lite 15 RPM / 250K TPM / 500 a day - about 200 questions a
+  day before Groq takes over. Two Gemini differences are handled in a
+  `ChatOpenAI` subclass: it refuses a request ending with an assistant turn
+  (the `_AGENT_SUFFIX` pre-fill is dropped from the request), and Gemini 3
+  requires each tool call's thought signature back on the next request
+  (kept in `additional_kwargs["gemini_signatures"]`). Eval, 111 questions,
+  prod arm, live DB (run `20261016T031545Z`): answer-OK 92.8% against 97.3%
+  for gpt-4o-mini (`20261011T013051Z`; the evals run on OpenAI, not Groq,
+  since a full run is ~1M tokens), median 2.3 s, p90 4.7 s (gpt-4o-mini 2.1 s
+  / 7.8 s). Of the 7 questions gpt-4o-mini passed and Gemini missed, 3 are
+  no-data answers in other words than the prompt's, 2 are real failures
+  (malformed tool arguments `{"queries": [...]}`; the iteration cap), 2 are
+  borderline. Rejected: the full Flash models (20 requests a day), Gemma 4
+  31B (16K tokens/minute - the waits come back), Cerebras (trial credits
+  only), OpenRouter free models (50 requests a day).
 - **Per-minute limits are waited out; only daily limits fail over**
   (2026-10-03). Every agent call costs ~4.3K input tokens (prompt plus tool
   descriptions) against Groq's 8K tokens a minute, so any question needing
@@ -543,7 +567,7 @@ production before it wins on the full schema.
 
 **History.** MCP endpoint added 2026-10-10 and removed 2026-10-11 (`app/catalog.py` kept); tools-first front agent tried and not shipped 2026-10-11. Hybrid agent 2026-08; streaming 2026-08-31; provider order
 changed to Groq → OpenAI → Gemini 2026-09-19; qwen failover 2026-09-20;
-Gemini removed 2026-09-28; `course_facts` tool 2026-09-28;
+Gemini removed 2026-09-28; Gemini Flash-Lite back as an opt-in primary 2026-10-15; `course_facts` tool 2026-09-28;
 pipeline 2026-09-10; per-answer data budget, `department_overview` tool,
 closest-code note, history trimming and the direct overview answer
 2026-10-09; evaluated 2026-10-10, which made the direct answer conditional

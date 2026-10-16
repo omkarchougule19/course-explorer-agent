@@ -58,10 +58,15 @@ def _prepare_env(provider: str | None, use_sqlite: bool) -> None:
         keep = {
             "groq": "GROQ_API_KEY",
             "openai": "OPENAI_API_KEY",
+            "gemini": "GEMINI_API_KEY",
         }[provider]
-        for key in ("GROQ_API_KEY", "GROQ_API_KEY_DEV", "OPENAI_API_KEY"):
+        for key in ("GROQ_API_KEY", "GROQ_API_KEY_DEV", "OPENAI_API_KEY", "GEMINI_API_KEY"):
             if key != keep and not (provider == "groq" and key == "GROQ_API_KEY_DEV"):
                 _disable(key)
+        # Gemini is never auto-detected; with the Groq key cleared it also has
+        # no fallback, so every answer scored is Gemini's.
+        if provider == "gemini":
+            os.environ["LLM_PROVIDER"] = "gemini"
     # The agent path must not recurse into the pipeline for the prod arm.
     os.environ.pop("SQL_PIPELINE", None)
     # Score SQL/answer quality, not the provenance footer.
@@ -496,9 +501,10 @@ def main() -> int:
     ap.add_argument("--skip", type=int, default=0,
                     help="skip the first N questions (resume after an interrupted run)")
     ap.add_argument("--model", default=None,
-                    help="model name for the chosen provider (sets GROQ_MODEL / OPENAI_MODEL); "
+                    help="model name for the chosen provider (sets GROQ_MODEL / OPENAI_MODEL / "
+                         "GEMINI_MODEL); "
                          "Groq's daily cap is per model, so this also picks the budget")
-    ap.add_argument("--provider", choices=["groq", "openai"], default=None,
+    ap.add_argument("--provider", choices=["groq", "openai", "gemini"], default=None,
                     help="force LLM provider (clears the other provider keys)")
     ap.add_argument("--db", choices=["sqlite", "env"], default="sqlite",
                     help="'sqlite' (default, reproducible) ignores DATABASE_URL; 'env' uses it")
@@ -524,7 +530,8 @@ def main() -> int:
         if not args.provider:
             print("--model needs --provider (which provider's model to set)", file=sys.stderr)
             return 2
-        os.environ[{"groq": "GROQ_MODEL", "openai": "OPENAI_MODEL"}[args.provider]] = args.model
+        os.environ[{"groq": "GROQ_MODEL", "openai": "OPENAI_MODEL",
+                    "gemini": "GEMINI_MODEL"}[args.provider]] = args.model
 
     from app import db as _db  # after env prep
     ids = [x.strip() for x in args.ids.split(",") if x.strip()] if args.ids else None

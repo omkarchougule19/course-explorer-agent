@@ -185,6 +185,55 @@ check("stream: exactly one done event", len(done) == 1)
 
 agent.build_agent, agent._sections_empty = _real_build, _real_empty
 
+
+# 5. Gemini: opt-in primary, Groq answers its 429s and 5xx errors
+import openai  # noqa: E402
+
+
+def _oa_error(cls, status, message="x"):
+    req = httpx.Request("POST", agent.GEMINI_BASE_URL + "chat/completions")
+    return cls(message, response=httpx.Response(status, request=req), body=None)
+
+
+_env(GROQ_API_KEY="k", GEMINI_API_KEY="g")
+check("a Gemini key alone doesn't change the provider", agent._build_llm()[1] == "Groq")
+_env(GROQ_API_KEY="k", GEMINI_API_KEY="g", LLM_PROVIDER="gemini")
+llm, provider = agent._build_llm(fallback=False)
+check("LLM_PROVIDER=gemini -> Gemini through the OpenAI-compatible endpoint",
+      provider == "Gemini" and str(llm.openai_api_base).startswith(agent.GEMINI_BASE_URL[:40]))
+check("Gemini default model", llm.model_name == agent.DEFAULT_GEMINI_MODEL)
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage  # noqa: E402
+_msgs = llm._get_request_payload([SystemMessage("s"), HumanMessage("q"), AIMessage("prefill")])["messages"]
+check("Gemini: a trailing assistant pre-fill is dropped", [m["role"] for m in _msgs] == ["system", "user"])
+_msgs = llm._get_request_payload([SystemMessage("s"), HumanMessage("q")])["messages"]
+check("Gemini: a request ending with the user is unchanged", len(_msgs) == 2)
+_ai = AIMessage("", tool_calls=[{"name": "sql_db_query", "args": {"query": "SELECT 1"}, "id": "call_1"}],
+                additional_kwargs={"gemini_signatures": {"call_1": "SIG"}})
+from langchain_core.messages import ToolMessage  # noqa: E402
+_msgs = llm._get_request_payload([HumanMessage("q"), _ai, ToolMessage("1", tool_call_id="call_1")])["messages"]
+check("Gemini: a tool call's thought signature is sent back",
+      _msgs[1]["tool_calls"][0].get("extra_content") == {"google": {"thought_signature": "SIG"}})
+_res = llm._create_chat_result({"model": "m", "choices": [{"index": 0, "finish_reason": "tool_calls", "message": {
+    "role": "assistant", "content": None, "tool_calls": [{"id": "call_2", "type": "function",
+    "function": {"name": "sql_db_query", "arguments": "{}"},
+    "extra_content": {"google": {"thought_signature": "SIG2"}}}]}}]})
+check("Gemini: a returned thought signature is kept on the message",
+      _res.generations[0].message.additional_kwargs.get("gemini_signatures") == {"call_2": "SIG2"})
+check("a named model under Gemini is the Groq fallback",
+      agent._build_llm(model="openai/gpt-oss-120b", fallback=False)[1] == "Groq")
+check("Gemini 429 -> Groq primary",
+      agent._fallback_model_for(_oa_error(openai.RateLimitError, 429)) == "openai/gpt-oss-120b")
+check("Gemini 503 -> Groq primary",
+      agent._fallback_model_for(_oa_error(openai.InternalServerError, 503)) == "openai/gpt-oss-120b")
+check("Gemini 400 -> no failover", agent._fallback_model_for(_oa_error(openai.BadRequestError, 400)) is None)
+check("Gemini answering: no 8K request budget", agent._request_token_limit() == 0)
+check("Groq fallback under Gemini: 8K request budget",
+      agent._request_token_limit("openai/gpt-oss-120b") == 8000)
+_env(GEMINI_API_KEY="g", LLM_PROVIDER="gemini")
+check("Gemini 429 without a Groq key -> no failover",
+      agent._fallback_model_for(_oa_error(openai.RateLimitError, 429)) is None)
+_env(GROQ_API_KEY="k")
+
 print()
 if failures:
     print(f"{len(failures)} FAILED: {failures}")

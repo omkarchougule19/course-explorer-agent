@@ -71,6 +71,12 @@ because other docs cite them.
   `[timing]` log line (`DECISIONS_v2.md` §13), so production readings can show
   how much of a slow answer is LLM calls, rate-limit waits, tools or a cold
   start before choosing between the levers above.
+- **2026-10-15:** the timings showed 77-95% of each answer was Groq
+  rate-limit waits. Gemini Flash-Lite is wired in as an opt-in primary
+  (`LLM_PROVIDER=gemini`, `DECISIONS_v2.md` §6): 92.8% answer-OK on the eval,
+  median 2.3 s. Open: its two real failures (malformed tool arguments, the
+  iteration cap), and a separate Gemini key (another AI Studio project) for
+  evals, which today spend production's 500 requests a day.
 - **Done when:** three consecutive multi-step questions finish under 30 s each
   on Groq with no 429.
 

@@ -143,7 +143,8 @@ def callback(tl: "Timeline | None"):
 
             def on_chat_model_start(self, serialized, messages, *, run_id, parent_run_id=None, **kw):
                 params = kw.get("invocation_params") or {}
-                name = params.get("model") or params.get("model_name") or (serialized or {}).get("name")
+                name = (params.get("model") or params.get("model_name")
+                        or (kw.get("metadata") or {}).get("ls_model_name") or (serialized or {}).get("name"))
                 self._begin(run_id, "llm", name, parent_run_id)
 
             def on_llm_start(self, serialized, prompts, *, run_id, parent_run_id=None, **kw):

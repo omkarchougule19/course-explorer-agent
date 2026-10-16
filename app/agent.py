@@ -313,11 +313,13 @@ def _est_tokens(text) -> int:
     return sum(1 + (len(p) - 1) // 6 if p[0].isalpha() else 1 for p in _TOKEN_PIECE_RE.findall(text))
 
 
-def _request_token_limit() -> int:
+def _request_token_limit(model: str | None = None) -> int:
     """The most tokens one LLM request may hold, or 0 for no limit.
     LLM_REQUEST_TOKEN_LIMIT overrides it (0 turns the budget off, e.g. on a
-    paid Groq tier); unset, it is 8000 when Groq is the provider - the free
-    tier's tokens-per-minute ceiling, which a single request can't exceed."""
+    paid Groq tier); unset, it is 8000 when Groq is answering - the free
+    tier's tokens-per-minute ceiling, which a single request can't exceed. A
+    named `model` is always a Groq one (the fallback after a 429), so it gets
+    Groq's ceiling even when Gemini is the primary."""
     raw = os.environ.get("LLM_REQUEST_TOKEN_LIMIT", "").strip()
     if raw:
         try:
@@ -325,7 +327,8 @@ def _request_token_limit() -> int:
         except ValueError:
             pass
     forced = os.environ.get("LLM_PROVIDER", "").strip().lower()
-    return 8000 if _groq_key() and forced in ("", "groq") else 0
+    groq_answers = forced in ("", "groq") or (model is not None and forced == "gemini")
+    return 8000 if _groq_key() and groq_answers else 0
 
 
 _WARNED_SHARED_KEY = False
@@ -388,7 +391,7 @@ def _start_data_budget(agent_input: str = "", model: str | None = None) -> None:
     ceiling of the model that is answering (`model`, or the primary), minus
     the reply allowance and what every request carries anyway (prompt, tool
     definitions, the question and its history)."""
-    limit = _request_token_limit()
+    limit = _request_token_limit(model)
     if not limit:
         _DATA_BUDGET.set(None)
         return
@@ -1148,6 +1151,8 @@ def _fallback_model_for(exc: Exception) -> str | None:
     can't absorb per-minute pressure - "what courses are offered by gies"
     hit gpt-oss's per-minute limit, failed over, and failed again on qwen.
     Per-minute limits are waited out by the client (_groq_max_retries)."""
+    if _gemini_primary():
+        return _gemini_fallback_for(exc)
     try:
         import groq
     except ImportError:
@@ -1155,6 +1160,118 @@ def _fallback_model_for(exc: Exception) -> str | None:
     if not isinstance(exc, groq.RateLimitError) or not _is_daily_limit(exc):
         return None
     return _groq_fallback_model(_groq_primary_model())
+
+
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite"
+
+
+def _gemini_primary() -> bool:
+    """Gemini answers only when asked for (LLM_PROVIDER=gemini) and its key is
+    set: adding GEMINI_API_KEY alone changes nothing."""
+    return (os.environ.get("LLM_PROVIDER", "").strip().lower() == "gemini"
+            and bool(os.environ.get("GEMINI_API_KEY", "").strip()))
+
+
+_GEMINI_CLS = None
+
+
+def _gemini_chat_class():
+    """ChatOpenAI for Gemini's endpoint, with the two things it does
+    differently from OpenAI:
+
+    1. It refuses a request that ends with an assistant turn ("Requests
+       ending with a model turn are not supported"). create_sql_agent puts
+       _AGENT_SUFFIX in an assistant message after the question, so every
+       answer's first request ended that way. That trailing pre-fill is
+       dropped; the system prompt already carries its point (no schema
+       discovery), and later requests end with a tool result.
+    2. Gemini 3 returns a thought signature with each tool call
+       (tool_calls[i].extra_content.google.thought_signature) and refuses the
+       next request unless it comes back with that call ("Function call is
+       missing a thought_signature"). LangChain drops the field, so it is
+       kept in the message's additional_kwargs["gemini_signatures"] (tool
+       call id -> signature) and written back into the request's tool calls.
+       The agent's scratchpad reuses the model's own message, so it survives
+       between steps."""
+    global _GEMINI_CLS
+    if _GEMINI_CLS is None:
+        from langchain_core.messages import AIMessage
+        from langchain_openai import ChatOpenAI
+
+        def signatures(tool_calls) -> dict:
+            out = {}
+            for tc in tool_calls or []:
+                tc = tc if isinstance(tc, dict) else tc.model_dump()
+                sig = ((tc.get("extra_content") or {}).get("google") or {}).get("thought_signature")
+                if sig and tc.get("id"):
+                    out[tc["id"]] = sig
+            return out
+
+        class _GeminiChat(ChatOpenAI):
+            def _create_chat_result(self, response, generation_info=None):
+                result = super()._create_chat_result(response, generation_info)
+                raw = response if isinstance(response, dict) else response.model_dump()
+                for gen, choice in zip(result.generations, raw.get("choices") or []):
+                    sigs = signatures((choice.get("message") or {}).get("tool_calls"))
+                    if sigs:
+                        gen.message.additional_kwargs["gemini_signatures"] = sigs
+                return result
+
+            def _convert_chunk_to_generation_chunk(self, chunk, default_chunk_class,
+                                                   base_generation_info):
+                gen = super()._convert_chunk_to_generation_chunk(
+                    chunk, default_chunk_class, base_generation_info)
+                choices = (chunk if isinstance(chunk, dict) else {}).get("choices") or []
+                sigs = signatures((choices[0].get("delta") or {}).get("tool_calls")) if choices else {}
+                if gen is not None and sigs:
+                    gen.message.additional_kwargs["gemini_signatures"] = sigs
+                return gen
+
+            def _get_request_payload(self, input_, *, stop=None, **kwargs):
+                payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+                msgs = payload.get("messages")
+                if (msgs and len(msgs) > 1 and msgs[-1].get("role") == "assistant"
+                        and not msgs[-1].get("tool_calls")):
+                    payload["messages"] = msgs = msgs[:-1]
+                sigs = {}
+                for m in self._convert_input(input_).to_messages():
+                    if isinstance(m, AIMessage):
+                        sigs.update(m.additional_kwargs.get("gemini_signatures") or {})
+                if sigs:
+                    for m in msgs or []:
+                        for tc in m.get("tool_calls") or []:
+                            if tc.get("id") in sigs:
+                                tc["extra_content"] = {"google": {"thought_signature": sigs[tc["id"]]}}
+                return payload
+
+        _GEMINI_CLS = _GeminiChat
+    return _GEMINI_CLS
+
+
+def _gemini_max_retries() -> int:
+    """Retries on a Gemini 429 before the question moves to Groq. Low on
+    purpose: Gemini's free tier is limited by requests per minute and per
+    day, so a 429 is usually not worth waiting out when Groq is there."""
+    try:
+        return max(0, int(os.environ.get("GEMINI_MAX_RETRIES", "1")))
+    except ValueError:
+        return 1
+
+
+def _gemini_fallback_for(exc: Exception) -> str | None:
+    """Gemini primary: any rate-limit error (per minute or per day - its
+    free-tier caps are request counts) or server error (a 503 "model is
+    experiencing high demand" was seen on 2026-10-15) moves the question to
+    Groq's primary model, when a Groq key is set."""
+    try:
+        import openai
+    except ImportError:
+        return None
+    if (not isinstance(exc, (openai.RateLimitError, openai.InternalServerError))
+            or not _groq_key()):
+        return None
+    return _groq_primary_model()
 
 
 def _groq_max_retries() -> int:
@@ -1272,9 +1389,13 @@ def _new_llm(streaming: bool = False, model: str | None = None, fallback: bool =
     """Pick the LLM provider. By default it's whichever API key is set, in
     order: GROQ_API_KEY (preferred - free; ~80-100 real questions/day in
     practice, bound by a 200K tokens/day cap more than the 1,000 requests/day
-    figure - see DECISIONS_v2.md), then OPENAI_API_KEY. (Gemini support was
-    removed 2026-09-28: no key was ever deployed, and its SDK stack was about
-    28 MB.)
+    figure - see DECISIONS_v2.md), then OPENAI_API_KEY. (The Gemini SDK was
+    removed 2026-09-28 - about 28 MB, and no key was deployed; Gemini is back
+    since 2026-10-15 through its OpenAI-compatible endpoint, opt-in below.)
+
+    LLM_PROVIDER=gemini makes Gemini (GEMINI_API_KEY, GEMINI_MODEL, default
+    DEFAULT_GEMINI_MODEL) the primary, with Groq answering a question that hits
+    a Gemini 429 (_gemini_fallback_for). Never chosen by auto-detect.
 
     Set LLM_PROVIDER (groq | openai) to force one regardless of which other
     keys are present - e.g. LLM_PROVIDER=openai to fall back to OpenAI while
@@ -1299,8 +1420,16 @@ def _new_llm(streaming: bool = False, model: str | None = None, fallback: bool =
     for the non-streaming ask() path - the deltas just get reassembled."""
     forced = os.environ.get("LLM_PROVIDER", "").strip().lower()
 
+    if model is None and _gemini_primary():
+        # Through Gemini's OpenAI-compatible endpoint, so no Google SDK: the
+        # OpenAI client is already installed.
+        name = os.environ.get("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
+        return _gemini_chat_class()(model=name, temperature=0, api_key=os.environ["GEMINI_API_KEY"].strip(),
+                          base_url=GEMINI_BASE_URL, streaming=streaming,
+                          max_tokens=_max_tokens(name), max_retries=_gemini_max_retries()), "Gemini"
+
     groq_key = _groq_key()
-    if groq_key and forced in ("", "groq"):
+    if groq_key and (forced in ("", "groq") or (model and forced == "gemini")):
         from langchain_groq import ChatGroq
         _groq_key(warn=True)   # a Groq client is being built: say once if it is on production's key
         name = model or _groq_primary_model()
@@ -1331,7 +1460,7 @@ def _new_llm(streaming: bool = False, model: str | None = None, fallback: bool =
     if forced:
         raise EnvironmentError(
             f"LLM_PROVIDER={forced!r} but its API key isn't set (or the name is "
-            f"not groq/openai). Set {forced.upper()}_API_KEY, or unset "
+            f"not groq/openai/gemini). Set {forced.upper()}_API_KEY, or unset "
             f"LLM_PROVIDER to auto-detect from whichever key is present."
         )
     raise EnvironmentError(
@@ -1843,7 +1972,7 @@ _SQL_DBS: dict = {}
 _ENV_KEYS = ("LLM_PROVIDER", "GROQ_API_KEY", "GROQ_API_KEY_DEV", "RENDER", "GROQ_MODEL",
              "GROQ_FALLBACK_MODEL", "GROQ_MAX_RETRIES",
              "OPENAI_API_KEY", "OPENAI_MODEL", "DATABASE_URL", "DATABASE_URL_RO",
-             "LLM_MAX_TOKENS")
+             "LLM_MAX_TOKENS", "GEMINI_API_KEY", "GEMINI_MODEL", "GEMINI_MAX_RETRIES")
 
 
 def _env_signature() -> tuple:

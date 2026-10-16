@@ -41,6 +41,17 @@ services:
         sync: false
       - key: OPENAI_API_KEY
         sync: false
+      # Optional. LLM_PROVIDER=gemini plus GEMINI_API_KEY (aistudio.google.com)
+      # makes Gemini the primary model, through its OpenAI-compatible
+      # endpoint; Groq answers any question that hits a Gemini 429 or 5xx.
+      # GEMINI_MODEL defaults to gemini-3.5-flash-lite: the free tier's full
+      # Flash models allow only 20 requests a day, Flash-Lite 500.
+      - key: LLM_PROVIDER
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        sync: false
       # Optional. Enables GET /admin/ask-log (recent assistant activity). The
       # endpoint 404s while this is unset. Use a long random string.
       - key: ADMIN_TOKEN
