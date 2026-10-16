@@ -26,6 +26,7 @@ import os
 import re
 import sys
 import threading
+import time
 from functools import lru_cache
 from pathlib import Path
 
@@ -34,7 +35,7 @@ from langchain_community.utilities import SQLDatabase
 from langchain_community.agent_toolkits import create_sql_agent
 from sqlalchemy.exc import SQLAlchemyError
 
-from app import db, sql_guard
+from app import db, sql_guard, timing
 from app.db import DB_PATH
 # The fixed lookups behind course_facts and department_overview live in
 # app/catalog.py. Imported by name: the rest of this file, and the tests,
@@ -1032,9 +1033,11 @@ class _CappedSQLDatabase(SQLDatabase):
         every column and showed them under the column names (Year | Semester
         | Subject | ... | Title Search). None of six baseline runs did."""
         if not isinstance(command, str) or fetch == "cursor" or _result_layout() != "tabs":
-            return super().run(command, fetch=fetch, **kwargs)
-        rows = self._execute(command, fetch, parameters=kwargs.get("parameters"),
-                             execution_options=kwargs.get("execution_options"))
+            with timing.span("sql_exec"):
+                return super().run(command, fetch=fetch, **kwargs)
+        with timing.span("sql_exec"):
+            rows = self._execute(command, fetch, parameters=kwargs.get("parameters"),
+                                 execution_options=kwargs.get("execution_options"))
         if not rows:
             return ""
 
@@ -1539,16 +1542,18 @@ def _make_course_content_search_tool(tool_llm):
                 return f"{', '.join(f'{s} {n}' for s, n in starts)} has no description to compare against."
             if query:
                 phrases = _expand_query(tool_llm, query, _RAG_SUBQUERIES)
-                vectors += emb.embed_texts(phrases) if phrases else []
+                with timing.span("embed", n=len(phrases)):
+                    vectors += emb.embed_texts(phrases) if phrases else []
             # A "like <course>" search stays in that course's department unless
             # subjects are given; other departments are listed separately
             # (CS 225 at the 400 level ranked CI 487 first).
             same_dept = sorted({s for s, _ in starts}) if starts and not wanted else []
-            result_lists = [
-                emb.search_similar_by_vector(conn, v, _RAG_K_PER, subjects=(wanted or same_dept) or None,
-                                             level=lvl, exclude=starts or None)
-                for v in vectors if v is not None
-            ]
+            with timing.span("vector_search", n=len(vectors)):
+                result_lists = [
+                    emb.search_similar_by_vector(conn, v, _RAG_K_PER, subjects=(wanted or same_dept) or None,
+                                                 level=lvl, exclude=starts or None)
+                    for v in vectors if v is not None
+                ]
             others = []
             if same_dept:
                 for v in vectors:
@@ -1893,14 +1898,14 @@ def refresh_catalog_caches(force: bool = False) -> bool:
     most every CATALOG_CHECK_SECONDS (default 600), from build_agent, which
     never runs on the event loop. Returns True when caches were dropped; a
     database error leaves them as they are."""
-    import time
     now = time.monotonic()
     with _CACHE_LOCK:
         if not force and now - _CATALOG["checked"] < _CATALOG_CHECK_SECONDS:
             return False
         _CATALOG["checked"] = now
     try:
-        stamp = _catalog_stamp()
+        with timing.span("catalog_check"):
+            stamp = _catalog_stamp()
     except Exception:
         return False
     with _CACHE_LOCK:
@@ -1935,8 +1940,11 @@ async def _prepare_agent_async(streaming: bool = True, model: str | None = None)
     thread, so a first build - and the database round trips - never block the
     event loop. Before this, every streamed question froze the whole server
     (one uvicorn worker) for ~1.4 s. Returns (agent, sections_empty)."""
-    agent = await asyncio.to_thread(build_agent, streaming=streaming, model=model)
-    return agent, await asyncio.to_thread(_sections_empty)
+    with timing.span("build_agent"):
+        agent = await asyncio.to_thread(build_agent, streaming=streaming, model=model)
+    with timing.span("sections_check"):
+        empty = await asyncio.to_thread(_sections_empty)
+    return agent, empty
 
 
 def _new_agent(verbose: bool = False, streaming: bool = False, model: str | None = None):
@@ -2263,13 +2271,16 @@ def ask(question: str, verbose: bool = False, history=None, _model: str | None =
             return friendly_error(exc)
 
     try:
-        agent = build_agent(verbose=verbose, model=_model)
+        with timing.span("build_agent"):
+            agent = build_agent(verbose=verbose, model=_model)
     except (FileNotFoundError, EnvironmentError, RuntimeError) as exc:
         # Surface setup problems as a plain answer string rather than raising,
         # so callers (CLI, FastAPI route) always get something displayable.
         return setup_unavailable(exc)
 
-    if _sections_empty():
+    with timing.span("sections_check"):
+        empty = _sections_empty()
+    if empty:
         return "The database exists but has no rows yet. Run scraper.py first, then ask again."
 
     from app.ask_log import classify_answer
@@ -2279,13 +2290,15 @@ def ask(question: str, verbose: bool = False, history=None, _model: str | None =
     agent_input = build_agent_input(question, history)
     new_query_log(question, agent_input, _model)
     try:
-        result = agent.invoke(
-            {"input": agent_input},
-            config={"callbacks": [cap]},
-        )
+        with timing.span("agent_run", model=_model):
+            result = agent.invoke(
+                {"input": agent_input},
+                config={"callbacks": [cap, timing.callback(timing.current())]},
+            )
     except Exception as exc:  # noqa: BLE001 - provider/network/agent errors all land here
         backup = None if _model else _fallback_model_for(exc)
         if backup:  # Groq 429 on the primary model: one retry on the fallback model
+            timing.note("fallback_model", name=backup, error=repr(exc)[:200])
             return ask(question, verbose=verbose, history=history, _model=backup)
         return friendly_error(exc)
 
@@ -2308,11 +2321,12 @@ _RETRY_LOG_RE = re.compile(r"Retrying request to .* in ([\d.]+) seconds")
 
 class _RetryNotices(logging.Handler):
     def emit(self, record):
-        target = _NOTICE_TARGET.get()
-        if not target:
-            return
         m = _RETRY_LOG_RE.search(record.getMessage())
         if not m:
+            return
+        timing.note("provider_retry_wait", secs=float(m.group(1)), name=record.name.split(".")[0])
+        target = _NOTICE_TARGET.get()
+        if not target:
             return
         loop, queue = target
         secs = max(1, round(float(m.group(1))))
@@ -2401,11 +2415,13 @@ async def astream_answer(question: str, history=None, _model: str | None = None)
     new_query_log(q, agent_input, _model)
     notices: asyncio.Queue = asyncio.Queue()
     _NOTICE_TARGET.set((asyncio.get_running_loop(), notices))
+    tl = timing.current()
+    run_started = time.monotonic()
     try:
         async for source, ev in _with_notices(agent.astream_events(
             {"input": agent_input},
             version="v2",
-            config={"callbacks": [cap]},
+            config={"callbacks": [cap, timing.callback(timing.current())]},
         ), notices):
             if source == "notice":
                 if not streamed:          # once text flows, a status would only flicker
@@ -2452,17 +2468,22 @@ async def astream_answer(question: str, history=None, _model: str | None = None)
                 elif isinstance(out, str):
                     final = out
     except Exception as exc:  # noqa: BLE001 - provider/network/agent errors
+        if tl is not None:
+            tl.add("agent_run", run_started, model=_model, error=repr(exc)[:200])
         # A Groq 429 that arrives before any answer text was streamed can be
         # retried invisibly on the fallback model; after text has gone out it
         # can't, so that case falls through to the error message.
         backup = None if (_model or streamed) else _fallback_model_for(exc)
         if backup:
+            timing.note("fallback_model", name=backup)
             yield "status", "Busy, switching to a backup model…"
             async for item in astream_answer(question, history, _model=backup):
                 yield item
             return
         yield "done", friendly_error(exc)
         return
+    if tl is not None:
+        tl.add("agent_run", run_started, model=_model)
 
     answer = tidy_answer(friendly_stop(_not_an_echo(final or "".join(streamed)) or NO_ANSWER))
     if classify_answer(answer) == "answered":

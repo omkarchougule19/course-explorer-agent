@@ -38,6 +38,7 @@ from app import sync_requests as sync_reqs
 from app import ask_log as ask_log_mod
 from app import feedback as feedback_mod
 from app import site_feedback as site_feedback_mod
+from app import timing
 from app.db import DB_PATH
 
 load_dotenv(Path(__file__).parent.parent / ".env")
@@ -175,8 +176,11 @@ def _warmup_embeddings():
     local SQLite dev fallback never registers the vector-search tool at all,
     so there's nothing to warm up there."""
     if db.is_postgres():
+        t = time.monotonic()
         from app import embeddings
         embeddings.warmup()
+        print(f"[startup] embedding model ready in {int((time.monotonic() - t) * 1000)} ms",
+              flush=True)
 
 
 @app.on_event("startup")
@@ -191,8 +195,10 @@ def _warm_agent_in_background():
         return
 
     def warm():
+        t = time.monotonic()
         try:
             importlib.import_module("app.agent").build_agent(streaming=True)
+            print(f"[startup] agent built in {int((time.monotonic() - t) * 1000)} ms", flush=True)
         except Exception as exc:  # noqa: BLE001 - warm-up is best effort
             print(f"[startup] agent warm-up skipped: {exc!r}", flush=True)
 
@@ -600,12 +606,23 @@ def _ask_precheck(question: str, ip: str) -> tuple[Optional[tuple[int, str]], Op
 
 
 def _finish_ask(row_id: int, outcome: str, answer: Optional[str] = None,
-                latency_ms: Optional[int] = None) -> None:
+                latency_ms: Optional[int] = None,
+                tl: "Optional[timing.Timeline]" = None) -> None:
     """Best-effort ask_log.finish(). A failed write leaves the row `pending`,
-    which still counts toward the limits - the safe direction."""
+    which still counts toward the limits - the safe direction. With a
+    Timeline, its steps are printed as one `[timing]` log line and stored in
+    ask_log.timings."""
+    timings = None
+    if tl is not None:
+        try:
+            tl.meta["outcome"] = outcome
+            timings = tl.to_json()
+            print(f"{tl.summary()} id={row_id}", flush=True)
+        except Exception as exc:  # noqa: BLE001 - timing must not break the response
+            print(f"[ask] timing summary failed: {exc!r}", flush=True)
     try:
         with get_conn() as conn:
-            ask_log_mod.finish(conn, row_id, outcome, answer, latency_ms)
+            ask_log_mod.finish(conn, row_id, outcome, answer, latency_ms, timings)
     except Exception as exc:  # noqa: BLE001 - logging must not break the response
         print(f"[ask] ask_log finish failed: {exc!r}", flush=True)
 
@@ -632,13 +649,16 @@ def ask_agent(payload: AskRequest, request: Request):
 
     if not _ask_slots.acquire(blocking=False):
         raise HTTPException(status_code=503, detail=_BUSY)
+    tl = timing.start("ask")
     try:
-        blocked, row_id = _ask_precheck(question, ip)
+        with timing.span("precheck"):
+            blocked, row_id = _ask_precheck(question, ip)
         if blocked:
             raise HTTPException(status_code=blocked[0], detail=blocked[1])
 
         try:
-            from app.agent import ask
+            with timing.span("agent_import"):
+                from app.agent import ask
         except ImportError as exc:
             print(f"[ask] agent import failed: {exc!r}", flush=True)
             _finish_ask(row_id, "error", "agent import failed")
@@ -652,11 +672,11 @@ def ask_agent(payload: AskRequest, request: Request):
         except Exception as exc:  # noqa: BLE001 - defense in depth
             latency = int((time.monotonic() - t0) * 1000)
             print(f"[ask] agent raised: {exc!r}", flush=True)
-            _finish_ask(row_id, "error", str(exc), latency)
+            _finish_ask(row_id, "error", str(exc), latency, tl)
             raise HTTPException(status_code=502, detail="The assistant failed to answer. Try again shortly.")
 
         latency = int((time.monotonic() - t0) * 1000)
-        _finish_ask(row_id, ask_log_mod.classify_answer(answer), answer, latency)
+        _finish_ask(row_id, ask_log_mod.classify_answer(answer), answer, latency, tl)
         return {"question": question, "answer": answer}
     finally:
         _ask_slots.release()
@@ -680,15 +700,18 @@ async def ask_agent_stream(payload: AskRequest, request: Request):
     if not _ask_slots.acquire(blocking=False):
         raise HTTPException(status_code=503, detail=_BUSY)
     release = _SlotRelease()
+    tl = timing.start("ask/stream")
     try:
-        blocked, row_id = await run_in_threadpool(_ask_precheck, question, ip)
+        with timing.span("precheck"):
+            blocked, row_id = await run_in_threadpool(_ask_precheck, question, ip)
         if blocked:
             raise HTTPException(status_code=blocked[0], detail=blocked[1])
         try:
             # Imported in a worker thread: the first import of app.agent pulls
             # in LangChain (~0.6-0.9 s) and would otherwise freeze the event
             # loop - every other request - while it loads.
-            agent_mod = await run_in_threadpool(importlib.import_module, "app.agent")
+            with timing.span("agent_import"):
+                agent_mod = await run_in_threadpool(importlib.import_module, "app.agent")
             astream_answer = agent_mod.astream_answer
         except ImportError as exc:
             print(f"[ask/stream] agent import failed: {exc!r}", flush=True)
@@ -699,6 +722,10 @@ async def ask_agent_stream(payload: AskRequest, request: Request):
         raise
 
     async def event_stream():
+        # The stream runs in another context than this function; carry the
+        # Timeline over so the agent's steps land in it.
+        timing.activate(tl)
+        tl.mark("stream_start_ms")
         t0 = time.monotonic()
         parts: list[str] = []
         final_text = ""
@@ -706,6 +733,8 @@ async def ask_agent_stream(payload: AskRequest, request: Request):
         try:
             async for kind, text in astream_answer(question, payload.history):
                 if kind == "token":
+                    if not parts:
+                        tl.mark("first_token_ms")
                     parts.append(text)
                     yield _sse("token", text)
                 elif kind == "status":
@@ -735,7 +764,7 @@ async def ask_agent_stream(payload: AskRequest, request: Request):
                 # cancelled too, so this write never ran and the row stayed
                 # `pending` - which counts against the rate limits for a day.
                 with anyio.CancelScope(shield=True):
-                    await run_in_threadpool(_finish_ask, row_id, outcome, answer, latency)
+                    await run_in_threadpool(_finish_ask, row_id, outcome, answer, latency, tl)
             finally:
                 release()
 

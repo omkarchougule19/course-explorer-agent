@@ -675,7 +675,7 @@ filter example 2026-09-28 (35 questions: 100% / 97.1%, the old 30 at
 
 **Decision.** The LLM budget is protected by limits that run **before** any
 model call, and every attempt is logged in `ask_log` (timestamp, client IP,
-question, outcome, answer preview, latency).
+question, outcome, answer preview, latency, and per-step timings - see §13).
 
 | Control | Default (env var) | Notes |
 |---|---|---|
@@ -1002,6 +1002,24 @@ stay under 100 ms meanwhile (was up to 871 ms). See plan item 18.
 **Accepted:** Render's own container spin-up after idle, which code can't
 shorten on the free tier; the eager model load (moved to startup so the first
 semantic question doesn't pay for it).
+
+**Per-step timings in production (2026-10-15).** Production answers were
+taking about a minute while evals measured a 2 s median, and `ask_log` held
+only the total, so there was no way to tell where the time went. Every /ask
+and /ask/stream now records a timeline (`app/timing.py`): precheck (the
+ask_log reserve and limits), the agent import and build, each LLM call (model,
+tokens, time to first token, and which tool it ran inside), each tool call,
+each SQL execution, embedding and vector search, any provider rate-limit wait
+(from the client's "Retrying request ... in N seconds" log line), a fallback
+to the backup model, and whether the process had just started (`uptime_s`,
+`first_request`). It is printed as one `[timing]` line in the server log and
+stored as JSON in the new `ask_log.timings` column, returned by
+`/admin/ask-log`. A step adds a dict to a list; nothing in it can fail a
+request. Rejected: a `Server-Timing` header, which a streamed response would
+have to send before the timings exist; an external tracing service, which is
+one more account and data leaving the app for a question a log line answers.
+Time spent before the request reaches the app (Render waking a sleeping
+service) is not in the timeline: compare the client's wait with `total_ms`.
 
 ---
 
