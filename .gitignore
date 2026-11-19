@@ -53,3 +53,9 @@ evals/results/*
 # untracked 2026-09-28 - it was ~77% of the repo's tracked bytes)
 .claude/skills/
 skills-lock.json
+
+# Spring 2027 rescrape runtime output (scripts/rescrape_spring27.py, watch_rescrape.py)
+scripts/logs/
+scripts/progress.txt
+scripts/watcher.txt
+scripts/watcher.pid
