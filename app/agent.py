@@ -2344,6 +2344,13 @@ def build_agent_input(question: str, history=None) -> str:
     """The string handed to the agent as `input`: the current question, with
     a short trailing window of prior turns prepended when there is one."""
     hist = _format_history(history)
+    # Recorded in ask_log.timings so follow-ups can be told apart later (e.g. to
+    # see whether they re-query data the history already held) without guessing
+    # from the question's wording.
+    tl = timing.current()
+    if tl is not None:
+        tl.meta["history_turns"] = hist.count("Student: ")
+        tl.meta["history_basis"] = "(That answer came from: " in hist
     if not hist:
         return question
     return (
