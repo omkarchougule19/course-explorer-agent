@@ -418,9 +418,10 @@ recipe: [`../DEPLOYMENT_v2.md`](../DEPLOYMENT_v2.md).
   answer for that." (logged as answered). Open; fix proposed in plan item 35.
 - **Grades and instructor rankings are empty** until the upstream datasets
   publish terms inside the window; the assistant says so.
-- **Fall 2026 coverage is partial**: 84 of 191 subjects synced so far.
-- **`enrollment_status` is a snapshot**, and for fall 2026 only a scheduling
-  code; there are no seat counts.
+- **A term's coverage can be partial** (syncing is per department); the
+  agent's DATA NOTES say which subjects the latest term has.
+- **`enrollment_status` is a snapshot**, and until UIUC publishes
+  registration for a term only a scheduling code; there are no seat counts.
 - **Cross-listed courses** (CS 440 / ECE 448) are separate rows per subject.
 - **Scraping is manual and local**, by design.
 
@@ -444,7 +445,7 @@ course-explorer-agent/
 │   ├── sync_requests.py     # department refresh demand + operator CLI
 │   ├── scraper.py           # concurrent, resumable Course Explorer scraper
 │   ├── prereqs.py           # Prerequisite: clause parser
-│   ├── terms.py             # the rolling term window
+│   ├── terms.py             # current / planning / default term, from the date and the data
 │   ├── load_*.py            # grades, TRE, gen-eds, prereqs, calendar, catalog snapshot
 │   ├── backfill_embeddings.py · migrate_sqlite_to_neon.py · clean_descriptions.py
 │   └── sql_pipeline/        # opt-in Generator → Critic → Repair (LangGraph)

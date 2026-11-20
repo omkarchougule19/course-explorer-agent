@@ -114,6 +114,44 @@ def answer_covers_rows(answer: str, rows, max_rows: int = 30) -> bool:
     return True
 
 
+_MONTHS = ("January", "February", "March", "April", "May", "June", "July",
+           "August", "September", "October", "November", "December")
+_ISO_DATE_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+_CLOCK_RE = re.compile(r"^0?(\d{1,2}):(\d{2})\s*([AP]M)?$", re.IGNORECASE)
+
+
+def value_needle(v) -> str:
+    """A stored value as an answer_mentions needle, with the ways an answer
+    writes it: '2026-10-16' -> 'October 16|Oct 16|Oct. 16|10/16|10-16',
+    '03:30PM' -> '3:30'. Lets eval items take their expected facts from a
+    query (answer_contains_sql) instead of strings frozen from one term."""
+    s = str(v).strip()
+    m = _ISO_DATE_RE.match(s)
+    if m:
+        month, day = _MONTHS[int(m.group(2)) - 1], int(m.group(3))
+        mm = int(m.group(2))
+        return "|".join((f"{month} {day}", f"{month[:3]} {day}", f"{month[:3]}. {day}",
+                         f"{mm}/{day}", f"{mm}-{day}", s))
+    m = _CLOCK_RE.match(s)
+    if m:
+        return f"{int(m.group(1))}:{m.group(2)}"
+    return s
+
+
+def sql_needles(rows, mode: str = "all") -> "list[str]":
+    """Needles from a query's rows for answer_mentions / answer_excludes:
+    'all' = one needle per value (every value must appear), 'any' = one
+    needle joining them all (at least one must)."""
+    values = []
+    for row in rows or ():
+        cells = row.values() if isinstance(row, dict) else row
+        values += [value_needle(v) for v in cells if v not in (None, "")]
+    values = list(dict.fromkeys(values))
+    if mode == "any":
+        return ["|".join(values)] if values else []
+    return values
+
+
 _REFUSAL_MARKERS = (
     "only answer questions", "only able to answer", "can only help with",
     "can only answer", "out of scope", "outside what i can", "can't comply",

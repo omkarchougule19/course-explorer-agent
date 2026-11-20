@@ -33,6 +33,26 @@ database the agent used, not frozen rows — the dataset is a per-sync
 snapshot that drifts between refreshes and differs between the local SQLite
 copy and Neon.
 
+**No item names a term.** Questions, gold SQL and checks use placeholders
+that `run.py` fills from the data loaded right now (`term_context`), so the
+set survives every re-scrape and term swap:
+
+| placeholder | filled with |
+|---|---|
+| `{term}` `{season}` `{year}` | the eval term — `--term`, else the term the site pre-selects |
+| `{this_term}` `{this_season}` `{this_year}` | what "this semester" means today (item skipped if not loaded) |
+| `{latest_term}`, `{future_term}`, `{future_year}` | newest loaded term; the one after it; the year after it |
+| `{cal_term}` `{cal_season}` `{cal_year}`, `{cal_future_term}`, `{cal_future_year}` | the same for the registrar calendar, which is loaded separately |
+| `{coded_term}` | a term whose registration isn't published (status is only an A/P code) |
+| `{gap_subject}` `{gap_course}` `{gap_term}` `{gap_subject_term}` | a subject missing from a partially synced term, one of its courses, and a term that has it |
+
+An item whose placeholder the data can't supply is skipped with a printed
+reason. Facts an answer must (not) mention come from `answer_contains_sql` /
+`answer_must_not_sql` (with `_mode` `all` or `any`) instead of strings frozen
+from one term; dates and times are matched in the forms answers use
+(`2026-10-16` → "October 16", `03:30PM` → "3:30"). Keep `answer_contains`
+for wording checks only ("synced", "no data").
+
 ## Arms
 
 | arm | pipeline |

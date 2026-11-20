@@ -78,13 +78,156 @@ def _prepare_env(provider: str | None, use_sqlite: bool) -> None:
 # Data
 # --------------------------------------------------------------------------
 
-def load_set(limit: int | None, skip: int = 0, ids: list[str] | None = None) -> list[dict]:
+_TEMPLATED_KEYS = ("question", "gold_sql", "answer_contains", "answer_must_not",
+                   "answer_contains_sql", "answer_must_not_sql", "history", "notes")
+
+
+def term_context(eval_term: str | None = None) -> dict:
+    """Placeholder values for eval_set.jsonl, worked out from the data loaded
+    right now, so the set never names a term and survives every re-scrape:
+
+      {term} {season} {year}     the eval term: --term, else the term the
+                                 site pre-selects (app.terms.default_term)
+      {this_term} {this_season} {this_year}
+                                 what "this semester" means today, if loaded
+      {latest_term}              newest term in the data
+      {future_term} {future_year} first term after the newest one (not loaded)
+      {cal_term} {cal_season} {cal_year}
+                                 the calendar term (default_term over terms
+                                 the registrar calendar is loaded for)
+      {cal_future_term} {cal_future_year}
+                                 the term after the newest calendar term, and
+                                 the year after the newest calendar year
+      {coded_term}               a term whose enrollment_status is only an
+                                 A/P scheduling code (registration unpublished)
+      {gap_subject} {gap_course} {gap_term} {gap_subject_term}
+                                 a subject with no rows in {gap_term} (a
+                                 partially synced term) but rows in
+                                 {gap_subject_term}, and one of its courses
+
+    A key is missing when the data can't supply it; items using it are
+    skipped, with the reason printed."""
+    from app import db, terms
+
+    def values(row) -> tuple:  # RealDictRow on Postgres, sqlite3.Row locally
+        return tuple(row.values()) if isinstance(row, dict) else tuple(row)
+
+    conn = db.get_connection()
+    try:
+        q = lambda sql: [values(r) for r in conn.execute(sql).fetchall()]
+        # Aliased: Postgres names every bare COUNT() "count", and dict rows
+        # would collapse them into one.
+        sec = q("SELECT year, semester, COUNT(*) AS n, COUNT(DISTINCT subject) AS subjects, "
+                "SUM(CASE WHEN enrollment_status IN ('A', 'P') THEN 1 ELSE 0 END) AS coded "
+                "FROM sections GROUP BY year, semester")
+        try:
+            cal = q("SELECT DISTINCT year, semester FROM academic_calendar")
+        except Exception:  # noqa: BLE001 - table not created
+            cal = []
+        per_subject = q("SELECT subject, year, semester, COUNT(*) AS n FROM sections "
+                        "GROUP BY subject, year, semester")
+    finally:
+        conn.close()
+
+    ctx: dict = {}
+    order = lambda t: terms.term_index(t[0], t[1])
+    loaded = sorted({(int(r[0]), r[1]) for r in sec if r[1] in terms.SEMESTER_CYCLE}, key=order)
+    if not loaded:
+        return ctx
+    label = lambda t: terms.term_label(*t)
+    pick = terms.parse_term(eval_term) if eval_term else terms.parse_term(
+        terms.default_term([label(t) for t in loaded]))
+    ctx.update(term=label(pick), year=pick[0], season=pick[1])
+    this = terms.parse_term(terms.relative_terms()["this"])
+    if this in loaded:
+        ctx.update(this_term=label(this), this_year=this[0], this_season=this[1])
+    latest = loaded[-1]
+    future = terms.shift_term(*latest, 1)
+    ctx.update(latest_term=label(latest), future_term=label(future), future_year=latest[0] + 1)
+
+    cal_loaded = sorted({(int(r[0]), r[1]) for r in cal if r[1] in terms.SEMESTER_CYCLE}, key=order)
+    if cal_loaded:
+        c = terms.parse_term(terms.default_term([label(t) for t in cal_loaded]))
+        ctx.update(cal_term=label(c), cal_year=c[0], cal_season=c[1],
+                   cal_future_term=label(terms.shift_term(*cal_loaded[-1], 1)),
+                   cal_future_year=max(y for y, _ in cal_loaded) + 1)
+
+    coded = [(int(r[0]), r[1]) for r in sec if r[4] and 2 * r[4] > r[2]]
+    if coded:
+        ctx["coded_term"] = label(min(coded, key=lambda t: abs(order(t) - order(pick))))
+
+    # The term covering the fewest subjects, and the biggest subject it lacks.
+    subjects_in = {(int(r[0]), r[1]): r[3] for r in sec}
+    gap = min(loaded, key=lambda t: subjects_in[t])
+    have = {s for s, y, sem, _ in per_subject if (int(y), sem) == gap}
+    others = sorted(((n, s, (int(y), sem)) for s, y, sem, n in per_subject
+                     if s not in have and (int(y), sem) != gap), reverse=True)
+    if others:
+        _, subj, where = others[0]
+        conn = db.get_connection()
+        try:
+            course = values(conn.execute(
+                "SELECT course_number FROM sections WHERE subject = ? AND year = ? AND semester = ? "
+                "GROUP BY course_number ORDER BY COUNT(*) DESC, course_number LIMIT 1",
+                (subj, where[0], where[1])).fetchone())[0]
+        finally:
+            conn.close()
+        ctx.update(gap_subject=subj, gap_course=course, gap_term=label(gap),
+                   gap_subject_term=label(where))
+    return ctx
+
+
+_PLACEHOLDER_RE = None
+
+
+def _fill(value, ctx: dict, missing: set):
+    """Substitute {name} placeholders in a string (or list of strings)."""
+    global _PLACEHOLDER_RE
+    if _PLACEHOLDER_RE is None:
+        import re
+        _PLACEHOLDER_RE = re.compile(r"\{([a-z_]+)\}")
+    if isinstance(value, list):
+        return [_fill(v, ctx, missing) for v in value]
+    if isinstance(value, dict):  # a history turn
+        return {k: _fill(v, ctx, missing) for k, v in value.items()}
+    if not isinstance(value, str):
+        return value
+
+    def sub(m):
+        if m.group(1) in ctx:
+            return str(ctx[m.group(1)])
+        missing.add(m.group(1))
+        return m.group(0)
+    return _PLACEHOLDER_RE.sub(sub, value)
+
+
+def resolve_items(items: list[dict], ctx: dict) -> list[dict]:
+    """Fill each item's placeholders from term_context(); drop (and report)
+    the ones whose placeholders the current data can't supply."""
+    out = []
+    for item in items:
+        missing: set = set()
+        filled = {k: (_fill(v, ctx, missing) if k in _TEMPLATED_KEYS else v) for k, v in item.items()}
+        if missing:
+            print(f"  skip {item['id']}: the data has no {', '.join(sorted(missing))} right now")
+            continue
+        out.append(filled)
+    return out
+
+
+def load_set(limit: int | None, skip: int = 0, ids: list[str] | None = None,
+             eval_term: str | None = None) -> list[dict]:
     items = [json.loads(line) for line in SET_PATH.read_text(encoding="utf-8").splitlines() if line.strip()]
     if ids:
         unknown = set(ids) - {i["id"] for i in items}
         if unknown:
             raise SystemExit(f"unknown question id(s): {sorted(unknown)}")
         items = [i for i in items if i["id"] in ids]
+    if any("{" in json.dumps({k: i.get(k) for k in _TEMPLATED_KEYS}) for i in items):
+        ctx = term_context(eval_term)
+        print("Terms:     " + ", ".join(f"{k}={v}" for k, v in ctx.items() if k in
+                                        ("term", "this_term", "cal_term", "future_term", "gap_term")))
+        items = resolve_items(items, ctx)
     items = items[skip:]
     return items[:limit] if limit else items
 
@@ -287,6 +430,19 @@ def score(item: dict, rec: dict) -> dict:
 
     answer_ok = answer_ok and metrics.answer_excludes(answer, item.get("answer_must_not"))
 
+    # Facts the answer must (not) mention, read from the data at eval time
+    # instead of strings frozen from one term (metrics.sql_needles). An empty
+    # answer_contains_sql result means the item's premise isn't in the data:
+    # a miss, so it shows up rather than passing vacuously.
+    for key in ("answer_contains_sql", "answer_must_not_sql"):
+        if item.get(key):
+            rows, err = _run_sql(item[key])
+            needles = [] if err else metrics.sql_needles(rows, item.get(f"{key}_mode", "all"))
+            if key == "answer_contains_sql":
+                answer_ok = answer_ok and bool(needles) and metrics.answer_mentions(answer, needles)
+            else:
+                answer_ok = answer_ok and metrics.answer_excludes(answer, needles)
+
     # -- repair accounting (critic arm) --
     trace = rec.get("trace") or []
     critic_steps = [t for t in trace if t.get("step") == "critic"]
@@ -456,7 +612,7 @@ _RAW_KEYS = ("arm", "answer", "outcome", "final_sql", "first_sql", "attempts",
              "facts_used", "tools")
 
 
-def _rescore(ts: str, use_sqlite: bool = True) -> int:
+def _rescore(ts: str, use_sqlite: bool = True, eval_term: str | None = None) -> int:
     """Recompute metrics for a completed run from its saved per-item records,
     without re-calling any model. Used after a change to score()/metrics.py so
     an expensive run doesn't have to be repeated. Gold and candidate SQL are
@@ -465,7 +621,7 @@ def _rescore(ts: str, use_sqlite: bool = True) -> int:
     ts = ts.replace("evals/results/", "").replace("evals\\results\\", "").replace("__summary.json", "")
     _prepare_env(None, use_sqlite=use_sqlite)
     from app import db as _db  # after env prep
-    items = {d["id"]: d for d in load_set(None)}
+    items = {d["id"]: d for d in load_set(None, eval_term=eval_term)}
     arm_files = sorted(RESULTS_DIR.glob(f"{ts}__*.json"))
     arms = [f.stem.split("__")[1] for f in arm_files if not f.stem.endswith("summary")]
     if not arms:
@@ -498,6 +654,9 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=None, help="only the first N questions")
     ap.add_argument("--ids", default=None,
                     help="comma-separated question ids to run, e.g. q01,q17,q25 (applied before --skip/--limit)")
+    ap.add_argument("--term", default=None,
+                    help="term to fill {term}/{season}/{year} with, e.g. 'spring 2027' "
+                         "(default: the term the site pre-selects; see term_context)")
     ap.add_argument("--skip", type=int, default=0,
                     help="skip the first N questions (resume after an interrupted run)")
     ap.add_argument("--model", default=None,
@@ -517,7 +676,7 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.rescore:
-        return _rescore(args.rescore, use_sqlite=(args.db == "sqlite"))
+        return _rescore(args.rescore, use_sqlite=(args.db == "sqlite"), eval_term=args.term)
 
     arms = [a.strip() for a in args.arms.split(",") if a.strip()]
     bad = [a for a in arms if a not in ALL_ARMS]
@@ -535,7 +694,7 @@ def main() -> int:
 
     from app import db as _db  # after env prep
     ids = [x.strip() for x in args.ids.split(",") if x.strip()] if args.ids else None
-    items = load_set(args.limit, args.skip, ids)
+    items = load_set(args.limit, args.skip, ids, eval_term=args.term)
     est_per_arm = {"baseline": 2, "critic": 4, "prod": 5}
     est = sum(est_per_arm.get(a, 3) for a in arms) * len(items)
     provider_label = (args.provider or "auto (from env keys)") + (f" / {args.model}" if args.model else "")
