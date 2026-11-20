@@ -7,13 +7,13 @@ an `academic_calendar` table.
 
 The registrar publishes one HTML page per term as a definition list
 (`<dt>` date / `<dd>` event), and the per-term URL is NOT uniformly
-derivable (`/fall-2026-academic-calendar/` vs. archived paths), so the URL
-(or a saved file) is passed explicitly:
+derivable (`/<season>-<year>-academic-calendar/` for current terms, other
+paths once archived). The usual address is tried by default; pass --url (or
+a saved --file) when it doesn't work:
 
-    python -m app.load_calendar --term 2026-fall \\
-        --url https://registrar.illinois.edu/fall-2026-academic-calendar/
-
-    python -m app.load_calendar --term 2026-fall --file saved_calendar.html
+    python -m app.load_calendar --term "spring YYYY"
+    python -m app.load_calendar --term YYYY-fall --url https://registrar.illinois.edu/...
+    python -m app.load_calendar --term YYYY-fall --file saved_calendar.html
 
 Parsing is text-oriented (not tied to exact tags) so a markup change on the
 registrar side is survivable: a fragment that reads like a date becomes the
@@ -34,6 +34,7 @@ from dotenv import load_dotenv
 
 from app import db
 from app.db import DB_PATH
+from app.terms import parse_term
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
@@ -54,6 +55,12 @@ _DATE_RE = re.compile(
     r"(?:\s*[–—-]\s*(?:(?P<mon2>[A-Za-z]{3,9})\.?\s+)?(?P<d2>\d{1,2}))?\s*$"
 )
 
+# "February 1 – “10th day” add/drop deadline": a date, a dash, then a label
+# that doesn't start with a digit (so a range like "March 13 – 21" isn't one).
+_DATE_LABEL_RE = re.compile(
+    r"^\s*(?P<date>[A-Za-z]{3,9}\.?\s+\d{1,2})\s*[–—-]\s*(?P<label>[^\d\s].*)$"
+)
+
 # Some registrar events are split across two adjacent block elements - a
 # title line, then a separate "Month Day at H:MM PM" line giving the exact
 # time. That second fragment doesn't match _DATE_RE (it has a trailing "at
@@ -69,7 +76,8 @@ _DATE_TIME_ONLY_RE = re.compile(
 _CATEGORY_RULES = [
     (r"final exam|final examination", "finals"),
     (r"reading day", "instruction"),
-    (r"instruction begins|last (instruction|day of instruction)|classes begin", "instruction"),
+    (r"instruction begins|first day of instruction|last (instruction|day of instruction)"
+     r"|classes begin", "instruction"),
     (r"add deadline|add/drop", "add"),
     (r"drop deadline|drop without|10th day|last day to drop", "drop"),
     (r"withdraw", "withdraw"),
@@ -155,10 +163,15 @@ class _Text(HTMLParser):
 
 
 def _term_year(month: int, term_year: int, semester: str) -> int:
-    """A January/February date printed on a fall calendar belongs to the
-    next calendar year."""
+    """Calendars print dates without a year and run past the term itself: a
+    January/February date on a fall calendar is next year (grade and
+    transcript deadlines), and an August-December date on a spring calendar
+    is the previous year (schedules published in October, registration in
+    November - stored as 2027 for spring 2027 until this was fixed)."""
     if semester == "fall" and month <= 2:
         return term_year + 1
+    if semester == "spring" and month >= 8:
+        return term_year - 1
     return term_year
 
 
@@ -223,6 +236,15 @@ def extract_events(html: str, term_year: int, semester: str, source_url: str | N
         if parsed:
             cur = parsed
             continue
+        # A dated heading with a label - 'February 1 – "10th day" add/drop
+        # deadline' - starts a new date AND is an event itself. It used to be
+        # filed as a title under the previous date (Jan 25 for spring 2027).
+        labelled = _DATE_LABEL_RE.match(frag)
+        if labelled:
+            parsed = _parse_date(labelled.group("date"), term_year, semester)
+            if parsed:
+                cur = (parsed[0], parsed[1], labelled.group("date").strip())
+                frag = labelled.group("label")
         if cur is None or len(frag) < 4:
             continue
         if _DATE_TIME_ONLY_RE.match(frag) and rows and rows[-1][2] == cur[0]:
@@ -246,19 +268,26 @@ def extract_events(html: str, term_year: int, semester: str, source_url: str | N
     return uniq
 
 
+def default_url(term_year: int, semester: str) -> str:
+    """The registrar's usual address for a term's calendar. Current terms
+    follow it; archived ones may not, hence --url."""
+    return f"https://registrar.illinois.edu/{semester}-{term_year}-academic-calendar/"
+
+
 def load(term: str, url: str | None = None, file: str | None = None, db_path=None) -> int:
-    term_year_s, semester = term.split("-", 1)
-    term_year, semester = int(term_year_s), semester.strip().lower()
+    term_year, semester = parse_term(term)
 
     if file:
         html = Path(file).read_text(encoding="utf-8", errors="replace")
         source_url = None
-    elif url:
+    else:
+        url = url or default_url(term_year, semester)
         resp = requests.get(url, timeout=60, headers={"User-Agent": "Mozilla/5.0"})
+        if resp.status_code == 404:
+            raise ValueError(f"{url} answers 404 - the registrar hasn't posted this term's "
+                             f"calendar there (yet). Pass --url or --file once it's out.")
         resp.raise_for_status()
         html, source_url = resp.text, url
-    else:
-        raise ValueError("pass --url or --file")
 
     rows = extract_events(html, term_year, semester, source_url)
     conn = db.get_connection(db_path)
@@ -276,8 +305,8 @@ def load(term: str, url: str | None = None, file: str | None = None, db_path=Non
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Load one term of the UIUC academic calendar.")
-    ap.add_argument("--term", required=True, help="e.g. 2026-fall")
-    ap.add_argument("--url", help="registrar calendar page for that term")
+    ap.add_argument("--term", required=True, help="e.g. 'spring 2027' or 2027-spring")
+    ap.add_argument("--url", help="registrar calendar page (default: the usual address for the term)")
     ap.add_argument("--file", help="a saved copy of that page instead of fetching")
     args = ap.parse_args()
     try:

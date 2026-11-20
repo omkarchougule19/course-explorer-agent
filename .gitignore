@@ -53,3 +53,9 @@ evals/results/*
 # untracked 2026-09-28 - it was ~77% of the repo's tracked bytes)
 .claude/skills/
 skills-lock.json
+
+# Term-swap runtime output (scripts/term_swap.py, watch_term_swap.py)
+scripts/logs/
+scripts/progress*.txt
+scripts/watcher.txt
+scripts/watcher.pid

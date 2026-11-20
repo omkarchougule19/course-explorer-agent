@@ -130,10 +130,7 @@ def status(conn: db.Connection) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def _next_term(year: int, semester: str) -> tuple[int, str]:
-    cyc = terms.SEMESTER_CYCLE
-    i = year * 3 + cyc.index(semester) + 1
-    y, si = divmod(i, 3)
-    return y, cyc[si]
+    return terms.shift_term(year, semester, 1)
 
 
 def _term_published(year: int, semester: str) -> bool:
@@ -198,7 +195,7 @@ def run_syncs(subjects: list[str], top: "int | None" = None) -> int:
         conn.close()
         return 1
 
-    cur = (terms.CURRENT_YEAR, terms.CURRENT_SEMESTER)
+    cur = terms.current_term()
     nxt = _next_term(*cur)
     nxt_ok = _term_published(*nxt)
     term_list = [cur] + ([nxt] if nxt_ok else [])

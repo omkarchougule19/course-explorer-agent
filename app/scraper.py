@@ -27,16 +27,22 @@ a full "detailed" scrape costs two extra requests per course (one for the
 description, one per section for instructor/enrollment). Use --fast to skip
 all of that and store the section id/name list only.
 
-Courses within a subject are fetched concurrently (--concurrency, default
-10 workers) since course-level fetching is what dominates a full scrape.
+Courses within a subject can be fetched concurrently (--concurrency), but
+the default is 1 worker with a 1 s pause between section requests: UIUC's
+API sits behind an AWS firewall that challenged this IP at 3 and 10
+workers (2026-11). On a challenge the scraper stops instead of retrying.
 All database writes happen on the main thread as each course finishes, so
 there's no SQLite concurrency to worry about.
 
-Usage:
-    python scraper.py --year 2026 --semester fall --subjects CS,STAT,IS
-    python scraper.py --year 2026 --semester fall --subjects CS --fast
-    python scraper.py --year 2026 --semester fall --concurrency 15
-    python scraper.py --year 2026 --semester fall --skip-recent 24
+Usage (YYYY = the term's year):
+    python -m app.scraper --year YYYY --semester spring --subjects CS,STAT,IS
+    python -m app.scraper --year YYYY --semester fall --subjects CS --fast
+    python -m app.scraper --year YYYY --semester summer --skip-recent 24
+
+To replace a whole term with its successor subject by subject, use
+scripts/term_swap.py rather than calling this directly.
+
+Exit codes: 0 done, 2 firewall block, 3 term not published yet, 1 other.
 """
 
 import argparse
@@ -154,19 +160,54 @@ class Section:
             self.meetings = []
 
 
-def fetch_xml(url: str, retries: int = 3, backoff: float = 1.5) -> Optional[ET.Element]:
+# Set the first time UIUC's firewall (AWS WAF) answers with a challenge
+# (HTTP 202, empty body, `x-amzn-waf-action: challenge`). Every later request
+# would get the same, and retrying - the old behaviour, which read the empty
+# body as "mismatched tag" XML and tried again - only extends the block. Once
+# set, fetch_xml returns None at once and run() stops.
+WAF_BLOCKED = threading.Event()
+_waf_lock = threading.Lock()
+
+
+def _note_waf(resp: requests.Response, url: str) -> bool:
+    """True (and stop everything) if `resp` is a firewall challenge."""
+    action = resp.headers.get("x-amzn-waf-action")
+    if not action:
+        return False
+    with _waf_lock:
+        first = not WAF_BLOCKED.is_set()
+        WAF_BLOCKED.set()
+    if first:
+        tqdm.write(f"  [blocked] UIUC's firewall answered with a '{action}' on {url}. "
+                   f"Stopping all requests - retrying only extends the block. Try again "
+                   f"later, at a lower --concurrency.")
+    return True
+
+
+def fetch_xml(url: str, retries: int = 3, backoff: float = 1.5,
+              warn_404: bool = False) -> Optional[ET.Element]:
     """GET a Course Explorer URL and return the parsed XML root, with basic retry/backoff.
 
-    404s mean "this doesn't exist" (e.g. a subject with no courses this term) and are not
-    retried. 429s back off longer since they mean we're being rate limited. Everything else
-    (timeouts, connection resets, 5xx, malformed XML) gets the normal retry/backoff treatment.
-    Safe to call from multiple threads: each thread gets its own Session.
+    404s mean "this doesn't exist" and are not retried. For a listing (a subject with no
+    courses this term) that's normal; for a course or section the subject listing just
+    named, it means data is missing, so callers pass warn_404=True to make it visible
+    instead of a silently smaller result. A firewall challenge stops everything (see
+    WAF_BLOCKED). 429s back off longer since they mean we're being rate limited.
+    Everything else (timeouts, connection resets, 5xx, malformed XML) gets the normal
+    retry/backoff treatment. Safe to call from multiple threads: each thread gets its
+    own Session.
     """
+    if WAF_BLOCKED.is_set():
+        return None
     session = get_session()
     for attempt in range(retries):
         try:
             resp = session.get(url, timeout=15)
+            if _note_waf(resp, url):
+                return None
             if resp.status_code == 404:
+                if warn_404:
+                    tqdm.write(f"  [warn] 404 Not Found on {url}")
                 return None
             if resp.status_code == 403:
                 # Not worth retrying - a 403 is a deliberate rejection, not a transient
@@ -187,6 +228,29 @@ def fetch_xml(url: str, retries: int = 3, backoff: float = 1.5) -> Optional[ET.E
                 return None
             time.sleep(backoff * (attempt + 1))
     return None
+
+
+def probe_term(year: int, semester: str) -> str:
+    """One request for the term's subject listing, to tell apart the ways a
+    scrape can't start: 'ok', 'not-published' (UIUC answers 404 "term not
+    available" - e.g. summer before ~February), 'blocked' (firewall
+    challenge) or 'error' (network, 5xx, unparseable)."""
+    url = f"{BASE_URL}/{year}/{semester}.xml"
+    try:
+        resp = get_session().get(url, timeout=15)
+    except requests.RequestException:
+        return "error"
+    if _note_waf(resp, url):
+        return "blocked"
+    if resp.status_code == 404:
+        return "not-published"
+    if not resp.ok:
+        return "error"
+    try:
+        ET.fromstring(resp.content)
+    except ET.ParseError:
+        return "error"
+    return "ok"
 
 
 def strip_ns(tag: str) -> str:
@@ -260,7 +324,7 @@ def fetch_section_detail(year: int, semester: str, subject: str, course_number: 
     """Fetch the per section XML for instructor, enrollment status, meeting times/locations,
     and part-of-term/date info. One request per CRN."""
     url = f"{BASE_URL}/{year}/{semester}/{subject}/{course_number}/{crn}.xml"
-    root = fetch_xml(url)
+    root = fetch_xml(url, warn_404=True)
     if root is None:
         return {}
 
@@ -370,7 +434,7 @@ def fetch_course_sections(
     Pure I/O + parsing, no database access, so it's safe to run inside a worker thread.
     """
     url = f"{BASE_URL}/{year}/{semester}/{subject}/{course_number}.xml"
-    root = fetch_xml(url)
+    root = fetch_xml(url, warn_404=True)
     if root is None:
         return []
 
@@ -604,9 +668,9 @@ def run(
     semester: str,
     subjects: Optional[list[str]] = None,
     fast: bool = False,
-    concurrency: int = 10,
+    concurrency: int = 1,
     skip_recent_hours: Optional[float] = None,
-    section_delay: float = 0.1,
+    section_delay: float = 1.0,
     quiet_errors: bool = False,
 ):
     """Scrape `subjects` (or every subject) for one term into the active
@@ -617,7 +681,9 @@ def run(
         {
           "total": <int sections written this run>,
           "skipped_total": <int courses skipped as recently scraped>,
-          "aborted": <str reason> | None,   # set if a pre-flight check failed
+          "aborted": <str reason> | None,   # term-not-published | term-blocked |
+                                            # term-error | no-subjects | waf-blocked |
+                                            # interrupted
           "per_subject": {
             "<SUBJ>": {"courses_found": <int|None>, "sections_written": <int>,
                        "skipped_recent": <int>},
@@ -641,9 +707,20 @@ def run(
     warmup(year, semester)
 
     probe_url = f"{BASE_URL}/{year}/{semester}.xml"
-    if fetch_xml(probe_url) is None:
+    status = probe_term(year, semester)
+    if status == "not-published":
         conn.close()
-        result["aborted"] = "term-probe-failed"
+        result["aborted"] = "term-not-published"
+        print(f"UIUC hasn't published the {semester} {year} schedule yet ({probe_url} "
+              f"answers 404). Nothing to scrape - try again once it's out.", flush=True)
+        return result
+    if status != "ok":
+        conn.close()
+        result["aborted"] = f"term-{status}"
+        if status == "blocked" and not quiet_errors:
+            print("\nUIUC's firewall is challenging this IP. Wait a few hours (or try "
+                  "another network), then re-run at --concurrency 1.", flush=True)
+            return result
         if quiet_errors:
             print(f"  [warn] {semester} {year}: term probe ({probe_url}) rejected - "
                   f"skipping this term.", flush=True)
@@ -670,7 +747,7 @@ def run(
         result["aborted"] = "no-subjects"
         print(
             f"No subjects found for {semester} {year}. Double check the year/semester "
-            f"(e.g. --year 2026 --semester fall) or --subjects codes, then try again.",
+            f"or --subjects codes, then try again.",
             flush=True,
         )
         return result
@@ -692,6 +769,9 @@ def run(
     subject_bar = tqdm(target_subjects, desc="Subjects", unit="subj", position=0)
     try:
         for subject in subject_bar:
+            if WAF_BLOCKED.is_set():
+                result["aborted"] = "waf-blocked"
+                break
             subject_bar.set_postfix_str(f"{subject} | {total} sections saved")
             try:
                 courses = list_courses(year, semester, subject)
@@ -779,6 +859,11 @@ def run(
             }
 
         subject_bar.close()
+        if WAF_BLOCKED.is_set():
+            # Also catches a block during the last subject's courses.
+            result["aborted"] = "waf-blocked"
+            print("Stopped early: UIUC's firewall started challenging requests. "
+                  "Re-run later; rows already saved are kept.", flush=True)
         target = "Neon Postgres (DATABASE_URL)" if db.is_postgres() else str(DB_PATH)
         summary = f"Done. {total} sections saved to {target}."
         if skipped_total:
@@ -804,7 +889,7 @@ def run(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Scrape UIUC Course Explorer into SQLite")
-    parser.add_argument("--year", type=int, required=True, help="e.g. 2026")
+    parser.add_argument("--year", type=int, required=True, help="four-digit year, e.g. the year of the term you want")
     parser.add_argument(
         "--semester", type=str, required=True,
         choices=["fall", "spring", "summer", "winter"],
@@ -812,9 +897,9 @@ if __name__ == "__main__":
     )
     parser.add_argument("--subjects", type=str, default=None, help="Comma separated subject codes, e.g. CS,STAT,IS. Omit to scrape every subject (slow).")
     parser.add_argument("--fast", action="store_true", help="Skip per section detail fetch (no instructor/enrollment, much faster)")
-    parser.add_argument("--concurrency", type=int, default=10, help="Number of courses to fetch in parallel (default 10). Lower this if you start seeing rate-limit warnings.")
+    parser.add_argument("--concurrency", type=int, default=1, help="Number of courses to fetch in parallel (default 1). UIUC's firewall challenged 3 and 10; raise with care.")
     parser.add_argument("--skip-recent", type=float, default=None, metavar="HOURS", help="Skip re-fetching courses already scraped within this many hours. Omit to always refetch.")
-    parser.add_argument("--section-delay", type=float, default=0.1, help="Seconds to pause between per-section detail requests within a course, in detailed mode (default 0.1)")
+    parser.add_argument("--section-delay", type=float, default=1.0, help="Seconds to pause between per-section detail requests within a course, in detailed mode (default 1.0)")
     args = parser.parse_args()
 
     if args.concurrency < 1:
@@ -825,7 +910,7 @@ if __name__ == "__main__":
         subj_list = [s.strip().upper() for s in args.subjects.split(",") if s.strip()]
 
     try:
-        run(
+        res = run(
             args.year,
             args.semester.lower(),
             subj_list,
@@ -834,6 +919,13 @@ if __name__ == "__main__":
             args.skip_recent,
             args.section_delay,
         )
+        # Exit codes let scripts/term_swap.py tell outcomes apart without
+        # parsing output: 0 done, 2 firewall block, 3 term not published,
+        # 1 anything else that stopped the run.
+        aborted = res.get("aborted")
+        if aborted:
+            sys.exit({"waf-blocked": 2, "term-blocked": 2, "term-not-published": 3,
+                      "interrupted": 130}.get(aborted, 1))
     except KeyboardInterrupt:
         # Belt-and-suspenders: run() already handles this, but a Ctrl+C between
         # calls (e.g. during init_db) would otherwise still print a traceback.

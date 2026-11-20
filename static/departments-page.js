@@ -164,8 +164,6 @@
     loadDeptCourses();
   });
 
-  const DC_CURRENT_TERM = 'fall 2026';  // keep in sync with app/terms.py
-
   async function loadDeptTerms() {
     try {
       const stats = await getJSON('/stats');
@@ -180,7 +178,7 @@
         const opt = document.createElement('option');
         opt.value = `${yr}|${sem}`;
         opt.textContent = t;
-        if (t === DC_CURRENT_TERM) opt.selected = true;
+        if (t === stats.default_term) opt.selected = true;
         select.appendChild(opt);
       }
     } catch (e) { /* stays "All terms" */ }

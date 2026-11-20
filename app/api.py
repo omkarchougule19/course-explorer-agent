@@ -38,6 +38,7 @@ from app import sync_requests as sync_reqs
 from app import ask_log as ask_log_mod
 from app import feedback as feedback_mod
 from app import site_feedback as site_feedback_mod
+from app import terms as terms_mod
 from app import timing
 from app.db import DB_PATH
 
@@ -948,11 +949,23 @@ def get_stats():
             conn, "SELECT COUNT(DISTINCT subject || course_number) as n FROM sections", []
         )[0]["n"]
         terms = run_query(conn, "SELECT DISTINCT year, semester FROM sections ORDER BY year, semester", [])
+        try:
+            cal = run_query(conn, "SELECT DISTINCT year, semester FROM academic_calendar "
+                                  "ORDER BY year, semester", [])
+        except Exception:  # noqa: BLE001 - table not created yet
+            cal = []
+    covered = [f"{r['semester']} {r['year']}" for r in terms]
+    calendar_terms = [f"{r['semester']} {r['year']}" for r in cal]
     return {
         "total_sections": total,
         "distinct_subjects": subjects,
         "distinct_courses": courses,
-        "terms_covered": [f"{r['semester']} {r['year']}" for r in terms],
+        "terms_covered": covered,
+        # The term the pages pre-select (app/terms.py), so no page hard-codes one.
+        "default_term": terms_mod.default_term(covered),
+        # The registrar calendar is loaded per term separately, so it can lag.
+        "calendar_terms": calendar_terms,
+        "calendar_default_term": terms_mod.default_term(calendar_terms),
     }
 
 

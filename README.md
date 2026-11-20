@@ -162,9 +162,26 @@ through the Generator → Critic → Repair loop in `app/sql_pipeline/`.
 ```bash
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt                     # hash-pinned lock (Python 3.14)
-python -m app.scraper --year 2026 --semester fall --subjects CS,STAT --fast
+python -m app.scraper --year YYYY --semester spring --subjects CS,STAT --fast
 uvicorn app.api:app --reload                        # http://127.0.0.1:8000
 ```
+
+### Rolling to a new term
+
+Nothing in the code names a term (`app/terms.py` works out the current and
+planning term from the date, and the pages pre-select from what's loaded),
+so a new term needs data, not edits:
+
+```bash
+python scripts/term_swap.py --to "summer 2027"     # replaces summer 2026, subject by subject
+python scripts/term_swap.py --to "summer 2027" --drop-rest   # then drop what has no successor
+python -m app.load_calendar --term "summer 2027"   # registrar calendar for the term
+```
+
+`term_swap.py` exits 3 if UIUC hasn't published the term yet and 2 if its
+firewall starts challenging; `scripts/watch_term_swap.py` (same arguments)
+runs it detached and retries. The eval set fills `{term}`-style placeholders
+from the loaded data, so it doesn't need editing either (`evals/README.md`).
 
 Run scripts as modules from the project root (`python -m app.…`). The
 assistant needs one LLM key (`GROQ_API_KEY` or `OPENAI_API_KEY`). Offline tests, no key needed, for example
@@ -175,12 +192,13 @@ all ten suites are listed in [`docs/REFERENCE_v2.md`](docs/REFERENCE_v2.md).
 
 - The free host sleeps when idle, so the first visit after a quiet spell is a
   cold start, and Groq's free per-minute token limit makes busy moments slow.
-- Fall 2026 is synced for 84 of 191 subjects so far; scraping runs by hand from
-  a residential IP, and the deployed app serves whatever was last loaded.
+- Terms can be partially synced (the site's `/stats` lists what's loaded);
+  scraping runs by hand from a residential IP, and the deployed app serves
+  whatever was last loaded.
 - Grade and instructor-ranking data are empty until the upstream datasets
   publish recent terms; the agent says so instead of inventing data.
-- Enrollment status is a snapshot from the last sync, not live, and for fall
-  2026 only a scheduling code.
+- Enrollment status is a snapshot from the last sync, not live, and until
+  UIUC publishes registration for a term only a scheduling code.
 - Cross-listed courses (CS 440 / ECE 448) are separate rows, not deduplicated.
 - The eval set is small (29 questions); treat percentages as directional.
 

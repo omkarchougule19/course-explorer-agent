@@ -95,10 +95,29 @@ full-catalog re-scrape.
   by copying a complete local SQLite database into Neon
   (`app/migrate_sqlite_to_neon.py`), because a cloud-bound full scrape hit the
   soft block about four departments in.
-- **A rolling window of terms for the historical loaders.** `app/terms.py`
-  keeps the current term ± 2 on the spring/summer/fall cycle (winter
-  excluded). `CURRENT_YEAR` / `CURRENT_SEMESTER` are edited by hand when terms
-  roll (now 2026 fall), deliberately not computed from the date.
+- **Nothing names a term; `app/terms.py` works it out.** The current term
+  comes from today's date (spring from Jan 1, summer from May 16, fall from
+  Aug 16), the term students are planning from registration dates (next
+  spring from Oct 15, fall from Apr 1), and the term the pages pre-select
+  (`/stats` `default_term`) from those plus the terms actually loaded. The
+  agent's DATA NOTES read "this / next semester" and "next spring" from the
+  date too, not from the newest loaded term: that conflation made "this
+  semester" mean spring 2027 in November and "next spring" mean summer 2027
+  once spring 2027 was loaded. The historical loaders keep the current term
+  ± 2 (winter excluded). `CURRENT_TERM` / `DEFAULT_TERM` env vars pin either
+  if UIUC's calendar ever shifts enough to matter.
+- **Rolling a term is a subject-by-subject swap.** `scripts/term_swap.py --to
+  "<season> <year>"` scrapes the new term per subject and deletes that
+  subject's previous-year rows only after a clean run whose new count is at
+  least half the old one, so the site never shows a gap. It stops on "not
+  published yet" (exit 3) or a firewall challenge (exit 2);
+  `scripts/watch_term_swap.py` runs it detached and retries.
+- **The scraper is slow by default and stops on a challenge.** UIUC's AWS
+  WAF answers `202` + `x-amzn-waf-action: challenge` (empty body); the
+  scraper used to read that as malformed XML and retry, extending the block.
+  It now stops at the first challenge, warns on 404s for courses/sections a
+  listing named (they were silently skipped), and defaults to 1 worker with a
+  1 s section delay - 3 and 10 workers were challenged in 2026-11.
 - **Every script loads `.env` itself**, so a run with `DATABASE_URL` in `.env`
   really writes to Neon (a past bug silently wrote to local SQLite instead).
 
@@ -111,8 +130,14 @@ emailing the operator per sync click (SMTP on the free host for little value),
 a signed-cookie click cap, live seat-availability tracking (would mean
 near-continuous polling of a rate-limited site).
 
+**State on 2026-11-20:** spring 2027 replaced spring 2026 (11,884 sections,
+185 subjects); summer 2026 stays until UIUC publishes summer 2027; fall 2026
+still covers 84 subjects.
+
 **History.** Local-only scraping from the start; migration path 2026-08-31;
-demand-driven refresh 2026-08-31; wall detection fixed 2026-09-15.
+demand-driven refresh 2026-08-31; wall detection fixed 2026-09-15; terms
+computed from the date and the data instead of hand-edited constants, term
+swap script, and WAF-aware scraper defaults 2026-11-20.
 
 ---
 
