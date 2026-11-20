@@ -7,13 +7,13 @@ an `academic_calendar` table.
 
 The registrar publishes one HTML page per term as a definition list
 (`<dt>` date / `<dd>` event), and the per-term URL is NOT uniformly
-derivable (`/fall-2026-academic-calendar/` vs. archived paths), so the URL
-(or a saved file) is passed explicitly:
+derivable (`/<season>-<year>-academic-calendar/` for current terms, other
+paths once archived). The usual address is tried by default; pass --url (or
+a saved --file) when it doesn't work:
 
-    python -m app.load_calendar --term 2026-fall \\
-        --url https://registrar.illinois.edu/fall-2026-academic-calendar/
-
-    python -m app.load_calendar --term 2026-fall --file saved_calendar.html
+    python -m app.load_calendar --term "spring YYYY"
+    python -m app.load_calendar --term YYYY-fall --url https://registrar.illinois.edu/...
+    python -m app.load_calendar --term YYYY-fall --file saved_calendar.html
 
 Parsing is text-oriented (not tied to exact tags) so a markup change on the
 registrar side is survivable: a fragment that reads like a date becomes the
@@ -34,6 +34,7 @@ from dotenv import load_dotenv
 
 from app import db
 from app.db import DB_PATH
+from app.terms import parse_term
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
@@ -246,19 +247,26 @@ def extract_events(html: str, term_year: int, semester: str, source_url: str | N
     return uniq
 
 
+def default_url(term_year: int, semester: str) -> str:
+    """The registrar's usual address for a term's calendar. Current terms
+    follow it; archived ones may not, hence --url."""
+    return f"https://registrar.illinois.edu/{semester}-{term_year}-academic-calendar/"
+
+
 def load(term: str, url: str | None = None, file: str | None = None, db_path=None) -> int:
-    term_year_s, semester = term.split("-", 1)
-    term_year, semester = int(term_year_s), semester.strip().lower()
+    term_year, semester = parse_term(term)
 
     if file:
         html = Path(file).read_text(encoding="utf-8", errors="replace")
         source_url = None
-    elif url:
+    else:
+        url = url or default_url(term_year, semester)
         resp = requests.get(url, timeout=60, headers={"User-Agent": "Mozilla/5.0"})
+        if resp.status_code == 404:
+            raise ValueError(f"{url} answers 404 - the registrar hasn't posted this term's "
+                             f"calendar there (yet). Pass --url or --file once it's out.")
         resp.raise_for_status()
         html, source_url = resp.text, url
-    else:
-        raise ValueError("pass --url or --file")
 
     rows = extract_events(html, term_year, semester, source_url)
     conn = db.get_connection(db_path)
@@ -276,8 +284,8 @@ def load(term: str, url: str | None = None, file: str | None = None, db_path=Non
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Load one term of the UIUC academic calendar.")
-    ap.add_argument("--term", required=True, help="e.g. 2026-fall")
-    ap.add_argument("--url", help="registrar calendar page for that term")
+    ap.add_argument("--term", required=True, help="e.g. 'spring 2027' or 2027-spring")
+    ap.add_argument("--url", help="registrar calendar page (default: the usual address for the term)")
     ap.add_argument("--file", help="a saved copy of that page instead of fetching")
     args = ap.parse_args()
     try:
