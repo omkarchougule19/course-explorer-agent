@@ -37,6 +37,7 @@ _CATEGORY_CASES = [
     ("Spring priority registration opens", "registration"),
     ("Degree conferral", "commencement"),
     ("Housing move-in period", "other"),
+    ("First day of instruction for Spring POT 1 (full semester) courses", "instruction"),
 ]
 
 
@@ -51,6 +52,26 @@ def main() -> int:
             print(f"  FAIL date {raw!r}: got {got_pair}  want {want}")
         else:
             print(f"  ok   date {raw!r} -> {got_pair}")
+
+    # Which calendar year an undated month belongs to, per season: a spring
+    # calendar opens with last autumn's registration, a fall one ends with
+    # January deadlines.
+    for raw, year, sem, want in [
+        ("November 2", 2027, "spring", ("2026-11-02", None)),
+        ("October 5", 2027, "spring", ("2026-10-05", None)),
+        ("January 19", 2027, "spring", ("2027-01-19", None)),
+        ("June 22", 2027, "spring", ("2027-06-22", None)),
+        ("January 8", 2026, "fall", ("2027-01-08", None)),
+        ("March 9", 2026, "fall", ("2026-03-09", None)),
+        ("March 8", 2027, "summer", ("2027-03-08", None)),
+    ]:
+        got = _parse_date(raw, year, sem)
+        got_pair = None if got is None else (got[0], got[1])
+        if got_pair != want:
+            failures += 1
+            print(f"  FAIL year {raw!r} on {sem} {year}: got {got_pair}  want {want}")
+        else:
+            print(f"  ok   year {raw!r} on {sem} {year} -> {got_pair[0]}")
 
     for title, want in _CATEGORY_CASES:
         got = _categorize(title)

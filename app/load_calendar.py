@@ -55,6 +55,12 @@ _DATE_RE = re.compile(
     r"(?:\s*[–—-]\s*(?:(?P<mon2>[A-Za-z]{3,9})\.?\s+)?(?P<d2>\d{1,2}))?\s*$"
 )
 
+# "February 1 – “10th day” add/drop deadline": a date, a dash, then a label
+# that doesn't start with a digit (so a range like "March 13 – 21" isn't one).
+_DATE_LABEL_RE = re.compile(
+    r"^\s*(?P<date>[A-Za-z]{3,9}\.?\s+\d{1,2})\s*[–—-]\s*(?P<label>[^\d\s].*)$"
+)
+
 # Some registrar events are split across two adjacent block elements - a
 # title line, then a separate "Month Day at H:MM PM" line giving the exact
 # time. That second fragment doesn't match _DATE_RE (it has a trailing "at
@@ -70,7 +76,8 @@ _DATE_TIME_ONLY_RE = re.compile(
 _CATEGORY_RULES = [
     (r"final exam|final examination", "finals"),
     (r"reading day", "instruction"),
-    (r"instruction begins|last (instruction|day of instruction)|classes begin", "instruction"),
+    (r"instruction begins|first day of instruction|last (instruction|day of instruction)"
+     r"|classes begin", "instruction"),
     (r"add deadline|add/drop", "add"),
     (r"drop deadline|drop without|10th day|last day to drop", "drop"),
     (r"withdraw", "withdraw"),
@@ -156,10 +163,15 @@ class _Text(HTMLParser):
 
 
 def _term_year(month: int, term_year: int, semester: str) -> int:
-    """A January/February date printed on a fall calendar belongs to the
-    next calendar year."""
+    """Calendars print dates without a year and run past the term itself: a
+    January/February date on a fall calendar is next year (grade and
+    transcript deadlines), and an August-December date on a spring calendar
+    is the previous year (schedules published in October, registration in
+    November - stored as 2027 for spring 2027 until this was fixed)."""
     if semester == "fall" and month <= 2:
         return term_year + 1
+    if semester == "spring" and month >= 8:
+        return term_year - 1
     return term_year
 
 
@@ -224,6 +236,15 @@ def extract_events(html: str, term_year: int, semester: str, source_url: str | N
         if parsed:
             cur = parsed
             continue
+        # A dated heading with a label - 'February 1 – "10th day" add/drop
+        # deadline' - starts a new date AND is an event itself. It used to be
+        # filed as a title under the previous date (Jan 25 for spring 2027).
+        labelled = _DATE_LABEL_RE.match(frag)
+        if labelled:
+            parsed = _parse_date(labelled.group("date"), term_year, semester)
+            if parsed:
+                cur = (parsed[0], parsed[1], labelled.group("date").strip())
+                frag = labelled.group("label")
         if cur is None or len(frag) < 4:
             continue
         if _DATE_TIME_ONLY_RE.match(frag) and rows and rows[-1][2] == cur[0]:
