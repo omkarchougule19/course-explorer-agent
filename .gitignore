@@ -54,8 +54,8 @@ evals/results/*
 .claude/skills/
 skills-lock.json
 
-# Spring 2027 rescrape runtime output (scripts/rescrape_spring27.py, watch_rescrape.py)
+# Term-swap runtime output (scripts/term_swap.py, watch_term_swap.py)
 scripts/logs/
-scripts/progress.txt
+scripts/progress*.txt
 scripts/watcher.txt
 scripts/watcher.pid

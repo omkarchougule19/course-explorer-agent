@@ -1,13 +1,14 @@
-"""Keep the Spring 2027 rescrape going until every subject is swapped.
+"""Keep scripts/term_swap.py going until the swap finishes.
 
-Runs scripts/rescrape_spring27.py whenever UIUC's API answers normally; when the
-script stops (WAF block), waits 30 minutes and checks again. Exits when the
-script logs "== done". Meant to run detached from any terminal:
+Same arguments as term_swap.py (e.g. --to "summer 2027"). Re-runs it after a
+firewall block (waits 30 min), and after "not published yet" (waits 24 h), and
+exits once a run finishes. Meant to run detached, so neither a closed terminal
+nor a tool's memory cleanup kills it:
 
-    Start-Process .venv\\Scripts\\pythonw.exe scripts\\watch_rescrape.py -WindowStyle Hidden
+    Start-Process .venv\\Scripts\\pythonw.exe -ArgumentList 'scripts\\watch_term_swap.py','--to','summer 2027' -WindowStyle Hidden
 
 Stop it with:  Get-Content scripts\\watcher.pid | % { Stop-Process -Id $_ }
-(then stop any running app.scraper / rescrape_spring27 python processes).
+(then any leftover app.scraper / term_swap python processes).
 """
 import os
 import subprocess
@@ -15,51 +16,34 @@ import sys
 import time
 from pathlib import Path
 
-import requests
-
-HERE = Path(__file__).parent
+HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
-PROGRESS = HERE / "progress.txt"
 LOG = HERE / "watcher.txt"
-URL = "https://courses.illinois.edu/cisapp/explorer/schedule/2027/spring.xml"
 PY = ROOT / ".venv" / "Scripts" / "python.exe"
+WAIT = {2: 1800, 3: 24 * 3600}  # blocked: 30 min; not published: a day
 
 
 def log(line: str) -> None:
     with LOG.open("a", encoding="utf-8", newline="\n") as f:
-        f.write(f"{time.strftime('%H:%M')} {line}\n")
+        f.write(f"{time.strftime('%Y-%m-%d %H:%M')} {line}\n")
 
 
-def done() -> bool:
-    try:
-        lines = PROGRESS.read_text(encoding="utf-8").strip().splitlines()
-        return bool(lines) and lines[-1].startswith("== done")
-    except OSError:
-        return False
-
-
-def uiuc_status() -> int:
-    try:
-        return requests.get(URL, timeout=20, headers={"User-Agent": "Mozilla/5.0"}).status_code
-    except requests.RequestException:
-        return 0
-
-
-def main() -> None:
+def main() -> int:
+    args = sys.argv[1:]
     (HERE / "watcher.pid").write_text(str(os.getpid()))
-    log(f"watcher started (pid {os.getpid()})")
-    while not done():
-        code = uiuc_status()
-        log(f"uiuc={code}")
-        if code == 200:
-            with LOG.open("a", encoding="utf-8") as f:
-                subprocess.run([str(PY), str(HERE / "rescrape_spring27.py")], cwd=ROOT,
-                               stdout=f, stderr=subprocess.STDOUT,
-                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            continue
-        time.sleep(1800)
-    log("ALL SUBJECTS DONE - watcher exiting")
+    log(f"watcher started (pid {os.getpid()}): term_swap {' '.join(args)}")
+    while True:
+        with LOG.open("a", encoding="utf-8") as f:
+            rc = subprocess.run([str(PY if PY.exists() else sys.executable),
+                                 str(HERE / "term_swap.py"), *args], cwd=ROOT,
+                                stdout=f, stderr=subprocess.STDOUT,
+                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), check=False).returncode
+        if rc not in WAIT:
+            log(f"term_swap exited {rc} - watcher done")
+            return rc
+        log(f"term_swap exited {rc}; retrying in {WAIT[rc] // 60} min")
+        time.sleep(WAIT[rc])
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
