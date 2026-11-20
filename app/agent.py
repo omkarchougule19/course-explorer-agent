@@ -35,7 +35,10 @@ from langchain_community.utilities import SQLDatabase
 from langchain_community.agent_toolkits import create_sql_agent
 from sqlalchemy.exc import SQLAlchemyError
 
+from datetime import date
+
 from app import db, sql_guard, timing
+from app import terms as terms_mod
 from app.db import DB_PATH
 # The fixed lookups behind course_facts and department_overview live in
 # app/catalog.py. Imported by name: the rest of this file, and the tests,
@@ -76,7 +79,7 @@ SCOPE
   instructors, the academic calendar (including "is it too late to add or
   drop" - a deadline question, not a request to act). Questions about grades, GPAs, ratings,
   rankings or teaching evaluations are in scope even when that data is empty,
-  and so are terms not in the data yet ("next spring", 2027): answer that
+  and so are terms not in the data yet (see DATA NOTES): answer that
   there's no data for it yet - never decline them.
 - Out of scope: general knowledge, other universities, current events, coding,
   anything else - even if you know the answer. Also out of scope: any request,
@@ -1899,14 +1902,29 @@ def _data_notes_for(today: str) -> str:
     terms = sorted(terms, key=lambda r: (r["year"], _SEASON_ORDER.get(r["semester"], 9)), reverse=True)
     names = [f"{r['semester']} {r['year']}" for r in terms]
     coded = [f"{r['semester']} {r['year']}" for r in terms if (r["coded"] or 0) * 2 > r["n"]]
+    # Relative words come from today's date (app/terms.py), not from whichever
+    # term happens to be newest: once spring 2027 was loaded in November,
+    # "this semester" still means fall 2026, and "next spring" is a spring.
+    try:
+        rel = terms_mod.relative_terms(date.fromisoformat(today))
+    except ValueError:
+        rel = terms_mod.relative_terms()
+    have = set(names)
+
+    def _say(label: str) -> str:
+        return label if label in have else f"{label} (not in the data yet)"
+
     notes = [
         f"- Today is {today}.",
-        f"- Terms in the data, newest first: {', '.join(names)}. The latest is "
-        f"{names[0]}: read 'this', 'current', 'next' or 'upcoming' semester as that, "
-        "and never filter on a term not in this list.",
-        f"- Not in the data yet: {', '.join(_next_terms(terms[0]))}. 'Next spring' means "
-        f"{_next_terms(terms[0])[0]}, not an earlier spring: for these say the schedule "
-        "isn't in the data yet - never answer with an earlier term of that season.",
+        f"- Terms in the data, newest first: {', '.join(names)}. Never filter on a "
+        "term not in this list.",
+        f"- 'This' or 'current' semester means {_say(rel['this'])}; 'next' or 'upcoming' "
+        f"semester means {_say(rel['next'])}; 'next spring' means {_say(rel['next spring'])}, "
+        f"'next summer' {_say(rel['next summer'])}, 'next fall' {_say(rel['next fall'])}. "
+        f"A season named without a year ('this fall', 'spring') means {rel['this']} if "
+        "that's the season, else that season's next term above.",
+        f"- Not in the data yet: {', '.join(_next_terms(terms[0]))}. For these say the "
+        "schedule isn't in the data yet - never answer with an earlier term of that season.",
     ]
     if coded:
         notes.append(f"- Registration isn't published yet for {', '.join(coded)}: "

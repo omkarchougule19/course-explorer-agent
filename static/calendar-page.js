@@ -7,8 +7,6 @@
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
   ));
 
-  const CURRENT_TERM = 'fall 2026';  // keep in sync with app/terms.py
-
   async function getJSON(url) {
     const res = await fetch(url);
     const body = await res.json().catch(() => ({}));
@@ -71,7 +69,7 @@
       const stats = await getJSON('/stats');
       const select = $('cal-term');
       const order = { spring: 0, summer: 1, fall: 2 };
-      const terms = (stats.terms_covered || []).slice().sort((a, b) => {
+      const terms = (stats.calendar_terms || []).slice().sort((a, b) => {
         const [sa, ya] = a.split(' '), [sb, yb] = b.split(' ');
         return (yb - ya) || (order[sb] - order[sa]);
       });
@@ -80,7 +78,7 @@
         const opt = document.createElement('option');
         opt.value = `${yr}|${sem}`;
         opt.textContent = t;
-        if (t === CURRENT_TERM) opt.selected = true;
+        if (t === stats.calendar_default_term) opt.selected = true;
         select.appendChild(opt);
       }
     } catch (e) { /* leaves the select empty; loadCalendar still runs with no filter */ }
