@@ -55,21 +55,28 @@ _DATE_RE = re.compile(
     r"(?:\s*[–—-]\s*(?:(?P<mon2>[A-Za-z]{3,9})\.?\s+)?(?P<d2>\d{1,2}))?\s*$"
 )
 
-# "February 1 – “10th day” add/drop deadline": a date, a dash, then a label
-# that doesn't start with a digit (so a range like "March 13 – 21" isn't one).
+# A dated heading that also carries a label: a date or a range, an optional
+# dash, then text that doesn't start with a digit or dash (so a bare range
+# like "March 13 – 21" isn't one):
+#   "February 1 – “10th day” add/drop deadline"
+#   "December 11–17 Weekdays only"   (the finals week - was filed under the
+#                                     reading day, Dec 10, before this)
 _DATE_LABEL_RE = re.compile(
-    r"^\s*(?P<date>[A-Za-z]{3,9}\.?\s+\d{1,2})\s*[–—-]\s*(?P<label>[^\d\s].*)$"
+    r"^\s*(?P<date>[A-Za-z]{3,9}\.?\s+\d{1,2}"
+    r"(?:\s*[–—-]\s*(?:[A-Za-z]{3,9}\.?\s+)?\d{1,2})?)"
+    r"\s*(?:[–—-]\s*)?(?P<label>[^\d\s–—-].*)$"
 )
 
-# Some registrar events are split across two adjacent block elements - a
-# title line, then a separate "Month Day at H:MM PM" line giving the exact
-# time. That second fragment doesn't match _DATE_RE (it has a trailing "at
-# <time>", so it isn't a bare date), and on its own it isn't a real event
-# either - it's a continuation of the title fragment right before it. This
-# catches that shape so it gets merged into the previous title instead of
-# becoming its own bogus "October 13 at 2:00 PM" row (see DECISIONS_v2.md).
+# "October 13 at 2:00 PM" is a date heading with a time: the events listed
+# AFTER it happen then ("Faculty deadline for reporting midterm grades").
+# It was first read as a continuation of the title before it and merged in,
+# which kept that title's (earlier) heading date - so the midterm deadline
+# read Oct 5, fall final grades Dec 21 instead of Dec 22, and LAW grades
+# Dec 21 instead of Jan 5. Now it starts a new date and the time is added to
+# each event under it.
 _DATE_TIME_ONLY_RE = re.compile(
-    r"^\s*[A-Za-z]{3,9}\.?\s+\d{1,2}\s+at\s+\d{1,2}(:\d{2})?\s*[AaPp]\.?[Mm]\.?\s*$"
+    r"^\s*(?P<date>[A-Za-z]{3,9}\.?\s+\d{1,2})\s+at\s+"
+    r"(?P<time>\d{1,2}(?::\d{2})?\s*[AaPp]\.?[Mm]\.?)\s*$"
 )
 
 # title keyword -> category, first match wins (order matters).
@@ -231,11 +238,18 @@ def extract_events(html: str, term_year: int, semester: str, source_url: str | N
 
     rows = []
     cur = None  # (start, end, raw_date)
+    at_time = None  # "2:00 PM" under an "October 13 at 2:00 PM" heading
     for frag in parser.parts:
         parsed = _parse_date(frag, term_year, semester)
         if parsed:
-            cur = parsed
+            cur, at_time = parsed, None
             continue
+        timed = _DATE_TIME_ONLY_RE.match(frag)
+        if timed:
+            parsed = _parse_date(timed.group("date"), term_year, semester)
+            if parsed:
+                cur, at_time = (parsed[0], None, frag.strip()), " ".join(timed.group("time").split())
+                continue
         # A dated heading with a label - 'February 1 – "10th day" add/drop
         # deadline' - starts a new date AND is an event itself. It used to be
         # filed as a title under the previous date (Jan 25 for spring 2027).
@@ -243,16 +257,13 @@ def extract_events(html: str, term_year: int, semester: str, source_url: str | N
         if labelled:
             parsed = _parse_date(labelled.group("date"), term_year, semester)
             if parsed:
-                cur = (parsed[0], parsed[1], labelled.group("date").strip())
+                cur, at_time = (parsed[0], parsed[1], labelled.group("date").strip()), None
                 frag = labelled.group("label")
         if cur is None or len(frag) < 4:
             continue
-        if _DATE_TIME_ONLY_RE.match(frag) and rows and rows[-1][2] == cur[0]:
-            prev = rows[-1]
-            merged_title = (prev[4] + " - " + frag.strip(" ."))[:300]
-            rows[-1] = prev[:4] + (merged_title, _categorize(merged_title)) + prev[6:]
-            continue
         title = frag.strip(" .")[:300]
+        if at_time:
+            title = f"{title} ({at_time})"[:300]
         rows.append((
             term_year, semester, cur[0], cur[1], title,
             _categorize(title), cur[2], source_url,

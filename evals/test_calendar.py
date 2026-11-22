@@ -93,6 +93,34 @@ def main() -> int:
         (any(r[5] == "drop" for r in rows), "a drop-deadline event exists"),
         (all(r[0] == 2026 and r[1] == "fall" for r in rows), "every row tagged 2026/fall"),
     ]
+    # The live registrar pages' heading shapes (2026-11): a date or range
+    # followed by a label starts a new date. Both used to be filed under the
+    # previous heading's date.
+    live = extract_events(
+        "<h2>December 10</h2><ul><li>Reading day (no classes, no final examinations)</li></ul>"
+        "<h2>December 11–17 Weekdays only</h2><ul><li>Final examination period</li></ul>"
+        "<h2>September 4 – “10th day” add/drop deadline</h2><ul><li>Deadline for ALL to drop</li></ul>"
+        "<h2>March 13 – 21</h2><ul><li>Spring Break</li></ul>"
+        "<h2>October 5</h2><ul><li>Spring Class Schedule is available on Course Explorer</li></ul>"
+        "<h2>October 13 at 2:00 PM</h2><ul><li>Faculty deadline for reporting midterm grades</li></ul>",
+        2026, "fall", None)
+    when = {r[4]: (r[2], r[3]) for r in live}
+    checks += [
+        (when.get("Final examination period") == ("2026-12-11", "2026-12-17"),
+         "finals under 'December 11–17 Weekdays only' get Dec 11-17, not the reading day"),
+        (when.get("Reading day (no classes, no final examinations)", ("",))[0] == "2026-12-10",
+         "the reading day keeps its own date"),
+        (when.get("“10th day” add/drop deadline", ("",))[0] == "2026-09-04"
+         and when.get("Deadline for ALL to drop", ("",))[0] == "2026-09-04",
+         "a 'date – label' heading is an event and dates what follows"),
+        (when.get("Spring Break") == ("2026-03-13", "2026-03-21"),
+         "a bare range heading still reads as a range"),
+        (when.get("Faculty deadline for reporting midterm grades (2:00 PM)", ("",))[0] == "2026-10-13",
+         "an 'October 13 at 2:00 PM' heading dates the event after it, with the time"),
+        (when.get("Spring Class Schedule is available on Course Explorer", ("",))[0] == "2026-10-05"
+         and not any("at 2:00" in t for t in when),
+         "the event before a timed heading keeps its date; no stray time-only event"),
+    ]
     for ok, label in checks:
         if not ok:
             failures += 1
