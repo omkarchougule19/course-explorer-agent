@@ -306,26 +306,38 @@ def _usage_capture():
 
 
 def run_prod_arm(item: dict) -> dict:
-    from app.agent import build_agent, build_agent_input, friendly_error, new_query_log, tidy_answer
+    from app.agent import (_fallback_model_for, build_agent, build_agent_input, friendly_error,
+                           new_query_log, tidy_answer)
     from app.citations import SQLCapture
     cap = SQLCapture()
     usage = _usage_capture()
     t0 = time.monotonic()
-    try:
-        agent = build_agent()
-        agent_input = build_agent_input(item["question"], item.get("history"))
-        new_query_log(item["question"], agent_input)   # as production does, per answer
-        out = agent.invoke({"input": agent_input},
-                           config={"callbacks": [cap, usage]})
-        answer = out.get("output", str(out)) if isinstance(out, dict) else str(out)
-        answer = tidy_answer(answer)   # as production does
-    except Exception as exc:  # noqa: BLE001
-        # A provider rate limit must reach _with_retry (which backs off and
-        # retries), not be scored as a wrong answer: before this, parallel runs
-        # turned 8-12 of 30 questions into "rate limit was hit" failures.
-        if "rate limit" in str(exc).lower() or "429" in str(exc):
-            raise
-        answer = friendly_error(exc)
+    model = None
+    while True:
+        try:
+            agent = build_agent(model=model)
+            agent_input = build_agent_input(item["question"], item.get("history"))
+            new_query_log(item["question"], agent_input, model)   # as production does, per answer
+            out = agent.invoke({"input": agent_input},
+                               config={"callbacks": [cap, usage]})
+            answer = out.get("output", str(out)) if isinstance(out, dict) else str(out)
+            answer = tidy_answer(answer)   # as production does
+        except Exception as exc:  # noqa: BLE001
+            # Fail over exactly as app.agent.ask() does (a Gemini 503 or 429 goes
+            # to Groq): without it, a busy primary was scored as a wrong answer
+            # (q18, q26 on 2026-11-22) though production would have answered.
+            backup = None if model else _fallback_model_for(exc)
+            if backup:
+                model = backup
+                continue
+            # A provider rate limit with no backup must reach _with_retry (which
+            # backs off and retries), not be scored as a wrong answer: before
+            # this, parallel runs turned 8-12 of 30 questions into "rate limit
+            # was hit" failures.
+            if "rate limit" in str(exc).lower() or "429" in str(exc):
+                raise
+            answer = friendly_error(exc)
+        break
     u = usage.summary()
     return _record(
         "prod", answer, t0,
