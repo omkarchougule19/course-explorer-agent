@@ -106,8 +106,10 @@ def main() -> int:
         2026, "fall", None)
     when = {r[4]: (r[2], r[3]) for r in live}
     checks += [
-        (when.get("Final examination period") == ("2026-12-11", "2026-12-17"),
-         "finals under 'December 11–17 Weekdays only' get Dec 11-17, not the reading day"),
+        (when.get("Final examination period (weekdays only)") == ("2026-12-11", "2026-12-17")
+         and "Weekdays only" not in when,
+         "finals under 'December 11–17 Weekdays only' get Dec 11-17 and the qualifier, "
+         "not the reading day or a stray 'Weekdays only' event"),
         (when.get("Reading day (no classes, no final examinations)", ("",))[0] == "2026-12-10",
          "the reading day keeps its own date"),
         (when.get("“10th day” add/drop deadline", ("",))[0] == "2026-09-04"

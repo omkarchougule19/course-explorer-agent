@@ -51,8 +51,7 @@ check("empty answer is untouched", agent.friendly_stop("") == "")
 check("friendly cap message is classified as an error", classify_answer(agent.AGENT_STOPPED_FRIENDLY) == "error")
 
 # 3. provider order
-import os
-saved = {k: os.environ.get(k) for k in ("GROQ_API_KEY", "GROQ_API_KEY_DEV", "RENDER", "OPENAI_API_KEY",
+saved ={k: os.environ.get(k) for k in ("GROQ_API_KEY", "GROQ_API_KEY_DEV", "RENDER", "OPENAI_API_KEY",
                                         "GEMINI_API_KEY", "LLM_PROVIDER")}
 
 

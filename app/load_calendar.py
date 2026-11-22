@@ -67,6 +67,10 @@ _DATE_LABEL_RE = re.compile(
     r"\s*(?:[–—-]\s*)?(?P<label>[^\d\s–—-].*)$"
 )
 
+# A heading label that only qualifies the dates ("Weekdays only").
+_QUALIFIER_RE = re.compile(r"^\(?\s*(weekdays|weekends|weekdays and saturdays)\s+only\s*\)?\.?$",
+                           re.IGNORECASE)
+
 # "October 13 at 2:00 PM" is a date heading with a time: the events listed
 # AFTER it happen then ("Faculty deadline for reporting midterm grades").
 # It was first read as a continuation of the title before it and merged in,
@@ -259,6 +263,11 @@ def extract_events(html: str, term_year: int, semester: str, source_url: str | N
             if parsed:
                 cur, at_time = (parsed[0], parsed[1], labelled.group("date").strip()), None
                 frag = labelled.group("label")
+                # "December 11–17 Weekdays only" qualifies the events under
+                # it rather than being one: add it to each, like a time.
+                if _QUALIFIER_RE.match(frag):
+                    at_time = " ".join(frag.lower().strip(" .()").split())
+                    continue
         if cur is None or len(frag) < 4:
             continue
         title = frag.strip(" .")[:300]
