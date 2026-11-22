@@ -189,8 +189,9 @@ INSERT INTO sections VALUES (2026, 'fall', 'CS', '225', 'Data Structures'),
   (2026, 'spring', 'PSYC', '100', 'Intro Psych'), (2026, 'spring', 'PSYC', '238', 'Psychopathology');
 """)
 con.commit(); con.close()
-real_cov = agent._subject_coverage
+real_cov, real_terms = agent._subject_coverage, agent._subject_terms
 agent._subject_coverage = lambda: ("fall 2026", {"CS": "fall 2026", "PSYC": "spring 2026"})
+agent._subject_terms = lambda: {"CS": frozenset({"fall 2026"}), "PSYC": frozenset({"spring 2026"})}
 try:
     d = agent._CappedSQLDatabase.from_uri(f"sqlite:///{cat3.as_posix()}")
     out = d.run("SELECT course_number FROM sections WHERE subject = 'PSYC' AND year = 2026 AND semester = 'fall'")
@@ -200,7 +201,7 @@ try:
           "latest term" not in (d.run("SELECT course_number FROM sections WHERE subject = 'CS' AND year = 2026 "
                                       "AND semester = 'fall' AND course_number = '999'") or ""))
 finally:
-    agent._subject_coverage = real_cov
+    agent._subject_coverage, agent._subject_terms = real_cov, real_terms
 
 # -- history: the latest answer survives for refinements ---------------------
 long = "CS 400 ... " * 100

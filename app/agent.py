@@ -502,27 +502,67 @@ def _subject_coverage():
             {s: f"{r['semester']} {r['year']}" for s, r in newest.items()})
 
 
-def _unsynced_note(sql: str):
-    """For an empty result on a subject that has no rows at all in the
-    latest term: say so, so the model stops trying variations. On Groq, "Are
-    there online sections of ECON 102 this fall?" hit the iteration cap
-    after 181 s - ECON simply isn't synced for fall."""
+def _term_key(label: str):
+    season, year = label.split()
+    return int(year), _SEASON_ORDER.get(season, 9)
+
+
+@lru_cache(maxsize=1)
+def _subject_terms() -> dict:
+    """{subject: frozenset of term labels it has rows in}. Cached until the
+    catalog changes (refresh_catalog_caches)."""
+    conn = db.get_readonly_connection()
     try:
-        latest, newest = _subject_coverage()
+        rows = conn.execute("SELECT DISTINCT subject, year, semester FROM sections "
+                            "WHERE year IS NOT NULL AND semester IS NOT NULL").fetchall()
+    finally:
+        conn.close()
+    out: dict = {}
+    for r in rows:
+        out.setdefault(r["subject"], set()).add(f"{r['semester']} {r['year']}")
+    return {s: frozenset(t) for s, t in out.items()}
+
+
+def _coverage_gap(sql: str):
+    """(queried term, [subjects the query names that have no rows in that
+    term], {subject: its newest term with rows}) - or None when the query
+    filters on no single loaded term, or names no such subject.
+
+    Works for whichever term the query asks about. It used to look only at
+    the newest term, which stopped being the partial one once spring 2027 was
+    loaded over a fall 2026 that covers 84 of 191 subjects: "MUSC courses in
+    fall 2026" ran into the iteration cap, and "online sections of MUSC 400 in
+    fall 2026" answered "not offered" instead of "not synced"."""
+    try:
+        by_subject = _subject_terms()
     except Exception:
         return None
-    if not latest:
+    low = sql.lower()
+    queried = [t for t in set().union(*by_subject.values()) if by_subject
+               and f"'{t.split()[0]}'" in low and t.split()[1] in sql]
+    if len(queried) != 1:
         return None
-    season, year = latest.split()
-    if f"'{season}'" not in sql.lower() or year not in sql:
-        return None
-    missing = [s for s in sql_guard.subject_codes(sql) if s in newest and newest[s] != latest]
+    term = queried[0]
+    missing = [s for s in dict.fromkeys(sql_guard.subject_codes(sql))
+               if s in by_subject and term not in by_subject[s]]
     if not missing:
+        return term, [], {}
+    return term, missing, {s: max(by_subject[s], key=_term_key) for s in missing}
+
+
+def _unsynced_note(sql: str):
+    """For an empty result on a subject that has no rows at all in the term
+    the query asks about: say so, so the model stops trying variations. On
+    Groq, "Are there online sections of ECON 102 this fall?" hit the
+    iteration cap after 181 s - ECON simply isn't synced for fall."""
+    gap = _coverage_gap(sql)
+    if not gap or not gap[1]:
         return None
-    parts = "; ".join(f"{s} (latest term with {s}: {newest[s]})" for s in dict.fromkeys(missing))
-    return (f"[No rows. {', '.join(dict.fromkeys(missing))} has no {latest} rows at all - its "
-            f"{latest} schedule hasn't been synced yet: {parts}. Say that and offer the "
-            "latest term; don't try other queries for it.]")
+    term, missing, newest = gap
+    parts = "; ".join(f"{s} (latest term with {s}: {newest[s]})" for s in missing)
+    return (f"[No rows. {', '.join(missing)} has no {term} rows at all - its "
+            f"{term} schedule hasn't been synced yet: {parts}. Say that and offer the "
+            "term that has data; don't try other queries for it.]")
 
 
 _FULL_NAME_RE = re.compile(r"\binstructor\s*(?:=|I?LIKE)\s*'%?([A-Za-z'\- ]+),\s*([A-Za-z]{2,})[A-Za-z%]*'",
@@ -961,32 +1001,32 @@ class _CappedSQLDatabase(SQLDatabase):
                 "Query by instructor_last alone (or the right initial) and say which one(s) you used.]")
 
     def _latest_term_rerun(self, command: str, **kwargs):
-        """An empty result for a subject that has no rows in the latest term:
-        rerun the same query for that subject's latest synced term and return
+        """An empty result for a subject that has no rows in the term the query
+        asks about: rerun the same query for that subject's latest synced term and return
         those rows, labelled. The note alone wasn't enough - "what courses are
         offered by Gies" and "intro psychology sections" stopped at "not
         synced" instead of offering the term that has data."""
-        try:
-            latest, newest = _subject_coverage()
-        except Exception:
+        gap = _coverage_gap(command)
+        if not gap:
             return None
-        if not latest:
-            return None
-        season, year = latest.split()
-        missing = [s for s in sql_guard.subject_codes(command) if s in newest and newest[s] != latest]
+        term, missing, newest = gap
+        season, year = term.split()
         via_subjects = re.search(r"\bsubjects\b", command, re.IGNORECASE) is not None
         if not missing and not via_subjects:
             return None
-        terms = sorted(set(newest.values()) - {latest},
-                       key=lambda t: (int(t.split()[1]), _SEASON_ORDER.get(t.split()[0], 0)), reverse=True)
         if missing:
-            terms = [max((newest[s] for s in missing),
-                         key=lambda t: (int(t.split()[1]), _SEASON_ORDER.get(t.split()[0], 0)))]
-        for target in terms:
+            targets = [max((newest[s] for s in missing), key=_term_key)]
+        else:  # departments named via the subjects table: try the other terms, newest first
+            try:
+                every = set().union(*_subject_terms().values())
+            except Exception:
+                return None
+            targets = sorted(every - {term}, key=_term_key, reverse=True)
+        for target in targets:
             rows = self._run_for_term(command, season, year, target, **kwargs)
             if rows:
-                who = ", ".join(dict.fromkeys(missing)) or "These departments"
-                return (f"[{who} had no {latest} rows for this query (the {latest} schedule may not "
+                who = ", ".join(missing) or "These departments"
+                return (f"[{who} had no {term} rows for this query (the {term} schedule may not "
                         f"be synced for them yet). The same query for {target} returned the rows "
                         f"below - say so in the answer.]\n{rows}")
         return None
@@ -2059,7 +2099,7 @@ def refresh_catalog_caches(force: bool = False) -> bool:
         changed = _CATALOG["stamp"] is not None and stamp != _CATALOG["stamp"]
         _CATALOG["stamp"] = stamp
         if changed:
-            for cached in (_subject_coverage, _subject_names, _department_name_patterns, _data_notes_for):
+            for cached in (_subject_coverage, _subject_terms, _subject_names, _department_name_patterns, _data_notes_for):
                 clear = getattr(cached, "cache_clear", None)   # a test may have swapped one for a stub
                 if clear:
                     clear()
