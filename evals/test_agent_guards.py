@@ -20,8 +20,16 @@ import sqlite3
 import tempfile
 from pathlib import Path
 
+import os
+
 from app import agent
 from app.ask_log import classify_answer
+
+# app.agent loads .env, and a developer's .env may pick a provider
+# (LLM_PROVIDER=gemini) - which changes which budget applies and made the
+# Groq-budget checks below crash. These checks set the keys they need.
+for _k in ("LLM_PROVIDER", "GEMINI_API_KEY", "GEMINI_MODEL"):
+    os.environ.pop(_k, None)
 
 failures = []
 
@@ -267,9 +275,9 @@ try:
 finally:
     agent._today = real_today
 
-# 4c. empty result for a subject with no rows in the latest term
-real_cov = agent._subject_coverage
-agent._subject_coverage = lambda: ("fall 2026", {"CS": "fall 2026", "ECON": "spring 2026"})
+# 4c. empty result for a subject with no rows in the term the query asks about
+real_terms = agent._subject_terms
+agent._subject_terms = lambda: {"CS": frozenset({"fall 2026"}), "ECON": frozenset({"spring 2026"})}
 try:
     note = agent._unsynced_note("SELECT * FROM sections WHERE subject = 'ECON' AND semester = 'fall' AND year = 2026")
     check("unsynced subject in the latest term gets a note naming its latest term",
@@ -282,8 +290,20 @@ try:
     note = agent._unsynced_note("SELECT * FROM sections WHERE subject IN ('CS', 'ECON') AND semester = 'fall' AND year = 2026")
     check("an unsynced subject later in an IN list still gets the note",
           bool(note) and "ECON has no fall 2026 rows" in note and "CS has" not in note)
+    # The partial term is no longer the newest one (spring 2027 loaded over a
+    # fall 2026 that covers 84 subjects): the note must follow the queried term.
+    agent._subject_terms = lambda: {"CS": frozenset({"fall 2026", "spring 2027"}),
+                                    "MUSC": frozenset({"spring 2027", "summer 2026"})}
+    note = agent._unsynced_note("SELECT * FROM sections WHERE subject = 'MUSC' AND semester = 'fall' AND year = 2026")
+    check("an unsynced subject in an older, partial term gets the note too",
+          bool(note) and "MUSC has no fall 2026 rows" in note and "spring 2027" in note)
+    check("a synced subject in the newest term still gets no note",
+          agent._unsynced_note("SELECT * FROM sections WHERE subject = 'MUSC' AND semester = 'spring' AND year = 2027") is None)
+    check("a query naming two terms gets no note (which term is ambiguous)",
+          agent._unsynced_note("SELECT * FROM sections WHERE subject = 'MUSC' AND ((semester = 'fall' AND year = 2026) "
+                               "OR (semester = 'spring' AND year = 2027))") is None)
 finally:
-    agent._subject_coverage = real_cov
+    agent._subject_terms = real_terms
 
 from app import sql_guard  # noqa: E402
 check("subject codes: =, a table alias, UPPER() and every code of an IN list",
