@@ -558,6 +558,12 @@ because other docs cite them.
   after tool calls, one extra model call that writes the answer from the
   question and the tool results already gathered; and classify the fallback
   text as a failure, not an answer.
+  **Checked 2026-11-22, retry not built:** the classification half shipped
+  in item 36. ask_log holds 6 empty-answer fallbacks, all 2026-09-29 to
+  2026-10-10 on Groq; none in ~55 questions since Gemini Flash-Lite became
+  the primary (2026-10-15). An extra model-call path for an unseen failure
+  isn't worth it; revisit if `couldn't produce an answer` reappears in
+  ask_log.
 
 ### 36. Request too large on broad questions; whole-department questions — `done 2026-10-10, deployed (515ace1)`
 - **Problem:** in production "tell me about badm sections" failed after 66 s

@@ -852,6 +852,9 @@ def run(
 
             note = f", {skipped_here} skipped (recent)" if skipped_here else ""
             tqdm.write(f"  [{subject}] {len(courses)} courses{note}, {subject_sections} sections (running total: {total})")
+            # The bar's label was only set when a subject started, so a
+            # one-subject run ended on "0 sections saved".
+            subject_bar.set_postfix_str(f"{subject} | {total} sections saved")
             result["per_subject"][subject] = {
                 "courses_found": len(courses),
                 "sections_written": subject_sections,
